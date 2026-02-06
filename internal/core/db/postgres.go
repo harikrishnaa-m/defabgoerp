@@ -13,7 +13,7 @@ import (
 // Connect returns a raw SQL connection pool
 func Connect() *sql.DB {
 	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		os.Getenv("DB_USER"), os.Getenv("DB_PASS"),
+		os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"),
 		os.Getenv("DB_HOST"), os.Getenv("DB_PORT"), os.Getenv("DB_NAME"))
 
 	db, err := sql.Open("pgx", connStr)
