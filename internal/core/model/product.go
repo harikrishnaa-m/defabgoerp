@@ -23,6 +23,8 @@ type Product struct {
 
 	Brand string `gorm:"size:150" json:"brand"`
 
+	ImageURL string `gorm:"size:300" json:"image_url"`
+
 	// Business flags
 	IsWebVisible bool   `gorm:"default:true;index" json:"is_web_visible"`
 	IsStitched   bool   `gorm:"default:false" json:"is_stitched"`
@@ -41,7 +43,7 @@ type Variant struct {
 	Name string `gorm:"size:150;not null" json:"name"`
 	SKU  string `gorm:"size:100;not null;uniqueIndex" json:"sku"`
 
-	// ⚠️ Replace with decimal.Decimal in real ERP
+	
 	Price     float64 `gorm:"not null" json:"price"`
 	CostPrice float64 `json:"cost_price"`
 
