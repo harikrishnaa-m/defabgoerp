@@ -43,12 +43,7 @@ func main() {
 
 	api := app.Group("/api")
 
-	authRoutes := api.Group("/auth")
-	authRoutes.Post("/register", authHandler.Register)
-	 authRoutes.Post("/login", authHandler.Login)
-
-	// 5. Routes
-	// app.Post("/api/users", authHandler.Register)
+	auth.RegisterRoutes(api, authHandler)
 
 	// Quick test route for products
 	api.Get("/products/test", func(c *fiber.Ctx) error {
