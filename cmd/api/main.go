@@ -6,14 +6,21 @@ import (
 
 	"defab-erp/internal/auth"
 	"defab-erp/internal/core/db"
+	"defab-erp/internal/warehouse"
 
 	"defab-erp/internal/core/model"
 	"defab-erp/internal/middleware"
+
+	"defab-erp/internal/role"
+
+	"defab-erp/internal/branch"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
+
+	"defab-erp/internal/user"
 )
 
 func main() {
@@ -34,6 +41,20 @@ func main() {
 	authHandler := auth.NewHandler(authStore)
 	// productHandler := product.NewHandler(productStore)
 
+	roleStore := role.NewStore(database)
+	roleHandler := role.NewHandler(roleStore)
+
+	branchStore := branch.NewStore(database)
+	branchHandler := branch.NewHandler(branchStore)
+
+	warehouseStore := warehouse.NewStore(database)
+	warehouseHandler := warehouse.NewHandler(warehouseStore)
+
+	userStore := user.NewStore(database)
+	userHandler := user.NewHandler(userStore)
+
+
+
 	// 4. Fiber
 	app := fiber.New()
 
@@ -52,19 +73,53 @@ func main() {
 	})
 
 	// ---------- PROTECTED ----------
-protected := api.Group("", middleware.JWTProtected(authStore))
+	protected := api.Group("", middleware.JWTProtected(authStore))
 
-protected.Get("/me", func(c *fiber.Ctx) error {
-	user := c.Locals("user").(*model.User)
-	return c.JSON(user)
-})
+	role.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(model.RoleSuperAdmin),
+	),
+	roleHandler,
+	)
 
-protected.Get("/admin-only",
-	middleware.RequireRole("SuperAdmin"),
-	func(c *fiber.Ctx) error {
-		return c.SendString("Hello SuperAdmin")
-	},
-)
+
+	branch.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(model.RoleSuperAdmin),
+	),
+	branchHandler,
+	)
+
+
+	warehouse.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(model.RoleSuperAdmin),
+	),
+	warehouseHandler,
+	)
+
+	user.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(model.RoleSuperAdmin),
+	),
+	userHandler,
+	)
+
+
+
+
+
+	protected.Get("/me", func(c *fiber.Ctx) error {
+		user := c.Locals("user").(*model.User)
+		return c.JSON(user)
+	})
+
+	protected.Get("/admin-only",
+		middleware.RequireRole("SuperAdmin"),
+		func(c *fiber.Ctx) error {
+			return c.SendString("Hello SuperAdmin")
+		},
+	)
 
 	// Start server
 	port := os.Getenv("PORT")
