@@ -34,29 +34,6 @@ func (s *Store) CreateUser(u *model.User) error {
 	return err
 }
 
-
-// func (s *Store) GetUserByEmail(email string) (*model.User, error) {
-// 	u := &model.User{} // Use shared model
-// 	var roleName string
-
-// 	query := `
-// 		SELECT u.id, u.name, u.email, u.password_hash, u.role_id, r.name, u.branch_id, u.created_at
-// 		FROM users u
-// 		JOIN roles r ON u.role_id = r.id
-// 		WHERE u.email = $1
-// 	`
-// 	err := s.db.QueryRow(query, email).Scan(
-// 		&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.RoleID, &roleName, &u.BranchID, &u.CreatedAt,
-// 	)
-
-// 	if err == sql.ErrNoRows {
-// 		return nil, errors.New("user not found")
-// 	}
-// 	u.Role.Name = roleName // Populate nested struct
-// 	return u, err
-// }
-
-
 func (s *Store) GetUserByEmail(email string) (*model.User, error) {
 	u := &model.User{}
 
