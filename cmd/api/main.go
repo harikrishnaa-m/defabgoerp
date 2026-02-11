@@ -20,7 +20,11 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
 
+	"defab-erp/internal/attribute"
+	"defab-erp/internal/category"
+	"defab-erp/internal/product"
 	"defab-erp/internal/user"
+	"defab-erp/internal/variant"
 )
 
 func main() {
@@ -52,6 +56,20 @@ func main() {
 
 	userStore := user.NewStore(database)
 	userHandler := user.NewHandler(userStore)
+
+	categoryStore := category.NewStore(database)
+	categoryHandler := category.NewHandler(categoryStore)
+
+	productStore := product.NewStore(database)
+	productHandler := product.NewHandler(productStore)
+
+	attributeStore := attribute.NewStore(database)
+	attributeHandler := attribute.NewHandler(attributeStore)
+
+	variantStore := variant.NewStore(database)
+	variantHandler := variant.NewHandler(variantStore)
+
+
 
 
 
@@ -105,6 +123,45 @@ func main() {
 	userHandler,
 	)
 
+	category.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	categoryHandler,
+	)
+
+
+	product.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	productHandler,
+	)
+
+
+	attribute.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	attributeHandler,
+	)
+
+	variant.RegisterRoutes(
+	protected.Group("", middleware.RequireRole(
+		model.RoleSuperAdmin,
+		model.RoleInventoryManager,
+	)),
+	variantHandler,
+	)
 
 
 
