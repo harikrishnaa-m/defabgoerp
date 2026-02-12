@@ -25,6 +25,8 @@ import (
 	"defab-erp/internal/product"
 	"defab-erp/internal/user"
 	"defab-erp/internal/variant"
+
+	"defab-erp/internal/core/storage"
 )
 
 func main() {
@@ -36,6 +38,10 @@ func main() {
 	// 1. DB
 	database := db.Connect()
 	defer database.Close()
+
+	if err := storage.InitSpaces(); err != nil {
+        log.Fatal("spaces init failed:", err)
+    }
 
 	// 2. Stores (Data Layer)
 	authStore := auth.NewStore(database)

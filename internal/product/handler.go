@@ -1,6 +1,10 @@
 package product
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"defab-erp/internal/core/storage"
+
+	"github.com/gofiber/fiber/v2"
+)
 
 type Handler struct {
 	store *Store
@@ -14,23 +18,76 @@ func NewHandler(s *Store) *Handler {
 // CREATE
 //
 
-func (h *Handler) Create(c *fiber.Ctx) error {
-	var in CreateProductInput
+// func (h *Handler) Create(c *fiber.Ctx) error {
+// 	var in CreateProductInput
 
-	if err := c.BodyParser(&in); err != nil {
-		return c.Status(400).SendString("bad input")
+// 	if err := c.BodyParser(&in); err != nil {
+// 		return c.Status(400).SendString("bad input")
+// 	}
+
+// 	if in.Name == "" || in.CategoryID == "" {
+// 		return c.Status(400).SendString("name & category required")
+// 	}
+
+// 	if err := h.store.Create(in); err != nil {
+// 		return c.Status(500).SendString(err.Error())
+// 	}
+
+// 	return c.SendStatus(201)
+// }
+
+
+
+func (h *Handler) Create(c *fiber.Ctx) error {
+
+	name := c.FormValue("name")
+	categoryID := c.FormValue("category_id")
+	brand := c.FormValue("brand")
+
+	if name == "" || categoryID == "" {
+		return c.Status(400).SendString("name & category required")
 	}
 
-	if in.Name == "" || in.CategoryID == "" {
-		return c.Status(400).SendString("name & category required")
+	file, err := c.FormFile("image")
+	if err != nil {
+		return c.Status(400).SendString("image required")
+	}
+
+	// ✅ process image
+	data, filename, err := storage.ProcessImage(file)
+	if err != nil {
+		return c.Status(400).SendString(err.Error())
+	}
+
+	key := "products/" + filename
+
+	url, err := storage.UploadFile(
+		key,
+		data,
+		file.Header.Get("Content-Type"),
+	)
+	if err != nil {
+		return c.Status(500).SendString(err.Error())
+	}
+
+	in := CreateProductInput{
+		Name:       name,
+		CategoryID: categoryID,
+		Brand:      brand,
+		ImageURL:   url,
 	}
 
 	if err := h.store.Create(in); err != nil {
 		return c.Status(500).SendString(err.Error())
 	}
 
-	return c.SendStatus(201)
+	return c.Status(201).JSON(fiber.Map{
+		"message": "product created",
+		"image":   url,
+	})
 }
+
+
 
 //
 // LIST
