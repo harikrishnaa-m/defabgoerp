@@ -22,24 +22,101 @@ type Warehouse struct {
 }
 
 type Stock struct {
-	ID          uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	VariantID   uuid.UUID `gorm:"type:uuid;not null;index" json:"variant_id"`
-	Variant     Variant   `gorm:"foreignKey:VariantID;references:ID;constraint:OnDelete:CASCADE" json:"variant"`
-	WarehouseID uuid.UUID `gorm:"type:uuid;not null;index" json:"warehouse_id"`
-	Warehouse   Warehouse `gorm:"foreignKey:WarehouseID;references:ID;constraint:OnDelete:CASCADE" json:"warehouse"`
-	Quantity    int       `gorm:"not null" json:"quantity"`
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+
+	VariantID   uuid.UUID `gorm:"type:uuid;not null;index:idx_variant_warehouse,unique"`
+	WarehouseID uuid.UUID `gorm:"type:uuid;not null;index:idx_variant_warehouse,unique"`
+
+	Variant   Variant   `gorm:"foreignKey:VariantID;constraint:OnDelete:CASCADE"`
+	Warehouse Warehouse `gorm:"foreignKey:WarehouseID;constraint:OnDelete:CASCADE"`
+
+	Quantity int `gorm:"not null;default:0"`
+
+	UpdatedAt time.Time
 }
 
 type StockMovement struct {
-	ID              uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	VariantID       uuid.UUID `gorm:"type:uuid;not null;index" json:"variant_id"`
-	Variant         Variant   `gorm:"foreignKey:VariantID;references:ID;constraint:OnDelete:CASCADE" json:"variant"`
-	FromWarehouseID uuid.UUID `gorm:"type:uuid;index" json:"from_warehouse_id"`
-	FromWarehouse   Warehouse `gorm:"foreignKey:FromWarehouseID;references:ID" json:"from_warehouse"`
-	ToWarehouseID   uuid.UUID `gorm:"type:uuid;index" json:"to_warehouse_id"`
-	ToWarehouse     Warehouse `gorm:"foreignKey:ToWarehouseID;references:ID" json:"to_warehouse"`
-	Quantity        int       `gorm:"not null" json:"quantity"`
-	MovementType    string    `gorm:"size:20;not null" json:"movement_type"` // IN, OUT, TRANSFER
-	Reference       string    `gorm:"size:100" json:"reference"`
-	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+
+	VariantID uuid.UUID `gorm:"type:uuid;not null;index"`
+	Variant   Variant   `gorm:"foreignKey:VariantID;constraint:OnDelete:CASCADE"`
+
+	FromWarehouseID *uuid.UUID `gorm:"type:uuid;index"`
+	FromWarehouse   *Warehouse `gorm:"foreignKey:FromWarehouseID"`
+
+	ToWarehouseID *uuid.UUID `gorm:"type:uuid;index"`
+	ToWarehouse   *Warehouse `gorm:"foreignKey:ToWarehouseID"`
+
+	Quantity int `gorm:"not null"`
+
+	MovementType string `gorm:"size:20;not null"`
+	// IN, OUT, TRANSFER
+
+	StockRequestID *uuid.UUID `gorm:"type:uuid;index"`
+
+	Status string `gorm:"size:20;default:'COMPLETED'"`
+	// PENDING, IN_TRANSIT, RECEIVED, CANCELLED, COMPLETED
+
+	Reference string `gorm:"size:100"`
+
+	CreatedAt time.Time `gorm:"autoCreateTime"`
+	UpdatedAt time.Time
+}
+
+type StockRequest struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+
+	FromWarehouseID uuid.UUID `gorm:"type:uuid;not null;index"`
+	FromWarehouse   Warehouse `gorm:"foreignKey:FromWarehouseID"`
+
+	ToWarehouseID uuid.UUID `gorm:"type:uuid;not null;index"`
+	ToWarehouse   Warehouse `gorm:"foreignKey:ToWarehouseID"`
+
+	Status string `gorm:"size:20;not null;default:'PENDING'"`
+	// PENDING, APPROVED, PARTIAL, REJECTED, CANCELLED
+
+	Priority string `gorm:"size:10;default:'MEDIUM'"`
+	// LOW, MEDIUM, HIGH
+
+	ExpectedDate *time.Time `json:"expected_date"` // ✅ Added
+
+	RequestedBy uuid.UUID `gorm:"type:uuid;not null"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+
+	Items     []StockRequestItem     `gorm:"foreignKey:StockRequestID"`
+	Approvals []StockRequestApproval `gorm:"foreignKey:StockRequestID"`
+}
+
+type StockRequestItem struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+
+	StockRequestID uuid.UUID `gorm:"type:uuid;not null;index"`
+	StockRequest   StockRequest
+
+	VariantID uuid.UUID `gorm:"type:uuid;not null"`
+	Variant   Variant   `gorm:"foreignKey:VariantID"`
+
+	RequestedQty int `gorm:"not null"`
+
+	ApprovedQty int `gorm:"default:0"`
+
+	Remarks string `gorm:"type:text"`
+}
+
+type StockRequestApproval struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+
+	StockRequestID uuid.UUID    `gorm:"type:uuid;not null;index"`
+	StockRequest   StockRequest `gorm:"foreignKey:StockRequestID;constraint:OnDelete:CASCADE"`
+
+	Action string `gorm:"size:20;not null"`
+	// SUBMITTED, APPROVED, PARTIAL, REJECTED, CANCELLED
+
+	ApprovedBy uuid.UUID `gorm:"type:uuid;not null"`
+
+	Remarks string `gorm:"type:text"`
+
+	CreatedAt time.Time `gorm:"autoCreateTime"`
 }

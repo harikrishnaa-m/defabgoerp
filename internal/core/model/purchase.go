@@ -8,12 +8,18 @@ import (
 
 // Supplier represents the Supplier table.
 type Supplier struct {
-	ID             uuid.UUID       `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	Name           string          `gorm:"size:200;not null" json:"name"`
-	Phone          string          `gorm:"size:30" json:"phone"`
-	Email          string          `gorm:"size:150" json:"email"`
-	Address        string          `gorm:"type:text" json:"address"`
+	ID      uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	Name    string    `gorm:"size:200;not null" json:"name"`
+	Phone   string    `gorm:"size:30" json:"phone"`
+	Email   string    `gorm:"size:150" json:"email"`
+	Address string    `gorm:"type:text" json:"address"`
+
+	GSTNumber string `gorm:"size:15;uniqueIndex" json:"gst_number"` // ✅ Added
+
 	PurchaseOrders []PurchaseOrder `gorm:"foreignKey:SupplierID" json:"purchase_orders"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // PurchaseOrder represents the PurchaseOrder table.

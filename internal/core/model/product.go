@@ -23,14 +23,27 @@ type Product struct {
 
 	Brand string `gorm:"size:150" json:"brand"`
 
-	ImageURL string `gorm:"size:300" json:"image_url"`
+	MainImageURL string `gorm:"size:500" json:"main_image_url"` // ✅ cover image
 
-	// Business flags
 	IsWebVisible bool   `gorm:"default:true;index" json:"is_web_visible"`
 	IsStitched   bool   `gorm:"default:false" json:"is_stitched"`
 	UOM          string `gorm:"size:20;default:'Unit'" json:"uom"`
 
-	Variants []Variant `gorm:"foreignKey:ProductID" json:"variants"`
+	Variants []Variant      `gorm:"foreignKey:ProductID" json:"variants"`
+	Images   []ProductImage `gorm:"foreignKey:ProductID" json:"images"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type ProductImage struct {
+	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	ProductID uuid.UUID `gorm:"type:uuid;not null;index"`
+	Product   Product   `gorm:"foreignKey:ProductID;references:ID;constraint:OnDelete:CASCADE"`
+
+	ImageURL string `gorm:"size:500;not null"`
+
+	CreatedAt time.Time
 }
 
 // ================== VARIANT ==================
@@ -43,11 +56,21 @@ type Variant struct {
 	Name string `gorm:"size:150;not null" json:"name"`
 	SKU  string `gorm:"size:100;not null;uniqueIndex" json:"sku"`
 
-	
 	Price     float64 `gorm:"not null" json:"price"`
 	CostPrice float64 `json:"cost_price"`
 
-	Barcodes []Barcode `gorm:"foreignKey:VariantID" json:"barcodes"`
+	Barcode string         `gorm:"size:100;uniqueIndex"`
+	Images  []VariantImage `gorm:"foreignKey:VariantID" json:"images"` // Added for images
+}
+
+type VariantImage struct {
+	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	VariantID uuid.UUID `gorm:"type:uuid;not null;index"`
+	Variant   Variant   `gorm:"foreignKey:VariantID;references:ID;constraint:OnDelete:CASCADE"`
+
+	ImageURL string `gorm:"size:500;not null"`
+
+	CreatedAt time.Time
 }
 
 // ================== VARIANT ATTRIBUTE MAP ==================
@@ -64,12 +87,12 @@ type VariantAttributeMapping struct {
 
 // ================== BARCODE ==================
 
-type Barcode struct {
-	ID          uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	VariantID   uuid.UUID `gorm:"type:uuid;not null;index" json:"variant_id"`
-	Code        string    `gorm:"size:100;not null;uniqueIndex" json:"code"`
-	GeneratedAt time.Time `json:"generated_at"`
-}
+// type Barcode struct {
+// 	ID          uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+// 	VariantID   uuid.UUID `gorm:"type:uuid;not null;index" json:"variant_id"`
+// 	Code        string    `gorm:"size:100;not null;uniqueIndex" json:"code"`
+// 	GeneratedAt time.Time `json:"generated_at"`
+// }
 
 // ================== PRODUCT DESCRIPTION ==================
 
@@ -86,6 +109,7 @@ type ProductDescription struct {
 	Length            float64
 	Width             float64
 	BlousePiece       float64
+	SizeChartImage    string `gorm:"size:500"` // stores URL or file path
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
 }
