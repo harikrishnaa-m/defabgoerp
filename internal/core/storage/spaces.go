@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 var client *s3.Client
@@ -43,7 +44,7 @@ func UploadFile(key string, data []byte, contentType string) (string, error) {
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(data),
 		ContentType: aws.String(contentType),
-		ACL:         "types.ObjectCannedACLPublicRead",
+		ACL:         types.ObjectCannedACLPublicRead,
 	})
 
 	if err != nil {
