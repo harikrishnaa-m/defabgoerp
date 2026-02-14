@@ -8,9 +8,9 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	g.Post("/", h.Create)
 
 
-g.Put("/:id/main-image", h.ReplaceMainImage)
-g.Post("/:id/images", h.AddGalleryImages)
-g.Delete("/images/:imageId", h.DeleteGalleryImage)
+	g.Put("/:id/main-image", h.ReplaceMainImage)
+	g.Post("/:id/images", h.AddGalleryImages)
+	g.Delete("/images/:imageId", h.DeleteGalleryImage)
 
 
 	
@@ -21,3 +21,4 @@ g.Delete("/images/:imageId", h.DeleteGalleryImage)
 	g.Patch("/:id/deactivate", h.Deactivate)
 	g.Patch("/:id/activate", h.Activate)
 }
+

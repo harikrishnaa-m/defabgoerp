@@ -30,16 +30,18 @@ func (s *Store) Create(in CreateVariantInput) (string, error) {
 
 	err = tx.QueryRow(`
 	INSERT INTO variants
-	(product_id,name,sku,price,cost_price)
-	VALUES ($1,$2,$3,$4,$5)
+	(product_id,name,sku,price,cost_price,barcode)
+	VALUES ($1,$2,$3,$4,$5,$6)
 	RETURNING id
 	`,
-		in.ProductID,
-		in.Name,
-		in.SKU,
-		in.Price,
-		in.CostPrice,
-	).Scan(&id)
+	in.ProductID,
+	in.Name,
+	in.SKU,
+	in.Price,
+	in.CostPrice,
+	in.SKU, 
+).Scan(&id)
+
 
 	if err != nil {
 		return "", err
@@ -246,11 +248,11 @@ func (s *Store) getProductPrefix(productID string) (string, error) {
 	}
 
 	// simple prefix rule
-	name = strings.ToUpper(name)
+name = strings.ToUpper(name)
+	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, " ", "")
-	if len(name) > 4 {
-		name = name[:4]
-	}
+	name = strings.ReplaceAll(name, "-", "")
+	name = strings.ReplaceAll(name, "_", "")
 
 	return name, nil
 }
