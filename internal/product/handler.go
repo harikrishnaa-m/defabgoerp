@@ -1,6 +1,7 @@
 package product
 
 import (
+	"database/sql"
 	"defab-erp/internal/core/storage"
 
 	"github.com/gofiber/fiber/v2"
@@ -18,25 +19,58 @@ func NewHandler(s *Store) *Handler {
 // CREATE
 //
 
-// func (h *Handler) Create(c *fiber.Ctx) error {
-// 	var in CreateProductInput
 
-// 	if err := c.BodyParser(&in); err != nil {
-// 		return c.Status(400).SendString("bad input")
+
+
+
+// func (h *Handler) Create(c *fiber.Ctx) error {
+
+// 	name := c.FormValue("name")
+// 	categoryID := c.FormValue("category_id")
+// 	brand := c.FormValue("brand")
+
+// 	if name == "" || categoryID == "" {
+// 		return c.Status(400).SendString("name & category required")
 // 	}
 
-// 	if in.Name == "" || in.CategoryID == "" {
-// 		return c.Status(400).SendString("name & category required")
+// 	file, err := c.FormFile("image")
+// 	if err != nil {
+// 		return c.Status(400).SendString("image required")
+// 	}
+
+// 	// ✅ process image
+// 	data, filename, err := storage.ProcessImage(file)
+// 	if err != nil {
+// 		return c.Status(400).SendString(err.Error())
+// 	}
+
+// 	key := "products/" + filename
+
+// 	url, err := storage.UploadFile(
+// 		key,
+// 		data,
+// 		file.Header.Get("Content-Type"),
+// 	)
+// 	if err != nil {
+// 		return c.Status(500).SendString(err.Error())
+// 	}
+
+// 	in := CreateProductInput{
+// 		Name:       name,
+// 		CategoryID: categoryID,
+// 		Brand:      brand,
+// 		ImageURL:   url,
 // 	}
 
 // 	if err := h.store.Create(in); err != nil {
 // 		return c.Status(500).SendString(err.Error())
 // 	}
 
-// 	return c.SendStatus(201)
+// 	return c.Status(201).JSON(fiber.Map{
+// 		"message": "product created",
+// 		"image":   url,
+// 	})
 // }
-
-
 
 func (h *Handler) Create(c *fiber.Ctx) error {
 
@@ -48,42 +82,68 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return c.Status(400).SendString("name & category required")
 	}
 
-	file, err := c.FormFile("image")
+	// ✅ MAIN IMAGE REQUIRED
+	mainFile, err := c.FormFile("main_image")
 	if err != nil {
-		return c.Status(400).SendString("image required")
+		return c.Status(400).SendString("main_image is required")
 	}
 
-	// ✅ process image
-	data, filename, err := storage.ProcessImage(file)
+	data, filename, err := storage.ProcessImage(mainFile)
 	if err != nil {
 		return c.Status(400).SendString(err.Error())
 	}
 
-	key := "products/" + filename
-
-	url, err := storage.UploadFile(
-		key,
+	mainURL, err := storage.UploadFile(
+		"products/"+filename,
 		data,
-		file.Header.Get("Content-Type"),
+		mainFile.Header.Get("Content-Type"),
 	)
 	if err != nil {
 		return c.Status(500).SendString(err.Error())
 	}
 
+	// ✅ DTO without image fields
 	in := CreateProductInput{
 		Name:       name,
 		CategoryID: categoryID,
 		Brand:      brand,
-		ImageURL:   url,
 	}
 
-	if err := h.store.Create(in); err != nil {
+	// ✅ pass mainURL separately
+	productID, err := h.store.CreateProduct(in, mainURL)
+	if err != nil {
 		return c.Status(500).SendString(err.Error())
 	}
 
+	// ✅ OPTIONAL GALLERY
+	form, _ := c.MultipartForm()
+	if form != nil {
+		files := form.File["gallery_images"]
+
+		for _, f := range files {
+
+			d, fname, err := storage.ProcessImage(f)
+			if err != nil {
+				continue
+			}
+
+			url, err := storage.UploadFile(
+				"products/"+fname,
+				d,
+				f.Header.Get("Content-Type"),
+			)
+			if err != nil {
+				continue
+			}
+
+			_ = h.store.InsertProductImage(productID, url)
+		}
+	}
+
+
 	return c.Status(201).JSON(fiber.Map{
+		"id":      productID,
 		"message": "product created",
-		"image":   url,
 	})
 }
 
@@ -107,17 +167,17 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	var out []fiber.Map
 
 	for rows.Next() {
-		var id, name, brand, image, uom, created string
+		var id, name, brand, mainImage, uom, created string
 		var web, stitched bool
 		var cid, cname string
 
-		rows.Scan(&id, &name, &brand, &image, &web, &stitched, &uom, &created, &cid, &cname)
+		rows.Scan(&id, &name, &brand, &mainImage, &web, &stitched, &uom, &created, &cid, &cname)
 
 		out = append(out, fiber.Map{
 			"id": id,
 			"name": name,
 			"brand": brand,
-			"image": image,
+			"main_image_url": mainImage,
 			"uom": uom,
 			"is_web_visible": web,
 			"is_stitched": stitched,
@@ -138,6 +198,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	})
 }
 
+
 //
 // GET
 //
@@ -147,29 +208,77 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 
 	row := h.store.Get(id)
 
-	var pid, name, brand, image, uom, cid, cname string
+	var pid, name, uom string
+	var brand, mainImage, cid, cname sql.NullString
 	var web, stitched, active bool
 
-	err := row.Scan(&pid, &name, &brand, &image, &web, &stitched, &uom, &active, &cid, &cname)
+	err := row.Scan(
+		&pid,
+		&name,
+		&brand,
+		&mainImage,
+		&web,
+		&stitched,
+		&uom,
+		&active,
+		&cid,
+		&cname,
+	)
+
 	if err != nil {
-		return c.Status(404).SendString("not found")
+		return c.Status(404).SendString(err.Error()) // show real error for now
 	}
+
+	// gallery
+	// imgRows, err := h.store.ListImages(pid)
+	// if err != nil {
+	// 	return c.Status(500).SendString(err.Error())
+	// }
+	// defer imgRows.Close()
+
+	// var gallery []string
+	// for imgRows.Next() {
+	// 	var url string
+	// 	imgRows.Scan(&url)
+	// 	gallery = append(gallery, url)
+	// }
+
+	imgRows, err := h.store.ListImages(pid)
+if err != nil {
+	return c.Status(500).SendString(err.Error())
+}
+defer imgRows.Close()
+
+var gallery []fiber.Map
+
+for imgRows.Next() {
+	var imgID, url string
+	imgRows.Scan(&imgID, &url)
+
+	gallery = append(gallery, fiber.Map{
+		"id":  imgID,
+		"url": url,
+	})
+}
+
 
 	return c.JSON(fiber.Map{
 		"id": pid,
 		"name": name,
-		"brand": brand,
-		"image": image,
+		"brand": brand.String,
+		"main_image_url": mainImage.String,
+		"gallery": gallery,
 		"uom": uom,
 		"is_active": active,
 		"is_web_visible": web,
 		"is_stitched": stitched,
 		"category": fiber.Map{
-			"id": cid,
-			"name": cname,
+			"id": cid.String,
+			"name": cname.String,
 		},
 	})
 }
+
 
 //
 // UPDATE
@@ -187,7 +296,9 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		return c.Status(500).SendString(err.Error())
 	}
 
-	return c.SendStatus(200)
+	return c.JSON(fiber.Map{
+	"message": "product updated",
+})
 }
 
 //
