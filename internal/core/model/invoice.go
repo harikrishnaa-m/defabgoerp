@@ -1,0 +1,154 @@
+package model
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+//////////////////////////////////////////////////////////////
+// SALES INVOICE
+//////////////////////////////////////////////////////////////
+
+type SalesInvoice struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+
+	// One invoice per sales order
+	SalesOrderID uuid.UUID   `gorm:"type:uuid;not null;uniqueIndex" json:"sales_order_id"`
+	SalesOrder   *SalesOrder `gorm:"foreignKey:SalesOrderID;references:ID" json:"sales_order,omitempty"`
+
+	CustomerID uuid.UUID `gorm:"type:uuid;not null;index" json:"customer_id"`
+	Customer   *Customer `gorm:"foreignKey:CustomerID;references:ID" json:"customer,omitempty"`
+
+	WarehouseID uuid.UUID  `gorm:"type:uuid;not null;index" json:"warehouse_id"`
+	Warehouse   *Warehouse `gorm:"foreignKey:WarehouseID;references:ID" json:"warehouse,omitempty"`
+
+	InvoiceNumber string    `gorm:"size:50;uniqueIndex;not null" json:"invoice_number"`
+	InvoiceDate   time.Time `gorm:"not null;index" json:"invoice_date"`
+
+	SubAmount      float64 `gorm:"type:numeric(12,2);default:0" json:"sub_amount"`
+	DiscountAmount float64 `gorm:"type:numeric(12,2);default:0" json:"discount_amount"`
+
+	CGST     float64 `gorm:"type:numeric(12,2);default:0" json:"cgst"`
+	SGST     float64 `gorm:"type:numeric(12,2);default:0" json:"sgst"`
+	IGST     float64 `gorm:"type:numeric(12,2);default:0" json:"igst"`
+	RoundOff float64 `gorm:"type:numeric(12,2);default:0" json:"round_off"`
+
+	NetAmount  float64 `gorm:"type:numeric(12,2);not null" json:"net_amount"`
+	PaidAmount float64 `gorm:"type:numeric(12,2);default:0" json:"paid_amount"`
+
+	Status string `gorm:"size:20;not null;index" json:"status"` // PAID, PARTIAL, UNPAID, CANCELLED
+
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+
+	// Relations
+	Payments []SalesPayment     `gorm:"foreignKey:SalesInvoiceID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
+	Items    []SalesInvoiceItem `gorm:"foreignKey:SalesInvoiceID;constraint:OnDelete:CASCADE" json:"items,omitempty"`
+}
+
+//////////////////////////////////////////////////////////////
+// SALES PAYMENT
+//////////////////////////////////////////////////////////////
+
+type SalesPayment struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+
+	SalesInvoiceID uuid.UUID     `gorm:"type:uuid;not null;index" json:"sales_invoice_id"`
+	SalesInvoice   *SalesInvoice `gorm:"foreignKey:SalesInvoiceID;references:ID;constraint:OnDelete:CASCADE" json:"sales_invoice,omitempty"`
+
+	Amount float64 `gorm:"type:numeric(12,2);not null" json:"amount"`
+
+	PaymentMethod string `gorm:"size:20;not null;index" json:"payment_method"` // CASH, UPI, CARD
+	Reference     string `gorm:"size:50" json:"reference"`
+
+	PaidAt time.Time `gorm:"index" json:"paid_at"`
+}
+
+//////////////////////////////////////////////////////////////
+// SALES INVOICE ITEM
+//////////////////////////////////////////////////////////////
+
+type SalesInvoiceItem struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+
+	SalesInvoiceID uuid.UUID     `gorm:"type:uuid;not null;index" json:"sales_invoice_id"`
+	SalesInvoice   *SalesInvoice `gorm:"foreignKey:SalesInvoiceID;references:ID;constraint:OnDelete:CASCADE" json:"sales_invoice,omitempty"`
+
+	VariantID uuid.UUID `gorm:"type:uuid;not null;index" json:"variant_id"`
+	Variant   *Variant  `gorm:"foreignKey:VariantID;references:ID" json:"variant,omitempty"`
+
+	Quantity int `gorm:"not null" json:"quantity"`
+
+	UnitPrice   float64 `gorm:"type:numeric(12,2);not null" json:"unit_price"`
+	TaxAmount   float64 `gorm:"type:numeric(12,2);default:0" json:"tax_amount"`
+	TotalAmount float64 `gorm:"type:numeric(12,2);not null" json:"total_amount"`
+}
+
+//////////////////////////////////////////////////////////////
+// PURCHASE INVOICE
+//////////////////////////////////////////////////////////////
+
+type PurchaseInvoice struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+
+	PurchaseOrderID uuid.UUID      `gorm:"type:uuid;not null;uniqueIndex" json:"purchase_order_id"`
+	PurchaseOrder   *PurchaseOrder `gorm:"foreignKey:PurchaseOrderID;references:ID" json:"purchase_order,omitempty"`
+
+	SupplierID uuid.UUID `gorm:"type:uuid;not null;index" json:"supplier_id"`
+	Supplier   *Supplier `gorm:"foreignKey:SupplierID;references:ID" json:"supplier,omitempty"`
+
+	WarehouseID uuid.UUID  `gorm:"type:uuid;not null;index" json:"warehouse_id"`
+	Warehouse   *Warehouse `gorm:"foreignKey:WarehouseID;references:ID" json:"warehouse,omitempty"`
+
+	InvoiceNumber string    `gorm:"size:50;uniqueIndex;not null" json:"invoice_number"`
+	InvoiceDate   time.Time `gorm:"not null;index" json:"invoice_date"`
+
+	SubAmount      float64 `gorm:"type:numeric(12,2);default:0" json:"sub_amount"`
+	TaxAmount      float64 `gorm:"type:numeric(12,2);default:0" json:"tax_amount"`
+	DiscountAmount float64 `gorm:"type:numeric(12,2);default:0" json:"discount_amount"`
+
+	NetAmount  float64 `gorm:"type:numeric(12,2);not null" json:"net_amount"`
+	PaidAmount float64 `gorm:"type:numeric(12,2);default:0" json:"paid_amount"`
+
+	Status string `gorm:"size:20;not null;index" json:"status"`
+
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+
+	Payments []SupplierPayment     `gorm:"foreignKey:PurchaseInvoiceID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
+	Items    []PurchaseInvoiceItem `gorm:"foreignKey:PurchaseInvoiceID;constraint:OnDelete:CASCADE" json:"items,omitempty"`
+}
+
+//////////////////////////////////////////////////////////////
+// SUPPLIER PAYMENT
+//////////////////////////////////////////////////////////////
+
+type SupplierPayment struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+
+	PurchaseInvoiceID uuid.UUID        `gorm:"type:uuid;not null;index" json:"purchase_invoice_id"`
+	PurchaseInvoice   *PurchaseInvoice `gorm:"foreignKey:PurchaseInvoiceID;references:ID;constraint:OnDelete:CASCADE" json:"purchase_invoice,omitempty"`
+
+	Amount float64 `gorm:"type:numeric(12,2);not null" json:"amount"`
+
+	PaidAt time.Time `gorm:"index" json:"paid_at"`
+}
+
+//////////////////////////////////////////////////////////////
+// PURCHASE INVOICE ITEM
+//////////////////////////////////////////////////////////////
+
+type PurchaseInvoiceItem struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+
+	PurchaseInvoiceID uuid.UUID        `gorm:"type:uuid;not null;index" json:"purchase_invoice_id"`
+	PurchaseInvoice   *PurchaseInvoice `gorm:"foreignKey:PurchaseInvoiceID;references:ID;constraint:OnDelete:CASCADE" json:"purchase_invoice,omitempty"`
+
+	VariantID uuid.UUID `gorm:"type:uuid;not null;index" json:"variant_id"`
+	Variant   *Variant  `gorm:"foreignKey:VariantID;references:ID" json:"variant,omitempty"`
+
+	Quantity int `gorm:"not null" json:"quantity"`
+
+	UnitCost    float64 `gorm:"type:numeric(12,2);not null" json:"unit_cost"`
+	TaxAmount   float64 `gorm:"type:numeric(12,2);default:0" json:"tax_amount"`
+	TotalAmount float64 `gorm:"type:numeric(12,2);not null" json:"total_amount"`
+}
