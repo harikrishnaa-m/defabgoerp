@@ -6,6 +6,7 @@ import (
 
 	"defab-erp/internal/auth"
 	"defab-erp/internal/core/db"
+	"defab-erp/internal/stocktransfer"
 	"defab-erp/internal/warehouse"
 
 	"defab-erp/internal/core/model"
@@ -27,6 +28,11 @@ import (
 	"defab-erp/internal/variant"
 
 	"defab-erp/internal/core/storage"
+	"defab-erp/internal/coupon"
+	"defab-erp/internal/goodsreceipt"
+	"defab-erp/internal/stock"
+	"defab-erp/internal/stockrequest"
+	"defab-erp/internal/supplier"
 )
 
 func main() {
@@ -75,9 +81,23 @@ func main() {
 	variantStore := variant.NewStore(database)
 	variantHandler := variant.NewHandler(variantStore)
 
+		supplierStore := supplier.NewStore(database)
+	supplierHandler := supplier.NewHandler(supplierStore)
 
+	goodsStore := goodsreceipt.NewStore(database)
+	goodsHandler := goodsreceipt.NewHandler(goodsStore)
 
+	stockTransferStore := stocktransfer.NewStore(database)
+	stockTransferHandler := stocktransfer.NewHandler(stockTransferStore)
 
+	stockStore := stock.NewStore(database)
+	stockHandler := stock.NewHandler(stockStore)
+
+	stockRequestStore := stockrequest.NewStore(database)
+	stockRequestHandler := stockrequest.NewHandler(stockRequestStore)
+
+	couponStore := coupon.NewStore(database)
+	couponHandler := coupon.NewHandler(couponStore)
 
 	// 4. Fiber
 	app := fiber.New()
@@ -167,6 +187,70 @@ func main() {
 		model.RoleInventoryManager,
 	)),
 	variantHandler,
+	)
+
+
+	supplier.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	supplierHandler,
+	)
+
+	
+	goodsreceipt.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	goodsHandler,
+	)
+
+	stocktransfer.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	stockTransferHandler,
+	)
+
+	stock.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+			model.RoleStoreManager,
+		),
+	),
+	stockHandler,
+	)
+
+	stockrequest.RegisterRoutes(
+    protected.Group("",
+        middleware.RequireRole(
+            model.RoleSuperAdmin,
+            model.RoleInventoryManager,
+            model.RoleStoreManager,
+        ),
+    ),
+    stockRequestHandler,
+	)
+
+	coupon.RegisterRoutes(
+	    protected.Group("",
+	        middleware.RequireRole(
+	            model.RoleSuperAdmin,
+	            model.RoleInventoryManager,
+	        ),
+	    ),
+	    couponHandler,
 	)
 
 
