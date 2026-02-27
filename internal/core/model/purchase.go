@@ -45,7 +45,9 @@ type PurchaseOrderItem struct {
 	PurchaseOrder   PurchaseOrder `gorm:"foreignKey:PurchaseOrderID;references:ID" json:"purchase_order"`
 	VariantID       uuid.UUID     `gorm:"type:uuid;not null;index" json:"variant_id"`
 	Variant         Variant       `gorm:"foreignKey:VariantID;references:ID" json:"variant"`
+
 	// Quantity        int           `gorm:"not null" json:"quantity"`
 
 	Quantity decimal.Decimal `gorm:"type:decimal(10,2);not null"`
+
 }

@@ -6,7 +6,9 @@ import (
 
 	"defab-erp/internal/auth"
 	"defab-erp/internal/core/db"
+
 	"defab-erp/internal/stocktransfer"
+
 	"defab-erp/internal/warehouse"
 
 	"defab-erp/internal/core/model"
@@ -24,11 +26,14 @@ import (
 	"defab-erp/internal/attribute"
 	"defab-erp/internal/category"
 	"defab-erp/internal/product"
+
 	"defab-erp/internal/productdescription"
+
 	"defab-erp/internal/user"
 	"defab-erp/internal/variant"
 
 	"defab-erp/internal/core/storage"
+
 	"defab-erp/internal/coupon"
 	"defab-erp/internal/goodsreceipt"
 	"defab-erp/internal/stock"
@@ -76,15 +81,18 @@ func main() {
 	productStore := product.NewStore(database)
 	productHandler := product.NewHandler(productStore)
 
+
 	
 	pdStore := productdescription.NewStore(database)
 	pdHandler := productdescription.NewHandler(pdStore)
+
 
 	attributeStore := attribute.NewStore(database)
 	attributeHandler := attribute.NewHandler(attributeStore)
 
 	variantStore := variant.NewStore(database)
 	variantHandler := variant.NewHandler(variantStore)
+
 
 		supplierStore := supplier.NewStore(database)
 	supplierHandler := supplier.NewHandler(supplierStore)
@@ -103,6 +111,7 @@ func main() {
 
 	couponStore := coupon.NewStore(database)
 	couponHandler := coupon.NewHandler(couponStore)
+
 
 	// 4. Fiber
 	app := fiber.New()
@@ -175,6 +184,7 @@ func main() {
 	productHandler,
 	)
 
+
 	
 	productdescription.RegisterRoutes(
 		protected.Group("",
@@ -182,6 +192,7 @@ func main() {
 		),
 		pdHandler,
 	)
+
 
 	attribute.RegisterRoutes(
 	protected.Group("",
@@ -200,6 +211,7 @@ func main() {
 	)),
 	variantHandler,
 	)
+
 
 
 	supplier.RegisterRoutes(
@@ -264,6 +276,7 @@ func main() {
 	    ),
 	    couponHandler,
 	)
+
 
 
 
