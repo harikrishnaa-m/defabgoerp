@@ -34,14 +34,13 @@ func (s *Store) Create(in CreateVariantInput) (string, error) {
 	VALUES ($1,$2,$3,$4,$5,$6)
 	RETURNING id
 	`,
-	in.ProductID,
-	in.Name,
-	in.SKU,
-	in.Price,
-	in.CostPrice,
-	in.SKU, 
-).Scan(&id)
-
+		in.ProductID,
+		in.Name,
+		in.SKU,
+		in.Price,
+		in.CostPrice,
+		in.SKU,
+	).Scan(&id)
 
 	if err != nil {
 		return "", err
@@ -122,29 +121,33 @@ func (s *Store) SetActive(id string, active bool) error {
 //
 
 func (s *Store) GetAttributeValues(ids []string) (map[string]string, error) {
-	query := fmt.Sprintf(`
-	SELECT id,value FROM attribute_values
-	WHERE id IN (%s)
-	`, placeholders(len(ids)))
-
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("no attribute value IDs provided")
+	}
+	query := fmt.Sprintf(`SELECT id, value FROM attribute_values WHERE id IN (%s)`, placeholders(len(ids)))
 	args := make([]interface{}, len(ids))
 	for i, v := range ids {
 		args[i] = v
 	}
-
+	// Debug: print query and args
+	fmt.Printf("GetAttributeValues query: %s\n", query)
+	fmt.Printf("GetAttributeValues args: %v\n", args)
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("attribute_values query error: %w", err)
 	}
 	defer rows.Close()
-
 	out := map[string]string{}
 	for rows.Next() {
 		var id, val string
-		rows.Scan(&id, &val)
+		if err := rows.Scan(&id, &val); err != nil {
+			return nil, fmt.Errorf("attribute_values scan error: %w", err)
+		}
 		out[id] = val
 	}
-
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no attribute values found for provided IDs")
+	}
 	return out, nil
 }
 
@@ -152,43 +155,43 @@ func (s *Store) GetAttributeValues(ids []string) (map[string]string, error) {
 // ================= GENERATOR =================
 //
 
-func (s *Store) Generate(in GenerateVariantsInput) ([]string, error) {
-	combinations := cartesian(in.Groups)
+// GenerateWithAttrOrder generates variants using attribute IDs and value IDs
+func (s *Store) GenerateWithAttrOrder(productID string, basePrice float64, attrOrder []string, groups [][]string) ([]string, error) {
+	combinations := cartesian(groups)
 
-	valMap, err := s.GetAttributeValues(flatten(in.Groups))
+	valMap, err := s.GetAttributeValues(flatten(groups))
 	if err != nil {
+		fmt.Printf("GenerateWithAttrOrder: GetAttributeValues error: %v\n", err)
 		return nil, err
 	}
 
 	var created []string
+	prefix, _ := s.getProductPrefix(productID)
 
-	prefix, _ := s.getProductPrefix(in.ProductID)
-
-
+	fmt.Printf("GenerateWithAttrOrder: combinations = %v\n", combinations)
 	for _, combo := range combinations {
-
 		nameParts := []string{}
 		for _, id := range combo {
 			nameParts = append(nameParts, valMap[id])
 		}
-
 		name := strings.Join(nameParts, " ")
-	//	sku := strings.ToUpper(strings.Join(nameParts, "-"))
-	sku := prefix + "-" + strings.ToUpper(strings.Join(nameParts, "-"))
+		sku := prefix + "-" + strings.ToUpper(strings.Join(nameParts, "-"))
 
+		fmt.Printf("GenerateWithAttrOrder: Creating variant: name=%s, sku=%s, combo=%v\n", name, sku, combo)
 		id, err := s.Create(CreateVariantInput{
-			ProductID:         in.ProductID,
+			ProductID:         productID,
 			Name:              name,
 			SKU:               sku,
-			Price:             in.BasePrice,
+			Price:             basePrice,
 			AttributeValueIDs: combo,
 		})
-
-		if err == nil {
+		if err != nil {
+			fmt.Printf("GenerateWithAttrOrder: Create error: %v\n", err)
+		} else {
+			fmt.Printf("GenerateWithAttrOrder: Created variant id=%s\n", id)
 			created = append(created, id)
 		}
 	}
-
 	return created, nil
 }
 
@@ -233,9 +236,6 @@ func cartesian(groups [][]string) [][]string {
 	return result
 }
 
-
-
-
 func (s *Store) getProductPrefix(productID string) (string, error) {
 	var name string
 	err := s.db.QueryRow(
@@ -248,7 +248,7 @@ func (s *Store) getProductPrefix(productID string) (string, error) {
 	}
 
 	// simple prefix rule
-name = strings.ToUpper(name)
+	name = strings.ToUpper(name)
 	name = strings.TrimSpace(name)
 	name = strings.ReplaceAll(name, " ", "")
 	name = strings.ReplaceAll(name, "-", "")

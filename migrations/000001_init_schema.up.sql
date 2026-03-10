@@ -57,8 +57,27 @@ CREATE TABLE products (
     main_image_url VARCHAR(500), -- Main image for product
     is_web_visible BOOLEAN DEFAULT TRUE,
     is_stitched BOOLEAN DEFAULT FALSE,
-    uom VARCHAR(20) DEFAULT 'Unit'
+    uom VARCHAR(20) DEFAULT 'Unit',
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
 );
+
+    -- Attribute tables
+ CREATE TABLE attributes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+    CREATE TABLE attribute_values (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        attribute_id UUID REFERENCES attributes(id) ON DELETE CASCADE,
+        value VARCHAR(200) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    );
 
 CREATE TABLE product_images (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -70,10 +89,21 @@ CREATE TABLE product_images (
 CREATE TABLE variants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     product_id UUID REFERENCES products(id),
-    name VARCHAR(100),       -- "Size M - Red"
-    sku VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(150) NOT NULL,
+    sku VARCHAR(100) UNIQUE NOT NULL,
     price DECIMAL(10, 2) NOT NULL,
-    cost_price DECIMAL(10, 2)
+    cost_price DECIMAL(10, 2),
+    barcode VARCHAR(100) UNIQUE,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE variant_images (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    variant_id UUID REFERENCES variants(id),
+    image_url VARCHAR(500) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE barcodes (
@@ -81,6 +111,13 @@ CREATE TABLE barcodes (
     variant_id UUID REFERENCES variants(id),
     code VARCHAR(100) UNIQUE NOT NULL,
     generated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Variant Attribute Mapping
+CREATE TABLE variant_attribute_mapping (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    variant_id UUID REFERENCES variants(id) ON DELETE CASCADE,
+    attribute_value_id UUID REFERENCES attribute_values(id) ON DELETE CASCADE
 );
 
 -- 5. Inventory & Suppliers

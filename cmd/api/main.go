@@ -116,8 +116,8 @@ func main() {
 	app.Use(recover.New())
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     "http://localhost:5173,https://defab-erp-frontend.vercel.app",
-		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders:     "*",
+		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		AllowCredentials: true,
 	}))
 

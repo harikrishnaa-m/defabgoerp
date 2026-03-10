@@ -17,7 +17,7 @@ type UpdateVariantInput struct {
 }
 
 type GenerateVariantsInput struct {
-	ProductID string     `json:"product_id"`
-	BasePrice float64    `json:"base_price"`
-	Groups    [][]string `json:"groups"` // attribute value id groups
+	ProductID       string              `json:"product_id"`
+	BasePrice       float64             `json:"base_price"`
+	AttributeValues map[string][]string `json:"attribute_values"` // attribute_id: [attribute_value_id,...]
 }

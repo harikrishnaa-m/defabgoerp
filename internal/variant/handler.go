@@ -1,6 +1,10 @@
 package variant
 
-import "github.com/gofiber/fiber/v2"
+import (
+	"fmt"
+
+	"github.com/gofiber/fiber/v2"
+)
 
 type Handler struct {
 	store *Store
@@ -33,7 +37,18 @@ func (h *Handler) Generate(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "bad input"})
 	}
 
-	ids, err := h.store.Generate(in)
+	// Convert map to ordered groups for cartesian product
+	var groups [][]string
+	var attrOrder []string
+	for attrID, valueIDs := range in.AttributeValues {
+		groups = append(groups, valueIDs)
+		attrOrder = append(attrOrder, attrID)
+	}
+	// Debug output
+	fmt.Printf("Generate handler: attrOrder = %v\n", attrOrder)
+	fmt.Printf("Generate handler: groups = %v\n", groups)
+
+	ids, err := h.store.GenerateWithAttrOrder(in.ProductID, in.BasePrice, attrOrder, groups)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -61,12 +76,12 @@ func (h *Handler) ListByProduct(c *fiber.Ctx) error {
 		rows.Scan(&id, &name, &sku, &price, &cost, &active)
 
 		out = append(out, fiber.Map{
-			"id": id,
-			"name": name,
-			"sku": sku,
-			"price": price,
+			"id":         id,
+			"name":       name,
+			"sku":        sku,
+			"price":      price,
 			"cost_price": cost,
-			"is_active": active,
+			"is_active":  active,
 		})
 	}
 
