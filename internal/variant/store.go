@@ -57,6 +57,18 @@ func (s *Store) Create(in CreateVariantInput) (string, error) {
 		}
 	}
 
+	// Save images
+	for _, imgPath := range in.ImagePaths {
+		_, err := tx.Exec(`
+			INSERT INTO variant_images
+			(variant_id, image_url)
+			VALUES ($1,$2)
+		`, id, imgPath)
+		if err != nil {
+			return "", err
+		}
+	}
+
 	return id, tx.Commit()
 }
 

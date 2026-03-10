@@ -24,7 +24,7 @@ func (s *Store) Create(name string) error {
 
 func (s *Store) List(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
-	SELECT id, name
+	SELECT id, name, is_active
 	FROM attributes
 	WHERE is_active = TRUE
 	ORDER BY name
@@ -63,7 +63,7 @@ func (s *Store) CreateValue(attID, value string) error {
 
 func (s *Store) ListValues(attID string) (*sql.Rows, error) {
 	return s.db.Query(`
-	SELECT id, value
+	SELECT id, value, is_active
 	FROM attribute_values
 	WHERE attribute_id=$1 AND is_active=TRUE
 	ORDER BY value

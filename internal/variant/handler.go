@@ -1,9 +1,10 @@
 package variant
 
 import (
+	"defab-erp/internal/core/storage"
 	"fmt"
-
 	"github.com/gofiber/fiber/v2"
+	"strconv"
 )
 
 type Handler struct {
@@ -15,9 +16,75 @@ func NewHandler(s *Store) *Handler {
 }
 
 func (h *Handler) Create(c *fiber.Ctx) error {
-	var in CreateVariantInput
-	if err := c.BodyParser(&in); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "bad input"})
+
+	productID := c.FormValue("product_id")
+	name := c.FormValue("name")
+	sku := c.FormValue("sku")
+
+	priceStr := c.FormValue("price")
+	costPriceStr := c.FormValue("cost_price")
+
+	price, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid price"})
+	}
+
+	costPrice, err := strconv.ParseFloat(costPriceStr, 64)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid cost price"})
+	}
+
+	form, err := c.MultipartForm()
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid form"})
+	}
+
+	attrIDs := form.Value["attribute_value_ids[]"]
+
+	var cleanAttrIDs []string
+	for _, id := range attrIDs {
+		if id != "" {
+			cleanAttrIDs = append(cleanAttrIDs, id)
+		}
+	}
+
+	files := form.File["images"]
+
+	var imagePaths []string
+
+	for _, file := range files {
+
+		data, fname, err := storage.ProcessImage(file)
+		if err != nil {
+			fmt.Println("image processing error:", err)
+			continue
+		}
+
+		url, err := storage.UploadFile(
+			"variants/"+fname,
+			data,
+			file.Header.Get("Content-Type"),
+		)
+		if err != nil {
+			fmt.Println("upload error:", err)
+			continue
+		}
+
+		imagePaths = append(imagePaths, url)
+	}
+
+	fmt.Println("Attribute IDs:", cleanAttrIDs)
+	fmt.Println("Files count:", len(files))
+	fmt.Println("Image paths:", imagePaths)
+
+	in := CreateVariantInput{
+		ProductID:         productID,
+		Name:              name,
+		SKU:               sku,
+		Price:             price,
+		CostPrice:         costPrice,
+		AttributeValueIDs: cleanAttrIDs,
+		ImagePaths:        imagePaths,
 	}
 
 	id, err := h.store.Create(in)

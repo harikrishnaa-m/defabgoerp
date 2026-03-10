@@ -171,8 +171,9 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		var id, name, brand, mainImage, uom, created string
 		var web, stitched bool
 		var cid, cname string
+		var active bool
 
-		rows.Scan(&id, &name, &brand, &mainImage, &web, &stitched, &uom, &created, &cid, &cname)
+		rows.Scan(&id, &name, &brand, &mainImage, &web, &stitched, &uom, &created, &cid, &cname, &active)
 
 		out = append(out, fiber.Map{
 			"id":             id,
@@ -182,6 +183,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 			"uom":            uom,
 			"is_web_visible": web,
 			"is_stitched":    stitched,
+			"is_active":      active,
 			"category": fiber.Map{
 				"id":   cid,
 				"name": cname,

@@ -8,6 +8,7 @@ type CreateVariantInput struct {
 	CostPrice float64 `json:"cost_price"`
 
 	AttributeValueIDs []string `json:"attribute_value_ids"`
+	ImagePaths        []string `json:"image_paths"`
 }
 
 type UpdateVariantInput struct {
@@ -19,5 +20,5 @@ type UpdateVariantInput struct {
 type GenerateVariantsInput struct {
 	ProductID       string              `json:"product_id"`
 	BasePrice       float64             `json:"base_price"`
-	AttributeValues map[string][]string `json:"attribute_values"` // attribute_id: [attribute_value_id,...]
+	AttributeValues map[string][]string `json:"attribute_values"`
 }

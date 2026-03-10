@@ -64,8 +64,9 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		rows.Scan(&id, &name, &active)
 
 		out = append(out, fiber.Map{
-			"id":   id,
-			"name": name,
+			"id":        id,
+			"name":      name,
+			"is_active": active,
 		})
 	}
 

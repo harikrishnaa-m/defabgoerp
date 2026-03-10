@@ -72,7 +72,8 @@ func (s *Store) List(limit, offset int) (*sql.Rows, error) {
 		p.uom,
 		p.created_at,
 		c.id,
-		c.name
+		c.name,
+		p.is_active
 	FROM products p
 	JOIN categories c ON c.id = p.category_id
 	WHERE p.is_active = TRUE
