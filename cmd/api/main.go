@@ -19,6 +19,7 @@ import (
 	"defab-erp/internal/branch"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/joho/godotenv"
@@ -52,8 +53,8 @@ func main() {
 	defer database.Close()
 
 	if err := storage.InitSpaces(); err != nil {
-        log.Fatal("spaces init failed:", err)
-    }
+		log.Fatal("spaces init failed:", err)
+	}
 
 	// 2. Stores (Data Layer)
 	authStore := auth.NewStore(database)
@@ -81,11 +82,8 @@ func main() {
 	productStore := product.NewStore(database)
 	productHandler := product.NewHandler(productStore)
 
-
-	
 	pdStore := productdescription.NewStore(database)
 	pdHandler := productdescription.NewHandler(pdStore)
-
 
 	attributeStore := attribute.NewStore(database)
 	attributeHandler := attribute.NewHandler(attributeStore)
@@ -93,8 +91,7 @@ func main() {
 	variantStore := variant.NewStore(database)
 	variantHandler := variant.NewHandler(variantStore)
 
-
-		supplierStore := supplier.NewStore(database)
+	supplierStore := supplier.NewStore(database)
 	supplierHandler := supplier.NewHandler(supplierStore)
 
 	goodsStore := goodsreceipt.NewStore(database)
@@ -112,13 +109,17 @@ func main() {
 	couponStore := coupon.NewStore(database)
 	couponHandler := coupon.NewHandler(couponStore)
 
-
 	// 4. Fiber
 	app := fiber.New()
 
 	app.Use(logger.New())
 	app.Use(recover.New())
-
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     "http://localhost:5173,https://defab-erp-frontend.vercel.app",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowCredentials: true,
+	}))
 
 	api := app.Group("/api")
 
@@ -134,58 +135,53 @@ func main() {
 	protected := api.Group("", middleware.JWTProtected(authStore))
 
 	role.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(model.RoleSuperAdmin),
-	),
-	roleHandler,
+		protected.Group("",
+			middleware.RequireRole(model.RoleSuperAdmin),
+		),
+		roleHandler,
 	)
-
 
 	branch.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(model.RoleSuperAdmin),
-	),
-	branchHandler,
+		protected.Group("",
+			middleware.RequireRole(model.RoleSuperAdmin),
+		),
+		branchHandler,
 	)
 
-
 	warehouse.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(model.RoleSuperAdmin),
-	),
-	warehouseHandler,
+		protected.Group("",
+			middleware.RequireRole(model.RoleSuperAdmin),
+		),
+		warehouseHandler,
 	)
 
 	user.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(model.RoleSuperAdmin),
-	),
-	userHandler,
+		protected.Group("",
+			middleware.RequireRole(model.RoleSuperAdmin),
+		),
+		userHandler,
 	)
 
 	category.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(
-			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
 		),
-	),
-	categoryHandler,
+		categoryHandler,
 	)
-
 
 	product.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(
-			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
 		),
-	),
-	productHandler,
+		productHandler,
 	)
 
-
-	
 	productdescription.RegisterRoutes(
 		protected.Group("",
 			middleware.RequireRole(model.RoleSuperAdmin),
@@ -193,93 +189,85 @@ func main() {
 		pdHandler,
 	)
 
-
 	attribute.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(
-			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
 		),
-	),
-	attributeHandler,
+		attributeHandler,
 	)
 
 	variant.RegisterRoutes(
-	protected.Group("", middleware.RequireRole(
-		model.RoleSuperAdmin,
-		model.RoleInventoryManager,
-	)),
-	variantHandler,
+		protected.Group("", middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		)),
+		variantHandler,
 	)
-
-
 
 	supplier.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(
-			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
 		),
-	),
-	supplierHandler,
+		supplierHandler,
 	)
 
-	
 	goodsreceipt.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(
-			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
 		),
-	),
-	goodsHandler,
+		goodsHandler,
 	)
 
 	stocktransfer.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(
-			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
 		),
-	),
-	stockTransferHandler,
+		stockTransferHandler,
 	)
 
 	stock.RegisterRoutes(
-	protected.Group("",
-		middleware.RequireRole(
-			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
-			model.RoleStoreManager,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+				model.RoleStoreManager,
+			),
 		),
-	),
-	stockHandler,
+		stockHandler,
 	)
 
 	stockrequest.RegisterRoutes(
-    protected.Group("",
-        middleware.RequireRole(
-            model.RoleSuperAdmin,
-            model.RoleInventoryManager,
-            model.RoleStoreManager,
-        ),
-    ),
-    stockRequestHandler,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+				model.RoleStoreManager,
+			),
+		),
+		stockRequestHandler,
 	)
 
 	coupon.RegisterRoutes(
-	    protected.Group("",
-	        middleware.RequireRole(
-	            model.RoleSuperAdmin,
-	            model.RoleInventoryManager,
-	        ),
-	    ),
-	    couponHandler,
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
+		),
+		couponHandler,
 	)
-
-
-
-
 
 	protected.Get("/me", func(c *fiber.Ctx) error {
 		user := c.Locals("user").(*model.User)

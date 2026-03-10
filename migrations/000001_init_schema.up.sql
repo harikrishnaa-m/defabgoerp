@@ -48,6 +48,10 @@ CREATE TABLE products (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(200) NOT NULL,
     description TEXT,
+    fabric_composition VARCHAR(200),
+    pattern VARCHAR(100),
+    occasion VARCHAR(100),
+    care_instructions VARCHAR(200),
     category_id UUID REFERENCES categories(id),
     brand VARCHAR(100),
     main_image_url VARCHAR(500), -- Main image for product

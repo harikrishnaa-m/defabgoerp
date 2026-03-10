@@ -171,15 +171,20 @@ func (s *Store) CreateProduct(
 	var id string
 
 	err := s.db.QueryRow(`
-		INSERT INTO products
-		(name, category_id, brand, main_image_url)
-		VALUES ($1,$2,$3,$4)
-		RETURNING id
-	`,
+		       INSERT INTO products
+		       (name, category_id, brand, main_image_url, description, fabric_composition, pattern, occasion, care_instructions)
+		       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		       RETURNING id
+	       `,
 		in.Name,
 		in.CategoryID,
 		in.Brand,
 		mainImageURL,
+		in.Description,
+		in.FabricComposition,
+		in.Pattern,
+		in.Occasion,
+		in.CareInstructions,
 	).Scan(&id)
 	if err != nil {
 		return "", err
