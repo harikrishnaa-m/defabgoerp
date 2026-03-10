@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 type Branch struct {
@@ -30,7 +31,9 @@ type Stock struct {
 	Variant   Variant   `gorm:"foreignKey:VariantID;constraint:OnDelete:CASCADE"`
 	Warehouse Warehouse `gorm:"foreignKey:WarehouseID;constraint:OnDelete:CASCADE"`
 
-	Quantity int `gorm:"not null;default:0"`
+
+	Quantity decimal.Decimal `gorm:"type:decimal(10,2);not null;default:0"`
+
 
 	UpdatedAt time.Time
 }
@@ -47,7 +50,10 @@ type StockMovement struct {
 	ToWarehouseID *uuid.UUID `gorm:"type:uuid;index"`
 	ToWarehouse   *Warehouse `gorm:"foreignKey:ToWarehouseID"`
 
-	Quantity int `gorm:"not null"`
+
+	Quantity decimal.Decimal `gorm:"type:decimal(10,2);not null"`
+
+
 
 	MovementType string `gorm:"size:20;not null"`
 	// IN, OUT, TRANSFER
@@ -57,10 +63,19 @@ type StockMovement struct {
 	Status string `gorm:"size:20;default:'COMPLETED'"`
 	// PENDING, IN_TRANSIT, RECEIVED, CANCELLED, COMPLETED
 
-	Reference string `gorm:"size:100"`
+
+//	Reference string `gorm:"size:100"`
+	PurchaseOrderID *uuid.UUID `gorm:"type:uuid;index"`
+
 
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 	UpdatedAt time.Time
+
+	SupplierID *uuid.UUID `gorm:"type:uuid;index"` // ✅ NEW
+
+	Reference string `gorm:"size:100"`
+
+	
 }
 
 type StockRequest struct {
@@ -98,9 +113,15 @@ type StockRequestItem struct {
 	VariantID uuid.UUID `gorm:"type:uuid;not null"`
 	Variant   Variant   `gorm:"foreignKey:VariantID"`
 
-	RequestedQty int `gorm:"not null"`
 
-	ApprovedQty int `gorm:"default:0"`
+	//RequestedQty int `gorm:"not null"`
+
+	//ApprovedQty int `gorm:"default:0"`
+
+	RequestedQty decimal.Decimal `gorm:"type:decimal(10,2);not null"`
+	
+	ApprovedQty  decimal.Decimal `gorm:"type:decimal(10,2);default:0"`
+
 
 	Remarks string `gorm:"type:text"`
 }

@@ -5,7 +5,6 @@ import (
 	"strings"
 )
 
-
 type Store struct {
 	db *sql.DB
 }
@@ -51,7 +50,6 @@ func (s *Store) ListImages(productID string) (*sql.Rows, error) {
 	`, productID)
 }
 
-
 // func (s *Store) ListImages(productID string) (*sql.Rows, error) {
 // 	return s.db.Query(`
 // 	SELECT image_url
@@ -83,7 +81,6 @@ func (s *Store) List(limit, offset int) (*sql.Rows, error) {
 	`, limit, offset)
 }
 
-
 func (s *Store) CountActive() (int, error) {
 
 	var n int
@@ -97,12 +94,11 @@ func (s *Store) CountActive() (int, error) {
 	return n, err
 }
 
-
 //
 // GET BY ID
 //
 
-func (s *Store) Get(id string) (*sql.Row) {
+func (s *Store) Get(id string) *sql.Row {
 	return s.db.QueryRow(`
 	SELECT
 	  p.id,
@@ -150,7 +146,6 @@ func (s *Store) Update(id string, in UpdateProductInput) error {
 	return err
 }
 
-
 //
 // SOFT DELETE / RESTORE
 //
@@ -163,6 +158,10 @@ func (s *Store) SetActive(id string, active bool) error {
 	return err
 }
 
+func (s *Store) IncrementCategoryProductCount(categoryID string) error {
+	_, err := s.db.Exec(`UPDATE categories SET products_count = products_count + 1 WHERE id = $1`, categoryID)
+	return err
+}
 
 func (s *Store) CreateProduct(
 	in CreateProductInput,
@@ -172,21 +171,23 @@ func (s *Store) CreateProduct(
 	var id string
 
 	err := s.db.QueryRow(`
-	INSERT INTO products
-	(name, category_id, brand, main_image_url)
-	VALUES ($1,$2,$3,$4)
-	RETURNING id
+		INSERT INTO products
+		(name, category_id, brand, main_image_url)
+		VALUES ($1,$2,$3,$4)
+		RETURNING id
 	`,
 		in.Name,
 		in.CategoryID,
 		in.Brand,
 		mainImageURL,
 	).Scan(&id)
-
-	return id, err
+	if err != nil {
+		return "", err
+	}
+	// Increment products_count for the category
+	_ = s.IncrementCategoryProductCount(in.CategoryID)
+	return id, nil
 }
-
-
 
 func (s *Store) InsertProductImage(productID, url string) error {
 
@@ -197,8 +198,6 @@ func (s *Store) InsertProductImage(productID, url string) error {
 
 	return err
 }
-
-
 
 func (s *Store) GetMainImage(productID string) (string, error) {
 	var url string
@@ -219,7 +218,6 @@ func (s *Store) UpdateMainImage(productID, url string) error {
 	return err
 }
 
-
 func (s *Store) GetProductImage(id string) (string, error) {
 	var url string
 	err := s.db.QueryRow(`
@@ -230,7 +228,6 @@ func (s *Store) GetProductImage(id string) (string, error) {
 	return url, err
 }
 
-
 func (s *Store) DeleteProductImage(id string) error {
 	_, err := s.db.Exec(`
 	DELETE FROM product_images
@@ -238,7 +235,6 @@ func (s *Store) DeleteProductImage(id string) error {
 	`, id)
 	return err
 }
-
 
 func extractKey(url string) string {
 	// assumes CDN/base url + key
@@ -249,6 +245,3 @@ func extractKey(url string) string {
 	}
 	return url[i+1:]
 }
-
-
-

@@ -6,6 +6,9 @@ import (
 
 	"defab-erp/internal/auth"
 	"defab-erp/internal/core/db"
+
+	"defab-erp/internal/stocktransfer"
+
 	"defab-erp/internal/warehouse"
 
 	"defab-erp/internal/core/model"
@@ -23,10 +26,19 @@ import (
 	"defab-erp/internal/attribute"
 	"defab-erp/internal/category"
 	"defab-erp/internal/product"
+
+	"defab-erp/internal/productdescription"
+
 	"defab-erp/internal/user"
 	"defab-erp/internal/variant"
 
 	"defab-erp/internal/core/storage"
+
+	"defab-erp/internal/coupon"
+	"defab-erp/internal/goodsreceipt"
+	"defab-erp/internal/stock"
+	"defab-erp/internal/stockrequest"
+	"defab-erp/internal/supplier"
 )
 
 func main() {
@@ -69,6 +81,12 @@ func main() {
 	productStore := product.NewStore(database)
 	productHandler := product.NewHandler(productStore)
 
+
+	
+	pdStore := productdescription.NewStore(database)
+	pdHandler := productdescription.NewHandler(pdStore)
+
+
 	attributeStore := attribute.NewStore(database)
 	attributeHandler := attribute.NewHandler(attributeStore)
 
@@ -76,7 +94,23 @@ func main() {
 	variantHandler := variant.NewHandler(variantStore)
 
 
+		supplierStore := supplier.NewStore(database)
+	supplierHandler := supplier.NewHandler(supplierStore)
 
+	goodsStore := goodsreceipt.NewStore(database)
+	goodsHandler := goodsreceipt.NewHandler(goodsStore)
+
+	stockTransferStore := stocktransfer.NewStore(database)
+	stockTransferHandler := stocktransfer.NewHandler(stockTransferStore)
+
+	stockStore := stock.NewStore(database)
+	stockHandler := stock.NewHandler(stockStore)
+
+	stockRequestStore := stockrequest.NewStore(database)
+	stockRequestHandler := stockrequest.NewHandler(stockRequestStore)
+
+	couponStore := coupon.NewStore(database)
+	couponHandler := coupon.NewHandler(couponStore)
 
 
 	// 4. Fiber
@@ -151,6 +185,15 @@ func main() {
 	)
 
 
+	
+	productdescription.RegisterRoutes(
+		protected.Group("",
+			middleware.RequireRole(model.RoleSuperAdmin),
+		),
+		pdHandler,
+	)
+
+
 	attribute.RegisterRoutes(
 	protected.Group("",
 		middleware.RequireRole(
@@ -168,6 +211,72 @@ func main() {
 	)),
 	variantHandler,
 	)
+
+
+
+	supplier.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	supplierHandler,
+	)
+
+	
+	goodsreceipt.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	goodsHandler,
+	)
+
+	stocktransfer.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+		),
+	),
+	stockTransferHandler,
+	)
+
+	stock.RegisterRoutes(
+	protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
+			model.RoleStoreManager,
+		),
+	),
+	stockHandler,
+	)
+
+	stockrequest.RegisterRoutes(
+    protected.Group("",
+        middleware.RequireRole(
+            model.RoleSuperAdmin,
+            model.RoleInventoryManager,
+            model.RoleStoreManager,
+        ),
+    ),
+    stockRequestHandler,
+	)
+
+	coupon.RegisterRoutes(
+	    protected.Group("",
+	        middleware.RequireRole(
+	            model.RoleSuperAdmin,
+	            model.RoleInventoryManager,
+	        ),
+	    ),
+	    couponHandler,
+	)
+
 
 
 

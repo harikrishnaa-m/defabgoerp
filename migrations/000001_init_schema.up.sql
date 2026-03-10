@@ -15,6 +15,8 @@ CREATE TABLE users (
     password_hash VARCHAR(255) NOT NULL,
     role_id INT REFERENCES roles(id),
     branch_id INT, -- Nullable (Admin has no branch)
+    refresh_token VARCHAR(255), -- For storing refresh token securely
+    reset_token VARCHAR(255), -- For password reset functionality
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -36,19 +38,29 @@ CREATE TABLE warehouses (
 
 -- 4. Product Catalog (The "Meters" Logic)
 CREATE TABLE categories (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) UNIQUE NOT NULL
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) UNIQUE NOT NULL,
+    products_count INT DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 CREATE TABLE products (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(200) NOT NULL,
     description TEXT,
-    category_id INT REFERENCES categories(id),
+    category_id UUID REFERENCES categories(id),
     brand VARCHAR(100),
-    is_web_visible BOOLEAN DEFAULT TRUE,  -- Hides "Cloth Sheets" from Web
-    is_stitched BOOLEAN DEFAULT FALSE,    -- True = Shirt (We made it)
-    uom VARCHAR(20) DEFAULT 'Unit'        -- 'Unit' or 'Meter'
+    main_image_url VARCHAR(500), -- Main image for product
+    is_web_visible BOOLEAN DEFAULT TRUE,
+    is_stitched BOOLEAN DEFAULT FALSE,
+    uom VARCHAR(20) DEFAULT 'Unit'
+);
+
+CREATE TABLE product_images (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    product_id UUID REFERENCES products(id),
+    image_url VARCHAR(500) NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE TABLE variants (
