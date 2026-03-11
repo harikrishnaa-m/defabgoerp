@@ -168,22 +168,27 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	var out []fiber.Map
 
 	for rows.Next() {
-		var id, name, brand, mainImage, uom, created string
-		var web, stitched bool
+		var id, name, brand, mainImage, uom, created, description, fabricComposition, pattern, occasion, careInstructions string
+		var web, stitched, active bool
 		var cid, cname string
-		var active bool
 
-		rows.Scan(&id, &name, &brand, &mainImage, &web, &stitched, &uom, &created, &cid, &cname, &active)
+		rows.Scan(&id, &name, &brand, &mainImage, &web, &stitched, &uom, &created, &cid, &cname, &active, &description, &fabricComposition, &pattern, &occasion, &careInstructions)
 
 		out = append(out, fiber.Map{
-			"id":             id,
-			"name":           name,
-			"brand":          brand,
-			"main_image_url": mainImage,
-			"uom":            uom,
-			"is_web_visible": web,
-			"is_stitched":    stitched,
-			"is_active":      active,
+			"id":                 id,
+			"name":               name,
+			"brand":              brand,
+			"main_image_url":     mainImage,
+			"uom":                uom,
+			"is_web_visible":     web,
+			"is_stitched":        stitched,
+			"is_active":          active,
+			"created_at":         created,
+			"description":        description,
+			"fabric_composition": fabricComposition,
+			"pattern":            pattern,
+			"occasion":           occasion,
+			"care_instructions":  careInstructions,
 			"category": fiber.Map{
 				"id":   cid,
 				"name": cname,
@@ -210,7 +215,7 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 
 	row := h.store.Get(id)
 
-	var pid, name, uom string
+	var pid, name, uom, description, fabricComposition, pattern, occasion, careInstructions string
 	var brand, mainImage, cid, cname sql.NullString
 	var web, stitched, active bool
 
@@ -225,6 +230,11 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		&active,
 		&cid,
 		&cname,
+		&description,
+		&fabricComposition,
+		&pattern,
+		&occasion,
+		&careInstructions,
 	)
 
 	if err != nil {
@@ -264,15 +274,20 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"id":             pid,
-		"name":           name,
-		"brand":          brand.String,
-		"main_image_url": mainImage.String,
-		"gallery":        gallery,
-		"uom":            uom,
-		"is_active":      active,
-		"is_web_visible": web,
-		"is_stitched":    stitched,
+		"id":                 pid,
+		"name":               name,
+		"brand":              brand.String,
+		"main_image_url":     mainImage.String,
+		"gallery":            gallery,
+		"uom":                uom,
+		"is_active":          active,
+		"is_web_visible":     web,
+		"is_stitched":        stitched,
+		"description":        description,
+		"fabric_composition": fabricComposition,
+		"pattern":            pattern,
+		"occasion":           occasion,
+		"care_instructions":  careInstructions,
 		"category": fiber.Map{
 			"id":   cid.String,
 			"name": cname.String,

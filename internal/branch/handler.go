@@ -40,17 +40,15 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	var out []map[string]any
 
 	for rows.Next() {
-		var id int
-		var name, address string
+		var id, name, address, created string
 		var managerID *string
-		var created string
 
 		rows.Scan(&id, &name, &address, &managerID, &created)
 
 		out = append(out, map[string]any{
-			"id": id,
-			"name": name,
-			"address": address,
+			"id":         id,
+			"name":       name,
+			"address":    address,
 			"manager_id": managerID,
 			"created_at": created,
 		})
@@ -59,12 +57,8 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
-
 func (h *Handler) Update(c *fiber.Ctx) error {
-	id, err := c.ParamsInt("id")
-	if err != nil {
-		return c.Status(400).SendString("invalid id")
-	}
+	id := c.Params("id")
 
 	var in UpdateBranchInput
 
@@ -76,5 +70,5 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		return c.Status(500).SendString(err.Error())
 	}
 
-	return c.SendStatus(200)
+	return c.JSON(fiber.Map{"message": "branch updated"})
 }

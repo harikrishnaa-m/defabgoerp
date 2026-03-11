@@ -73,7 +73,12 @@ func (s *Store) List(limit, offset int) (*sql.Rows, error) {
 		p.created_at,
 		c.id,
 		c.name,
-		p.is_active
+		p.is_active,
+		p.description,
+		p.fabric_composition,
+		p.pattern,
+		p.occasion,
+		p.care_instructions
 	FROM products p
 	JOIN categories c ON c.id = p.category_id
 	ORDER BY p.created_at DESC
@@ -100,21 +105,26 @@ func (s *Store) CountActive() (int, error) {
 
 func (s *Store) Get(id string) *sql.Row {
 	return s.db.QueryRow(`
-	SELECT
-	  p.id,
-	  p.name,
-	  p.brand,
-	  p.main_image_url,
-	  p.is_web_visible,
-	  p.is_stitched,
-	  p.uom,
-	  p.is_active,
-	  c.id,
-	  c.name
-	FROM products p
-	JOIN categories c ON p.category_id = c.id
-	WHERE p.id=$1
-	`, id)
+		SELECT
+			p.id,
+			p.name,
+			p.brand,
+			p.main_image_url,
+			p.is_web_visible,
+			p.is_stitched,
+			p.uom,
+			p.is_active,
+			c.id,
+			c.name,
+			p.description,
+			p.fabric_composition,
+			p.pattern,
+			p.occasion,
+			p.care_instructions
+		FROM products p
+		JOIN categories c ON p.category_id = c.id
+		WHERE p.id=$1
+		`, id)
 }
 
 //

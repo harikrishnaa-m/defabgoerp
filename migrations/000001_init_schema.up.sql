@@ -23,18 +23,22 @@ CREATE TABLE users (
 
 -- 3. Locations (Store & Factory)
 CREATE TABLE branches (
-    id SERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(100) NOT NULL,
     address TEXT,
     manager_id UUID REFERENCES users(id)
 );
+-- Add created_at column to branches table
+ALTER TABLE branches ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
 
 CREATE TABLE warehouses (
-    id SERIAL PRIMARY KEY,
-    branch_id INT REFERENCES branches(id),
-    name VARCHAR(100) NOT NULL,
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    branch_id UUID REFERENCES branches(id),
+    name VARCHAR(150) NOT NULL,
     type VARCHAR(20) DEFAULT 'STORE' -- CENTRAL, STORE, FACTORY
 );
+-- Add created_at column to warehouses table
+ALTER TABLE warehouses ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
 
 -- 4. Product Catalog (The "Meters" Logic)
 CREATE TABLE categories (
