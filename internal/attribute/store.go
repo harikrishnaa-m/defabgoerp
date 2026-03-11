@@ -26,7 +26,6 @@ func (s *Store) List(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
 	SELECT id, name, is_active
 	FROM attributes
-	WHERE is_active = TRUE
 	ORDER BY name
 	LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -65,7 +64,7 @@ func (s *Store) ListValues(attID string) (*sql.Rows, error) {
 	return s.db.Query(`
 	SELECT id, value, is_active
 	FROM attribute_values
-	WHERE attribute_id=$1 AND is_active=TRUE
+	WHERE attribute_id=$1
 	ORDER BY value
 	`, attID)
 }
