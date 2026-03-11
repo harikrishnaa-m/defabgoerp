@@ -76,7 +76,6 @@ func (s *Store) List(limit, offset int) (*sql.Rows, error) {
 		p.is_active
 	FROM products p
 	JOIN categories c ON c.id = p.category_id
-	WHERE p.is_active = TRUE
 	ORDER BY p.created_at DESC
 	LIMIT $1 OFFSET $2
 	`, limit, offset)

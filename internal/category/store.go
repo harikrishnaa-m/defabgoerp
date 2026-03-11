@@ -30,7 +30,6 @@ func (s *Store) ListActive(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
 		SELECT id, name, is_active
 		FROM categories
-		WHERE is_active = TRUE
 		ORDER BY name
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
