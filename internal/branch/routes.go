@@ -10,3 +10,5 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	g.Patch("/:id", h.Update)
 
 }
+
+//tested

@@ -42,17 +42,15 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	var out []map[string]any
 
 	for rows.Next() {
-		var id string
-		var branchID *int
-		var name, typ, created string
+		var id, branchID, name, typ, created string
 
 		rows.Scan(&id, &branchID, &name, &typ, &created)
 
 		out = append(out, map[string]any{
-			"id": id,
-			"branch_id": branchID,
-			"name": name,
-			"type": typ,
+			"id":         id,
+			"branch_id":  branchID,
+			"name":       name,
+			"type":       typ,
 			"created_at": created,
 		})
 	}

@@ -8,7 +8,7 @@ import (
 )
 
 type Branch struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
+	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	Name      string    `gorm:"not null" json:"name"`
 	Address   string    `json:"address"`
 	ManagerID uuid.UUID `json:"manager_id"`
@@ -31,9 +31,7 @@ type Stock struct {
 	Variant   Variant   `gorm:"foreignKey:VariantID;constraint:OnDelete:CASCADE"`
 	Warehouse Warehouse `gorm:"foreignKey:WarehouseID;constraint:OnDelete:CASCADE"`
 
-
 	Quantity decimal.Decimal `gorm:"type:decimal(10,2);not null;default:0"`
-
 
 	UpdatedAt time.Time
 }
@@ -50,10 +48,7 @@ type StockMovement struct {
 	ToWarehouseID *uuid.UUID `gorm:"type:uuid;index"`
 	ToWarehouse   *Warehouse `gorm:"foreignKey:ToWarehouseID"`
 
-
 	Quantity decimal.Decimal `gorm:"type:decimal(10,2);not null"`
-
-
 
 	MovementType string `gorm:"size:20;not null"`
 	// IN, OUT, TRANSFER
@@ -63,10 +58,8 @@ type StockMovement struct {
 	Status string `gorm:"size:20;default:'COMPLETED'"`
 	// PENDING, IN_TRANSIT, RECEIVED, CANCELLED, COMPLETED
 
-
-//	Reference string `gorm:"size:100"`
+	//	Reference string `gorm:"size:100"`
 	PurchaseOrderID *uuid.UUID `gorm:"type:uuid;index"`
-
 
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 	UpdatedAt time.Time
@@ -74,8 +67,6 @@ type StockMovement struct {
 	SupplierID *uuid.UUID `gorm:"type:uuid;index"` // ✅ NEW
 
 	Reference string `gorm:"size:100"`
-
-	
 }
 
 type StockRequest struct {
@@ -113,15 +104,13 @@ type StockRequestItem struct {
 	VariantID uuid.UUID `gorm:"type:uuid;not null"`
 	Variant   Variant   `gorm:"foreignKey:VariantID"`
 
-
 	//RequestedQty int `gorm:"not null"`
 
 	//ApprovedQty int `gorm:"default:0"`
 
 	RequestedQty decimal.Decimal `gorm:"type:decimal(10,2);not null"`
-	
-	ApprovedQty  decimal.Decimal `gorm:"type:decimal(10,2);default:0"`
 
+	ApprovedQty decimal.Decimal `gorm:"type:decimal(10,2);default:0"`
 
 	Remarks string `gorm:"type:text"`
 }

@@ -18,3 +18,5 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	g.Get("/:id/images", h.ListImages)
 	g.Delete("/images/:imageId", h.DeleteImage)
 }
+
+//tested
