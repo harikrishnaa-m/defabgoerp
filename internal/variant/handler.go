@@ -3,8 +3,9 @@ package variant
 import (
 	"defab-erp/internal/core/storage"
 	"fmt"
-	"github.com/gofiber/fiber/v2"
 	"strconv"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
@@ -155,13 +156,118 @@ func (h *Handler) ListByProduct(c *fiber.Ctx) error {
 	return c.JSON(out)
 }
 
-func (h *Handler) Update(c *fiber.Ctx) error {
-	var in UpdateVariantInput
-	if err := c.BodyParser(&in); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "bad input"})
+func (h *Handler) GetByID(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	row, _ := h.store.Get(id)
+	var variantID, productID, name, sku string
+	var price, costPrice float64
+	var isActive bool
+	if err := row.Scan(&variantID, &productID, &name, &sku, &price, &costPrice, &isActive); err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "variant not found"})
 	}
 
-	if err := h.store.Update(c.Params("id"), in); err != nil {
+	// images
+	imgRows, err := h.store.ListImages(variantID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	defer imgRows.Close()
+	var images []fiber.Map
+	for imgRows.Next() {
+		var imgID, url, created string
+		imgRows.Scan(&imgID, &url, &created)
+		images = append(images, fiber.Map{"id": imgID, "url": url})
+	}
+
+	// attributes
+	attributes, err := h.store.GetVariantAttributes(variantID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"id":         variantID,
+		"product_id": productID,
+		"name":       name,
+		"sku":        sku,
+		"price":      price,
+		"cost_price": costPrice,
+		"is_active":  isActive,
+		"images":     images,
+		"attributes": attributes,
+	})
+}
+
+func (h *Handler) Update(c *fiber.Ctx) error {
+	variantID := c.Params("id")
+
+	contentType := string(c.Request().Header.ContentType())
+
+	var in UpdateVariantInput
+
+	// Support both JSON and multipart form
+	if len(contentType) >= 19 && contentType[:19] == "multipart/form-data" {
+		form, err := c.MultipartForm()
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid form"})
+		}
+
+		if v := c.FormValue("name"); v != "" {
+			in.Name = &v
+		}
+		if v := c.FormValue("price"); v != "" {
+			p, err := strconv.ParseFloat(v, 64)
+			if err == nil {
+				in.Price = &p
+			}
+		}
+		if v := c.FormValue("cost_price"); v != "" {
+			cp, err := strconv.ParseFloat(v, 64)
+			if err == nil {
+				in.CostPrice = &cp
+			}
+		}
+
+		for _, id := range form.Value["attribute_value_ids[]"] {
+			if id != "" {
+				in.AttributeValueIDs = append(in.AttributeValueIDs, id)
+			}
+		}
+		// fallback: try without []
+		if len(in.AttributeValueIDs) == 0 {
+			for _, id := range form.Value["attribute_value_ids"] {
+				if id != "" {
+					in.AttributeValueIDs = append(in.AttributeValueIDs, id)
+				}
+			}
+		}
+		fmt.Println("Update: attribute_value_ids =", in.AttributeValueIDs)
+
+		// Handle new image uploads
+		files := form.File["images"]
+		fmt.Println("Update: image files count =", len(files))
+		for _, file := range files {
+			data, fname, err := storage.ProcessImage(file)
+			if err != nil {
+				fmt.Println("Update: image process error:", err)
+				continue
+			}
+			url, err := storage.UploadFile("variants/"+fname, data, file.Header.Get("Content-Type"))
+			if err != nil {
+				fmt.Println("Update: image upload error:", err)
+				continue
+			}
+			fmt.Println("Update: inserted image url =", url)
+			_ = h.store.InsertImage(variantID, url)
+		}
+	} else {
+		if err := c.BodyParser(&in); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "bad input"})
+		}
+	}
+
+	if err := h.store.Update(variantID, in); err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 

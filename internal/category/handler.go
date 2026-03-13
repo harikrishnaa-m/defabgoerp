@@ -60,13 +60,15 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	for rows.Next() {
 		var id, name string
 		var active bool
+		var productsCount int
 
-		rows.Scan(&id, &name, &active)
+		rows.Scan(&id, &name, &active, &productsCount)
 
 		out = append(out, fiber.Map{
-			"id":        id,
-			"name":      name,
-			"is_active": active,
+			"id":             id,
+			"name":           name,
+			"is_active":      active,
+			"products_count": productsCount,
 		})
 	}
 
@@ -87,15 +89,16 @@ func (h *Handler) List(c *fiber.Ctx) error {
 func (h *Handler) Get(c *fiber.Ctx) error {
 	id := c.Params("id")
 
-	cid, name, active, err := h.store.Get(id)
+	cid, name, active, productsCount, err := h.store.Get(id)
 	if err != nil {
 		return c.Status(404).SendString("not found")
 	}
 
 	return c.JSON(fiber.Map{
-		"id":        cid,
-		"name":      name,
-		"is_active": active,
+		"id":             cid,
+		"name":           name,
+		"is_active":      active,
+		"products_count": productsCount,
 	})
 }
 

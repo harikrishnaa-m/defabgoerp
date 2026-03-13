@@ -96,12 +96,47 @@ func (s *Store) Get(id string) (*sql.Row, error) {
 	`, id), nil
 }
 
+func (s *Store) GetVariantAttributes(variantID string) ([]map[string]string, error) {
+	rows, err := s.db.Query(`
+		SELECT av.id, av.value, a.id, a.name
+		FROM variant_attribute_mapping vam
+		JOIN attribute_values av ON vam.attribute_value_id = av.id
+		JOIN attributes a ON av.attribute_id = a.id
+		WHERE vam.variant_id = $1
+	`, variantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []map[string]string
+	for rows.Next() {
+		var avID, avValue, attID, attName string
+		if err := rows.Scan(&avID, &avValue, &attID, &attName); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]string{
+			"attribute_id":   attID,
+			"attribute_name": attName,
+			"value_id":       avID,
+			"value_name":     avValue,
+		})
+	}
+	return out, nil
+}
+
 //
 // ================= UPDATE =================
 //
 
 func (s *Store) Update(id string, in UpdateVariantInput) error {
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
 	UPDATE variants SET
 	name = COALESCE($1,name),
 	price = COALESCE($2,price),
@@ -113,7 +148,24 @@ func (s *Store) Update(id string, in UpdateVariantInput) error {
 		in.CostPrice,
 		id,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if len(in.AttributeValueIDs) > 0 {
+		_, err = tx.Exec(`DELETE FROM variant_attribute_mapping WHERE variant_id=$1`, id)
+		if err != nil {
+			return err
+		}
+		for _, avid := range in.AttributeValueIDs {
+			_, err = tx.Exec(`INSERT INTO variant_attribute_mapping (variant_id, attribute_value_id) VALUES ($1,$2)`, id, avid)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return tx.Commit()
 }
 
 //

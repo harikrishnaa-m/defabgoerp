@@ -8,7 +8,7 @@ type CreateWarehouseInput struct {
 }
 
 type UpdateWarehouseInput struct {
-	BranchID *int    `json:"branch_id"`
+	BranchID *string `json:"branch_id"`
 	Name     *string `json:"name"`
 	Type     *string `json:"type"`
 }

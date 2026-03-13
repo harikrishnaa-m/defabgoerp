@@ -28,7 +28,7 @@ func (s *Store) Create(name string) error {
 
 func (s *Store) ListActive(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
-		SELECT id, name, is_active
+		SELECT id, name, is_active, products_count
 		FROM categories
 		ORDER BY name
 		LIMIT $1 OFFSET $2
@@ -47,16 +47,17 @@ func (s *Store) CountActive() (int, error) {
 // GET BY ID (admin can see inactive too)
 //
 
-func (s *Store) Get(id string) (string, string, bool, error) {
+func (s *Store) Get(id string) (string, string, bool, int, error) {
 	var cid, name string
 	var active bool
+	var productsCount int
 
 	err := s.db.QueryRow(
-		`SELECT id, name, is_active FROM categories WHERE id=$1`,
+		`SELECT id, name, is_active, products_count FROM categories WHERE id=$1`,
 		id,
-	).Scan(&cid, &name, &active)
+	).Scan(&cid, &name, &active, &productsCount)
 
-	return cid, name, active, err
+	return cid, name, active, productsCount, err
 }
 
 //

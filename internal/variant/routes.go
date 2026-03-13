@@ -9,6 +9,7 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	g.Post("/generate", h.Generate)
 
 	g.Get("/product/:productId", h.ListByProduct)
+	g.Get("/:id", h.GetByID)
 
 	g.Patch("/:id", h.Update)
 	g.Patch("/:id/deactivate", h.Deactivate)

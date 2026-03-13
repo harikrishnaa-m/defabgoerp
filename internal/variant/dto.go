@@ -12,9 +12,10 @@ type CreateVariantInput struct {
 }
 
 type UpdateVariantInput struct {
-	Name      *string  `json:"name"`
-	Price     *float64 `json:"price"`
-	CostPrice *float64 `json:"cost_price"`
+	Name              *string  `json:"name"`
+	Price             *float64 `json:"price"`
+	CostPrice         *float64 `json:"cost_price"`
+	AttributeValueIDs []string `json:"attribute_value_ids"`
 }
 
 type GenerateVariantsInput struct {
