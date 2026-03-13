@@ -28,8 +28,13 @@ CREATE TABLE branches (
     address TEXT,
     manager_id UUID REFERENCES users(id)
 );
--- Add created_at column to branches table
 ALTER TABLE branches ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Add new columns to branches table
+ALTER TABLE branches ADD COLUMN branch_code VARCHAR(50);
+ALTER TABLE branches ADD COLUMN city VARCHAR(100);
+ALTER TABLE branches ADD COLUMN state VARCHAR(100);
+ALTER TABLE branches ADD COLUMN phone_number VARCHAR(20);
 
 CREATE TABLE warehouses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -37,8 +42,10 @@ CREATE TABLE warehouses (
     name VARCHAR(150) NOT NULL,
     type VARCHAR(20) DEFAULT 'STORE' -- CENTRAL, STORE, FACTORY
 );
--- Add created_at column to warehouses table
 ALTER TABLE warehouses ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Add warehouse_code column
+ALTER TABLE warehouses ADD COLUMN warehouse_code VARCHAR(50);
 
 -- 4. Product Catalog (The "Meters" Logic)
 CREATE TABLE categories (
@@ -124,7 +131,6 @@ CREATE TABLE variant_attribute_mapping (
     attribute_value_id UUID REFERENCES attribute_values(id) ON DELETE CASCADE
 );
 
--- 5. Inventory & Suppliers
 CREATE TABLE suppliers (
     id SERIAL PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
@@ -140,6 +146,16 @@ CREATE TABLE warehouse_stocks (
     reserved DECIMAL(10, 2) DEFAULT 0,
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(warehouse_id, variant_id)      -- Prevents duplicate rows
+);
+
+-- Stock table (new, aligns with Go model)
+CREATE TABLE stocks (
+     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+     variant_id UUID NOT NULL REFERENCES variants(id) ON DELETE CASCADE,
+     warehouse_id UUID NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+     quantity DECIMAL(10, 2) NOT NULL DEFAULT 0,
+     updated_at TIMESTAMPTZ DEFAULT NOW(),
+     UNIQUE(variant_id, warehouse_id)
 );
 
 CREATE TABLE stock_movements (

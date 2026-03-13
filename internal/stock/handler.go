@@ -1,3 +1,4 @@
+
 package stock
 
 import (
@@ -19,7 +20,23 @@ func NewHandler(s *Store) *Handler {
 	return &Handler{store: s}
 }
 
-// GET /stocks/warehouse/:id
+// POST /stocks
+func (h *Handler) Create(c *fiber.Ctx) error {
+	var in StockCreateInput
+	if err := c.BodyParser(&in); err != nil {
+		return c.Status(400).SendString("bad input")
+	}
+
+	if in.VariantID == "" || in.WarehouseID == "" || in.Quantity.IsZero() {
+		return c.Status(400).SendString("variant_id, warehouse_id, quantity required")
+	}
+
+	id, err := h.store.Create(in)
+	if err != nil {
+		return c.Status(500).SendString(err.Error())
+	}
+	return c.JSON(fiber.Map{"message": "stock created", "id": id})
+}
 func (h *Handler) ByWarehouse(c *fiber.Ctx) error {
 	warehouseID := c.Params("id")
 	page := c.QueryInt("page", 1)
@@ -42,14 +59,64 @@ func (h *Handler) ByWarehouse(c *fiber.Ctx) error {
 
 		out = append(out, fiber.Map{
 			"variant_id": variantID,
-			"product": product,
-			"variant": variant,
-			"warehouse": warehouse,
-			"quantity": qty,
+			"product":    product,
+			"variant":    variant,
+			"warehouse":  warehouse,
+			"quantity":   qty,
 		})
 	}
 
 	return c.JSON(out)
+}
+
+// GET /stocks/branch/:id
+func (h *Handler) ByBranch(c *fiber.Ctx) error {
+	branchID := c.Params("id")
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	offset := (page - 1) * limit
+
+	rows, err := h.store.ListByBranch(branchID, limit, offset)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+	defer rows.Close()
+
+	var out []fiber.Map
+	for rows.Next() {
+		var productID, productName, variantID, variantName, warehouseID, warehouseName string
+		var qty decimal.Decimal
+		if err := rows.Scan(&productID, &productName, &variantID, &variantName, &warehouseID, &warehouseName, &qty); err != nil {
+			return httperr.Internal(c)
+		}
+		out = append(out, fiber.Map{
+			"product_id": productID,
+			"product_name": productName,
+			"variant_id": variantID,
+			"variant_name": variantName,
+			"warehouse_id": warehouseID,
+			"warehouse_name": warehouseName,
+			"quantity": qty,
+		})
+	}
+	return c.JSON(out)
+}
+
+// PATCH /stocks/:id
+func (h *Handler) Update(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var in StockUpdateInput
+	if err := c.BodyParser(&in); err != nil {
+		return c.Status(400).SendString("bad input")
+	}
+	if in.VariantID == "" || in.WarehouseID == "" || in.Quantity.IsZero() {
+		return c.Status(400).SendString("variant_id, warehouse_id, quantity required")
+	}
+	err := h.store.Update(id, in)
+	if err != nil {
+		return c.Status(500).SendString(err.Error())
+	}
+	return c.JSON(fiber.Map{"message": "stock updated", "id": id})
 }
 
 // GET /stocks/variant/:id
@@ -71,7 +138,7 @@ func (h *Handler) ByVariant(c *fiber.Ctx) error {
 
 		out = append(out, fiber.Map{
 			"warehouse": warehouse,
-			"quantity": qty,
+			"quantity":  qty,
 		})
 	}
 
@@ -98,16 +165,15 @@ func (h *Handler) LowStock(c *fiber.Ctx) error {
 		rows.Scan(&product, &variant, &warehouse, &qty)
 
 		out = append(out, fiber.Map{
-			"product": product,
-			"variant": variant,
+			"product":   product,
+			"variant":   variant,
 			"warehouse": warehouse,
-			"quantity": qty,
+			"quantity":  qty,
 		})
 	}
 
 	return c.JSON(out)
 }
-
 
 // gat all stocks
 
@@ -126,10 +192,10 @@ func (h *Handler) All(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var (
-			pid, pname string
+			pid, pname      string
 			vid, vname, sku string
-			wid, wname string
-			qty decimal.Decimal
+			wid, wname      string
+			qty             decimal.Decimal
 		)
 
 		if err := rows.Scan(
@@ -155,7 +221,6 @@ func (h *Handler) All(c *fiber.Ctx) error {
 		"data":  data,
 	})
 }
-
 
 func (h *Handler) ByProduct(c *fiber.Ctx) error {
 	productID := c.Params("id")
@@ -190,14 +255,12 @@ func (h *Handler) ByProduct(c *fiber.Ctx) error {
 	})
 }
 
-
 func nullOrValue(ns sql.NullString) string {
 	if ns.Valid {
 		return ns.String
 	}
 	return ""
 }
-
 
 func (h *Handler) Movements(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
@@ -233,21 +296,18 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 		}
 
 		out = append(out, fiber.Map{
-			"id":        id,
-			"variant":   variant,
-			"type":      movement,
-			"quantity":  qty,
-			"from":      nullOrValue(fromWh),
-			"to":        nullOrValue(toWh),
+			"id":         id,
+			"variant":    variant,
+			"type":       movement,
+			"quantity":   qty,
+			"from":       nullOrValue(fromWh),
+			"to":         nullOrValue(toWh),
 			"created_at": created,
 		})
 	}
 
 	return c.JSON(out)
 }
-
-
-
 
 func (h *Handler) ByWarehouseProductSummary(c *fiber.Ctx) error {
 	warehouseID := c.Params("id")

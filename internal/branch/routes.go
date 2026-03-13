@@ -8,6 +8,7 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	g.Post("/", h.Create)
 	g.Get("/", h.List)
 	g.Patch("/:id", h.Update)
+	g.Get("/:id", h.GetByID)
 
 }
 

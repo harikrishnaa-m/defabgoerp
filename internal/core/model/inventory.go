@@ -8,18 +8,23 @@ import (
 )
 
 type Branch struct {
-	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	Name      string    `gorm:"not null" json:"name"`
-	Address   string    `json:"address"`
-	ManagerID uuid.UUID `json:"manager_id"`
+	ID          uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	Name        string    `gorm:"not null" json:"name"`
+	Address     string    `json:"address"`
+	ManagerID   uuid.UUID `json:"manager_id"`
+	BranchCode  string    `gorm:"size:50" json:"branch_code"`
+	City        string    `gorm:"size:100" json:"city"`
+	State       string    `gorm:"size:100" json:"state"`
+	PhoneNumber string    `gorm:"size:20" json:"phone_number"`
 }
 
 type Warehouse struct {
-	ID       uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	BranchID *uint     `json:"branch_id"`
-	Branch   *Branch   `gorm:"foreignKey:BranchID;references:ID" json:"branch"`
-	Name     string    `gorm:"size:150;not null" json:"name"`
-	Type     string    `gorm:"default:'STORE'" json:"type"` // "CENTRAL", "STORE", "FACTORY"
+	ID            uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	BranchID      *uint     `json:"branch_id"`
+	Branch        *Branch   `gorm:"foreignKey:BranchID;references:ID" json:"branch"`
+	Name          string    `gorm:"size:150;not null" json:"name"`
+	Type          string    `gorm:"default:'STORE'" json:"type"` // "CENTRAL", "STORE", "FACTORY"
+	WarehouseCode string    `gorm:"size:50" json:"warehouse_code"`
 }
 
 type Stock struct {

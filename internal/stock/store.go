@@ -9,6 +9,51 @@ type Store struct {
 func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
+func (s *Store) Create(in StockCreateInput) (string, error) {
+	var id string
+	err := s.db.QueryRow(
+		`INSERT INTO stocks (variant_id, warehouse_id, quantity, updated_at)
+			 VALUES ($1, $2, $3, NOW())
+			 RETURNING id`,
+		in.VariantID,
+		in.WarehouseID,
+		in.Quantity,
+	).Scan(&id)
+	return id, err
+}
+
+// Update stock record
+func (s *Store) Update(id string, in StockUpdateInput) error {
+	_, err := s.db.Exec(
+		`UPDATE stocks SET variant_id = $1, warehouse_id = $2, quantity = $3, updated_at = NOW() WHERE id = $4`,
+		in.VariantID,
+		in.WarehouseID,
+		in.Quantity,
+		id,
+	)
+	return err
+}
+
+// Branch-wise stock
+func (s *Store) ListByBranch(branchID string, limit, offset int) (*sql.Rows, error) {
+	return s.db.Query(`
+		SELECT
+			p.id,
+			p.name AS product_name,
+			v.id AS variant_id,
+			v.name AS variant_name,
+			w.id AS warehouse_id,
+			w.name AS warehouse_name,
+			s.quantity
+		FROM stocks s
+		JOIN variants v ON v.id = s.variant_id
+		JOIN products p ON p.id = v.product_id
+		JOIN warehouses w ON w.id = s.warehouse_id
+		WHERE w.branch_id = $1
+		ORDER BY p.name, v.name
+		LIMIT $2 OFFSET $3
+	`, branchID, limit, offset)
+}
 
 // Warehouse-wise stock
 func (s *Store) ListByWarehouse(warehouseID string, limit, offset int) (*sql.Rows, error) {
@@ -59,7 +104,6 @@ func (s *Store) LowStock(threshold int) (*sql.Rows, error) {
 	`, threshold)
 }
 
-
 func (s *Store) GetAll(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
 		SELECT
@@ -76,7 +120,6 @@ func (s *Store) GetAll(limit, offset int) (*sql.Rows, error) {
 	`, limit, offset)
 }
 
-
 func (s *Store) GetByProduct(productID string) (*sql.Rows, error) {
 	return s.db.Query(`
 		SELECT
@@ -89,7 +132,6 @@ func (s *Store) GetByProduct(productID string) (*sql.Rows, error) {
 		ORDER BY v.name
 	`, productID)
 }
-
 
 func (s *Store) GetMovements(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
