@@ -9,11 +9,12 @@ import (
 
 // Supplier represents the Supplier table.
 type Supplier struct {
-	ID      uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	Name    string    `gorm:"size:200;not null" json:"name"`
-	Phone   string    `gorm:"size:30" json:"phone"`
-	Email   string    `gorm:"size:150" json:"email"`
-	Address string    `gorm:"type:text" json:"address"`
+	ID           uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	SupplierCode string    `gorm:"size:50;uniqueIndex" json:"supplier_code"` // e.g. SUP-001
+	Name         string    `gorm:"size:200;not null" json:"name"`
+	Phone        string    `gorm:"size:30" json:"phone"`
+	Email        string    `gorm:"size:150" json:"email"`
+	Address      string    `gorm:"type:text" json:"address"`
 
 	GSTNumber string `gorm:"size:15;uniqueIndex" json:"gst_number"` // ✅ Added
 
@@ -34,20 +35,28 @@ type PurchaseOrder struct {
 	Status       string              `gorm:"size:30" json:"status"`
 	OrderDate    time.Time           `json:"order_date"`
 	ExpectedDate time.Time           `json:"expected_date"`
+	TotalAmount  decimal.Decimal     `gorm:"type:decimal(12,2);not null;default:0" json:"total_amount"`
+	TaxAmount    decimal.Decimal     `gorm:"type:decimal(10,2);not null;default:0" json:"tax_amount"`
+	GrandTotal   decimal.Decimal     `gorm:"type:decimal(12,2);not null;default:0" json:"grand_total"`
 	CreatedAt    time.Time           `gorm:"autoCreateTime" json:"created_at"`
 	Items        []PurchaseOrderItem `gorm:"foreignKey:PurchaseOrderID" json:"items"`
 }
 
-// PurchaseOrderItem represents the PurchaseOrderItem table.
+// PurchaseOrderItem represents a line item (raw material) in a purchase order.
 type PurchaseOrderItem struct {
 	ID              uuid.UUID     `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	PurchaseOrderID uuid.UUID     `gorm:"type:uuid;not null;index" json:"purchase_order_id"`
 	PurchaseOrder   PurchaseOrder `gorm:"foreignKey:PurchaseOrderID;references:ID" json:"purchase_order"`
-	VariantID       uuid.UUID     `gorm:"type:uuid;not null;index" json:"variant_id"`
-	Variant         Variant       `gorm:"foreignKey:VariantID;references:ID" json:"variant"`
 
-	// Quantity        int           `gorm:"not null" json:"quantity"`
+	ItemName    string `gorm:"size:200;not null" json:"item_name"` // e.g. "Cotton Fabric 60 inch"
+	Description string `gorm:"type:text" json:"description"`       // optional details
+	HSNCode     string `gorm:"size:20" json:"hsn_code"`            // GST HSN code
+	Unit        string `gorm:"size:20;not null" json:"unit"`       // METER, KG, PCS, ROLL, etc.
 
-	Quantity decimal.Decimal `gorm:"type:decimal(10,2);not null"`
-
+	Quantity    decimal.Decimal `gorm:"type:decimal(10,2);not null" json:"quantity"`
+	UnitPrice   decimal.Decimal `gorm:"type:decimal(10,2);not null" json:"unit_price"`
+	GSTPercent  decimal.Decimal `gorm:"type:decimal(5,2);not null;default:0" json:"gst_percent"`
+	GSTAmount   decimal.Decimal `gorm:"type:decimal(10,2);not null;default:0" json:"gst_amount"`
+	TotalPrice  decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"total_price"`
+	ReceivedQty decimal.Decimal `gorm:"type:decimal(10,2);default:0" json:"received_qty"`
 }

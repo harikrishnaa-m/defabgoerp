@@ -12,12 +12,13 @@ func NewStore(db *sql.DB) *Store {
 func (s *Store) Create(in StockCreateInput) (string, error) {
 	var id string
 	err := s.db.QueryRow(
-		`INSERT INTO stocks (variant_id, warehouse_id, quantity, updated_at)
-			 VALUES ($1, $2, $3, NOW())
+		`INSERT INTO stocks (variant_id, warehouse_id, quantity, stock_type, updated_at)
+			 VALUES ($1, $2, $3, $4, NOW())
 			 RETURNING id`,
 		in.VariantID,
 		in.WarehouseID,
 		in.Quantity,
+		in.StockType,
 	).Scan(&id)
 	return id, err
 }
@@ -25,10 +26,11 @@ func (s *Store) Create(in StockCreateInput) (string, error) {
 // Update stock record
 func (s *Store) Update(id string, in StockUpdateInput) error {
 	_, err := s.db.Exec(
-		`UPDATE stocks SET variant_id = $1, warehouse_id = $2, quantity = $3, updated_at = NOW() WHERE id = $4`,
+		`UPDATE stocks SET variant_id = $1, warehouse_id = $2, quantity = $3, stock_type = $4, updated_at = NOW() WHERE id = $5`,
 		in.VariantID,
 		in.WarehouseID,
 		in.Quantity,
+		in.StockType,
 		id,
 	)
 	return err

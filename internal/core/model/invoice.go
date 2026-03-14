@@ -104,8 +104,9 @@ type PurchaseInvoice struct {
 	InvoiceDate   time.Time `gorm:"not null;index" json:"invoice_date"`
 
 	SubAmount      float64 `gorm:"type:numeric(12,2);default:0" json:"sub_amount"`
-	TaxAmount      float64 `gorm:"type:numeric(12,2);default:0" json:"tax_amount"`
 	DiscountAmount float64 `gorm:"type:numeric(12,2);default:0" json:"discount_amount"`
+	GSTAmount      float64 `gorm:"type:numeric(12,2);default:0" json:"gst_amount"`
+	RoundOff       float64 `gorm:"type:numeric(12,2);default:0" json:"round_off"`
 
 	NetAmount  float64 `gorm:"type:numeric(12,2);not null" json:"net_amount"`
 	PaidAmount float64 `gorm:"type:numeric(12,2);default:0" json:"paid_amount"`
@@ -130,6 +131,9 @@ type SupplierPayment struct {
 
 	Amount float64 `gorm:"type:numeric(12,2);not null" json:"amount"`
 
+	PaymentMethod string `gorm:"size:20;not null;index" json:"payment_method"` // CASH, UPI, CARD, BANK_TRANSFER
+	Reference     string `gorm:"size:50" json:"reference"`
+
 	PaidAt time.Time `gorm:"index" json:"paid_at"`
 }
 
@@ -146,7 +150,7 @@ type PurchaseInvoiceItem struct {
 	VariantID uuid.UUID `gorm:"type:uuid;not null;index" json:"variant_id"`
 	Variant   *Variant  `gorm:"foreignKey:VariantID;references:ID" json:"variant,omitempty"`
 
-	Quantity int `gorm:"not null" json:"quantity"`
+	Quantity float64 `gorm:"type:numeric(10,3);not null" json:"quantity"`
 
 	UnitCost    float64 `gorm:"type:numeric(12,2);not null" json:"unit_cost"`
 	TaxAmount   float64 `gorm:"type:numeric(12,2);default:0" json:"tax_amount"`

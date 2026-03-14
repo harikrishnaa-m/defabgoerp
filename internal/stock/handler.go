@@ -1,4 +1,3 @@
-
 package stock
 
 import (
@@ -29,6 +28,9 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 	if in.VariantID == "" || in.WarehouseID == "" || in.Quantity.IsZero() {
 		return c.Status(400).SendString("variant_id, warehouse_id, quantity required")
+	}
+	if in.StockType == "" {
+		in.StockType = "PRODUCT"
 	}
 
 	id, err := h.store.Create(in)
@@ -90,13 +92,13 @@ func (h *Handler) ByBranch(c *fiber.Ctx) error {
 			return httperr.Internal(c)
 		}
 		out = append(out, fiber.Map{
-			"product_id": productID,
-			"product_name": productName,
-			"variant_id": variantID,
-			"variant_name": variantName,
-			"warehouse_id": warehouseID,
+			"product_id":     productID,
+			"product_name":   productName,
+			"variant_id":     variantID,
+			"variant_name":   variantName,
+			"warehouse_id":   warehouseID,
 			"warehouse_name": warehouseName,
-			"quantity": qty,
+			"quantity":       qty,
 		})
 	}
 	return c.JSON(out)

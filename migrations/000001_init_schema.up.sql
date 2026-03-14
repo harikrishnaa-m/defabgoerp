@@ -47,6 +47,8 @@ ALTER TABLE warehouses ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
 -- Add warehouse_code column
 ALTER TABLE warehouses ADD COLUMN warehouse_code VARCHAR(50);
 
+
+
 -- 4. Product Catalog (The "Meters" Logic)
 CREATE TABLE categories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -132,10 +134,44 @@ CREATE TABLE variant_attribute_mapping (
 );
 
 CREATE TABLE suppliers (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(150) NOT NULL,
-    contact VARCHAR(100),
-    email VARCHAR(150)
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    supplier_code VARCHAR(50) UNIQUE,
+    name VARCHAR(200) NOT NULL,
+    phone VARCHAR(30),
+    email VARCHAR(150),
+    address TEXT,
+    gst_number VARCHAR(15) UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE purchase_orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    po_number VARCHAR(50) NOT NULL,
+    supplier_id UUID NOT NULL REFERENCES suppliers(id),
+    warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+    status VARCHAR(30) DEFAULT 'DRAFT',
+    order_date TIMESTAMPTZ,
+    expected_date TIMESTAMPTZ,
+    total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    tax_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    grand_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE purchase_order_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    item_name VARCHAR(200) NOT NULL,
+    description TEXT,
+    hsn_code VARCHAR(20),
+    unit VARCHAR(20) NOT NULL,
+    quantity DECIMAL(10,2) NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
+    gst_percent DECIMAL(5,2) NOT NULL DEFAULT 0,
+    gst_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    total_price DECIMAL(12,2) NOT NULL,
+    received_qty DECIMAL(10,2) DEFAULT 0
 );
 
 CREATE TABLE warehouse_stocks (
@@ -158,17 +194,25 @@ CREATE TABLE stocks (
      UNIQUE(variant_id, warehouse_id)
 );
 
-CREATE TABLE stock_movements (
-    id SERIAL PRIMARY KEY,
-    variant_id UUID REFERENCES variants(id),
-    from_warehouse_id INT REFERENCES warehouses(id),
-    to_warehouse_id INT REFERENCES warehouses(id),
-    quantity DECIMAL(10, 2),
-    type VARCHAR(50),                     -- PURCHASE, SALE, TRANSFER, MANUFACTURING
-    reference_id VARCHAR(100),            -- Invoice ID or PO Number
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Add stock_type column
+ALTER TABLE stocks ADD COLUMN stock_type VARCHAR(20) NOT NULL DEFAULT 'PRODUCT';
 
+CREATE TABLE stock_movements (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    variant_id UUID NOT NULL REFERENCES variants(id) ON DELETE CASCADE,
+    from_warehouse_id UUID REFERENCES warehouses(id),
+    to_warehouse_id UUID REFERENCES warehouses(id),
+    quantity DECIMAL(10, 2) NOT NULL,
+    movement_type VARCHAR(20) NOT NULL,          -- IN, OUT, TRANSFER
+    stock_request_id UUID,
+    status VARCHAR(20) DEFAULT 'COMPLETED',      -- PENDING, IN_TRANSIT, RECEIVED, CANCELLED, COMPLETED
+    purchase_order_id UUID,
+    supplier_id UUID,
+    reference VARCHAR(100),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE stock_movements ADD COLUMN IF NOT EXISTS sale_order_id UUID;
 -- 6. Billing & Finance (Split Payments)
 CREATE TABLE invoices (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -186,4 +230,26 @@ CREATE TABLE payments (
     method VARCHAR(50),                   -- Cash, Card, UPI, StoreCredit
     amount DECIMAL(10, 2) NOT NULL,
     reference VARCHAR(100)                -- Trans ID
+);
+
+-- Goods Receipts (GRN)
+CREATE TABLE goods_receipts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    grn_number VARCHAR(50) UNIQUE NOT NULL,
+    purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id),
+    supplier_id UUID NOT NULL REFERENCES suppliers(id),
+    warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+    received_by UUID NOT NULL,
+    received_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    reference VARCHAR(100),
+    status VARCHAR(20) NOT NULL DEFAULT 'COMPLETED',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE goods_receipt_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    goods_receipt_id UUID NOT NULL REFERENCES goods_receipts(id) ON DELETE CASCADE,
+    purchase_order_item_id UUID NOT NULL REFERENCES purchase_order_items(id),
+    ordered_qty DECIMAL(10,2) NOT NULL,
+    received_qty DECIMAL(10,2) NOT NULL
 );

@@ -5,6 +5,7 @@ import (
 	"defab-erp/internal/core/model"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"net/smtp"
 	"os"
 
@@ -142,6 +143,7 @@ func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {
 	}
 	// Send email with reset link
 	if err := sendResetEmail(user.Email, token); err != nil {
+		log.Println("[SMTP ERROR]", err)
 		return c.Status(500).SendString("Failed to send email")
 	}
 	return c.SendString("Password reset link sent to your email.")

@@ -1,6 +1,7 @@
 package purchase
 
 import (
+	"database/sql"
 	"log"
 
 	"defab-erp/internal/core/httperr"
@@ -46,54 +47,33 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
 
-	rows, err := h.store.List(limit, offset)
+	list, err := h.store.List(limit, offset)
 	if err != nil {
+		log.Println("po list error:", err)
 		return httperr.Internal(c)
 	}
-	defer rows.Close()
 
-	var out []fiber.Map
-
-	for rows.Next() {
-		var id, po, status, created string
-		rows.Scan(&id, &po, &status, &created)
-
-		out = append(out, fiber.Map{
-			"id": id,
-			"po_number": po,
-			"status": status,
-			"created_at": created,
-		})
+	if list == nil {
+		list = []POListRow{}
 	}
 
-	return c.JSON(out)
+	return c.JSON(list)
 }
 
 // GET
 func (h *Handler) Get(c *fiber.Ctx) error {
 	id := c.Params("id")
 
-	row := h.store.Get(id)
-
-	var poID, poNum, supplier, warehouse, status, created string
-	var expected string
-
-	if err := row.Scan(
-		&poID, &poNum, &supplier,
-		&warehouse, &status, &expected, &created,
-	); err != nil {
-		return httperr.NotFound(c, "Purchase order not found")
+	po, err := h.store.Get(id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return httperr.NotFound(c, "Purchase order not found")
+		}
+		log.Println("po get error:", err)
+		return httperr.Internal(c)
 	}
 
-	return c.JSON(fiber.Map{
-		"id": poID,
-		"po_number": poNum,
-		"supplier_id": supplier,
-		"warehouse_id": warehouse,
-		"status": status,
-		"expected_date": expected,
-		"created_at": created,
-	})
+	return c.JSON(po)
 }
 
 // UPDATE STATUS
@@ -106,10 +86,74 @@ func (h *Handler) UpdateStatus(c *fiber.Ctx) error {
 	}
 
 	if err := h.store.UpdateStatus(id, in.Status); err != nil {
-		return httperr.Internal(c)
+		log.Println("po status error:", err)
+		return httperr.BadRequest(c, err.Error())
 	}
 
 	return c.JSON(fiber.Map{
 		"message": "PO status updated",
+	})
+}
+
+// ADD ITEM to PO
+func (h *Handler) AddItem(c *fiber.Ctx) error {
+	poID := c.Params("id")
+
+	var in AddPOItemInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON")
+	}
+
+	if in.ItemName == "" || in.Unit == "" || in.Quantity <= 0 || in.UnitPrice <= 0 {
+		return httperr.BadRequest(c, "item_name, unit, quantity and unit_price required")
+	}
+
+	itemID, err := h.store.AddItem(poID, in)
+	if err != nil {
+		log.Println("po add item error:", err)
+		return httperr.Internal(c)
+	}
+
+	return c.Status(201).JSON(fiber.Map{
+		"id":      itemID,
+		"message": "Item added to purchase order",
+	})
+}
+
+// UPDATE ITEM in PO
+func (h *Handler) UpdateItem(c *fiber.Ctx) error {
+	poID := c.Params("id")
+	itemID := c.Params("itemId")
+
+	var in UpdatePOItemInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON")
+	}
+
+	if err := h.store.UpdateItem(poID, itemID, in); err != nil {
+		if err == sql.ErrNoRows {
+			return httperr.NotFound(c, "Item not found")
+		}
+		log.Println("po update item error:", err)
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Item updated",
+	})
+}
+
+// DELETE ITEM from PO
+func (h *Handler) DeleteItem(c *fiber.Ctx) error {
+	poID := c.Params("id")
+	itemID := c.Params("itemId")
+
+	if err := h.store.DeleteItem(poID, itemID); err != nil {
+		log.Println("po delete item error:", err)
+		return httperr.BadRequest(c, err.Error())
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Item removed from purchase order",
 	})
 }

@@ -36,7 +36,8 @@ type Stock struct {
 	Variant   Variant   `gorm:"foreignKey:VariantID;constraint:OnDelete:CASCADE"`
 	Warehouse Warehouse `gorm:"foreignKey:WarehouseID;constraint:OnDelete:CASCADE"`
 
-	Quantity decimal.Decimal `gorm:"type:decimal(10,2);not null;default:0"`
+	Quantity  decimal.Decimal `gorm:"type:decimal(10,2);not null;default:0"`
+	StockType string          `gorm:"size:20;not null;default:'PRODUCT'"` // RAW_MATERIAL or PRODUCT
 
 	UpdatedAt time.Time
 }
@@ -65,6 +66,7 @@ type StockMovement struct {
 
 	//	Reference string `gorm:"size:100"`
 	PurchaseOrderID *uuid.UUID `gorm:"type:uuid;index"`
+	SaleOrderID     *uuid.UUID `gorm:"type:uuid;index"`
 
 	CreatedAt time.Time `gorm:"autoCreateTime"`
 	UpdatedAt time.Time
@@ -72,6 +74,47 @@ type StockMovement struct {
 	SupplierID *uuid.UUID `gorm:"type:uuid;index"` // ✅ NEW
 
 	Reference string `gorm:"size:100"`
+}
+
+// GoodsReceipt represents a goods receipt note (GRN) linked to a purchase order.
+type GoodsReceipt struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+
+	GRNNumber string `gorm:"size:50;uniqueIndex;not null" json:"grn_number"` // e.g. GRN-001
+
+	PurchaseOrderID uuid.UUID      `gorm:"type:uuid;not null;index" json:"purchase_order_id"`
+	PurchaseOrder   *PurchaseOrder `gorm:"foreignKey:PurchaseOrderID;references:ID" json:"purchase_order,omitempty"`
+
+	SupplierID uuid.UUID `gorm:"type:uuid;not null;index" json:"supplier_id"`
+	Supplier   *Supplier `gorm:"foreignKey:SupplierID;references:ID" json:"supplier,omitempty"`
+
+	WarehouseID uuid.UUID  `gorm:"type:uuid;not null;index" json:"warehouse_id"`
+	Warehouse   *Warehouse `gorm:"foreignKey:WarehouseID;references:ID" json:"warehouse,omitempty"`
+
+	ReceivedBy uuid.UUID `gorm:"type:uuid;not null" json:"received_by"`
+
+	ReceivedDate time.Time `gorm:"not null" json:"received_date"`
+	Reference    string    `gorm:"size:100" json:"reference"` // Invoice / DC number
+
+	Status string `gorm:"size:20;not null;default:'COMPLETED'" json:"status"` // COMPLETED, CANCELLED
+
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+
+	Items []GoodsReceiptItem `gorm:"foreignKey:GoodsReceiptID;constraint:OnDelete:CASCADE" json:"items,omitempty"`
+}
+
+// GoodsReceiptItem represents a line item in a goods receipt.
+type GoodsReceiptItem struct {
+	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+
+	GoodsReceiptID uuid.UUID     `gorm:"type:uuid;not null;index" json:"goods_receipt_id"`
+	GoodsReceipt   *GoodsReceipt `gorm:"foreignKey:GoodsReceiptID;references:ID;constraint:OnDelete:CASCADE" json:"goods_receipt,omitempty"`
+
+	PurchaseOrderItemID uuid.UUID          `gorm:"type:uuid;not null;index" json:"purchase_order_item_id"`
+	PurchaseOrderItem   *PurchaseOrderItem `gorm:"foreignKey:PurchaseOrderItemID;references:ID" json:"purchase_order_item,omitempty"`
+
+	OrderedQty  decimal.Decimal `gorm:"type:decimal(10,2);not null" json:"ordered_qty"`
+	ReceivedQty decimal.Decimal `gorm:"type:decimal(10,2);not null" json:"received_qty"`
 }
 
 type StockRequest struct {

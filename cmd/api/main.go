@@ -37,6 +37,7 @@ import (
 
 	"defab-erp/internal/coupon"
 	"defab-erp/internal/goodsreceipt"
+	"defab-erp/internal/purchase"
 	"defab-erp/internal/stock"
 	"defab-erp/internal/stockrequest"
 	"defab-erp/internal/supplier"
@@ -93,6 +94,9 @@ func main() {
 
 	supplierStore := supplier.NewStore(database)
 	supplierHandler := supplier.NewHandler(supplierStore)
+
+	purchaseStore := purchase.NewStore(database)
+	purchaseHandler := purchase.NewHandler(purchaseStore)
 
 	goodsStore := goodsreceipt.NewStore(database)
 	goodsHandler := goodsreceipt.NewHandler(goodsStore)
@@ -215,6 +219,16 @@ func main() {
 			),
 		),
 		supplierHandler,
+	)
+
+	purchase.RegisterRoutes(
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
+		),
+		purchaseHandler,
 	)
 
 	goodsreceipt.RegisterRoutes(
