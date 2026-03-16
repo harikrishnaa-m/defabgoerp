@@ -52,7 +52,6 @@ func (s *Store) List(limit, offset int) (*sql.Rows, error) {
 			id, supplier_code, name, phone, email, address,
 			gst_number, is_active, created_at, updated_at
 		FROM suppliers
-		WHERE is_active = true
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
