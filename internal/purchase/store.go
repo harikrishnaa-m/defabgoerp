@@ -29,13 +29,14 @@ func (s *Store) Create(in CreatePurchaseOrderInput) (string, error) {
 
 	_, err = tx.Exec(`
 	INSERT INTO purchase_orders
-	(id, po_number, supplier_id, warehouse_id, status, expected_date, created_at)
-	VALUES ($1,$2,$3,$4,'DRAFT',$5,NOW())
+	(id, po_number, supplier_id, warehouse_id, status, order_date, expected_date, created_at)
+	VALUES ($1,$2,$3,$4,'DRAFT',$5,$6,NOW())
 	`,
 		poID,
 		poNumber,
 		in.SupplierID,
 		in.WarehouseID,
+		in.OrderDate,
 		in.ExpectedDate,
 	)
 	if err != nil {
@@ -89,9 +90,11 @@ func (s *Store) Create(in CreatePurchaseOrderInput) (string, error) {
 // LIST
 func (s *Store) List(limit, offset int) ([]POListRow, error) {
 	rows, err := s.db.Query(`
-	SELECT po.id, po.po_number, po.status,
-	       s.name AS supplier_name,
-	       po.grand_total, po.created_at::text
+	SELECT po.id, po.po_number, po.supplier_id,
+	       COALESCE(s.name,'') AS supplier_name,
+	       po.warehouse_id, po.status,
+	       COALESCE(po.order_date::text,''), COALESCE(po.expected_date::text,''),
+	       po.total_amount, po.tax_amount, po.grand_total, po.created_at::text
 	FROM purchase_orders po
 	LEFT JOIN suppliers s ON s.id = po.supplier_id
 	ORDER BY po.created_at DESC
@@ -105,7 +108,12 @@ func (s *Store) List(limit, offset int) ([]POListRow, error) {
 	var list []POListRow
 	for rows.Next() {
 		var r POListRow
-		if err := rows.Scan(&r.ID, &r.PONumber, &r.Status, &r.SupplierName, &r.GrandTotal, &r.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&r.ID, &r.PONumber, &r.SupplierID, &r.SupplierName,
+			&r.WarehouseID, &r.Status,
+			&r.OrderDate, &r.ExpectedDate,
+			&r.TotalAmount, &r.TaxAmount, &r.GrandTotal, &r.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		list = append(list, r)
@@ -117,13 +125,22 @@ func (s *Store) List(limit, offset int) ([]POListRow, error) {
 func (s *Store) Get(id string) (*PODetailResponse, error) {
 	var po PODetailResponse
 	err := s.db.QueryRow(`
-	SELECT id, po_number, supplier_id, warehouse_id, status,
-	       expected_date::text, total_amount, tax_amount, grand_total, created_at::text
-	FROM purchase_orders
-	WHERE id = $1
+	SELECT po.id, po.po_number, po.supplier_id,
+	       COALESCE(s.name,'') AS supplier_name,
+	       po.warehouse_id,
+	       COALESCE(w.name,'') AS warehouse_name,
+	       po.status,
+	       COALESCE(po.order_date::text,''), COALESCE(po.expected_date::text,''),
+	       po.total_amount, po.tax_amount, po.grand_total, po.created_at::text
+	FROM purchase_orders po
+	LEFT JOIN suppliers s ON s.id = po.supplier_id
+	LEFT JOIN warehouses w ON w.id = po.warehouse_id
+	WHERE po.id = $1
 	`, id).Scan(
-		&po.ID, &po.PONumber, &po.SupplierID, &po.WarehouseID, &po.Status,
-		&po.ExpectedDate, &po.TotalAmount, &po.TaxAmount, &po.GrandTotal, &po.CreatedAt,
+		&po.ID, &po.PONumber, &po.SupplierID, &po.SupplierName,
+		&po.WarehouseID, &po.WarehouseName, &po.Status,
+		&po.OrderDate, &po.ExpectedDate,
+		&po.TotalAmount, &po.TaxAmount, &po.GrandTotal, &po.CreatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -310,4 +327,42 @@ func (s *Store) DeleteItem(poID, itemID string) error {
 	}
 
 	return tx.Commit()
+}
+
+// Update updates PO header fields (only when DRAFT).
+func (s *Store) Update(id string, in UpdatePurchaseOrderInput) error {
+	// Only allow editing DRAFT POs
+	var status string
+	err := s.db.QueryRow(`SELECT status FROM purchase_orders WHERE id = $1`, id).Scan(&status)
+	if err != nil {
+		return fmt.Errorf("purchase order not found")
+	}
+	if status != "DRAFT" {
+		return fmt.Errorf("can only edit POs in DRAFT status")
+	}
+
+	_, err = s.db.Exec(`
+		UPDATE purchase_orders SET
+			supplier_id   = COALESCE($1, supplier_id),
+			warehouse_id  = COALESCE($2, warehouse_id),
+			order_date    = COALESCE($3, order_date),
+			expected_date = COALESCE($4, expected_date)
+		WHERE id = $5
+	`, in.SupplierID, in.WarehouseID, in.OrderDate, in.ExpectedDate, id)
+	return err
+}
+
+// Delete deletes a PO entirely (only when DRAFT).
+func (s *Store) Delete(id string) error {
+	var status string
+	err := s.db.QueryRow(`SELECT status FROM purchase_orders WHERE id = $1`, id).Scan(&status)
+	if err != nil {
+		return fmt.Errorf("purchase order not found")
+	}
+	if status != "DRAFT" {
+		return fmt.Errorf("can only delete POs in DRAFT status")
+	}
+
+	_, err = s.db.Exec(`DELETE FROM purchase_orders WHERE id = $1`, id)
+	return err
 }

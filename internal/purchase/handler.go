@@ -157,3 +157,36 @@ func (h *Handler) DeleteItem(c *fiber.Ctx) error {
 		"message": "Item removed from purchase order",
 	})
 }
+
+// UPDATE PO header
+func (h *Handler) Update(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	var in UpdatePurchaseOrderInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON")
+	}
+
+	if err := h.store.Update(id, in); err != nil {
+		log.Println("po update error:", err)
+		return httperr.BadRequest(c, err.Error())
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Purchase order updated",
+	})
+}
+
+// DELETE PO
+func (h *Handler) Delete(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	if err := h.store.Delete(id); err != nil {
+		log.Println("po delete error:", err)
+		return httperr.BadRequest(c, err.Error())
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Purchase order deleted",
+	})
+}

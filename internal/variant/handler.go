@@ -20,7 +20,6 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 	productID := c.FormValue("product_id")
 	name := c.FormValue("name")
-	sku := c.FormValue("sku")
 
 	priceStr := c.FormValue("price")
 	costPriceStr := c.FormValue("cost_price")
@@ -81,14 +80,13 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	in := CreateVariantInput{
 		ProductID:         productID,
 		Name:              name,
-		SKU:               sku,
 		Price:             price,
 		CostPrice:         costPrice,
 		AttributeValueIDs: cleanAttrIDs,
 		ImagePaths:        imagePaths,
 	}
 
-	id, err := h.store.Create(in)
+	id, sku, err := h.store.Create(in)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -96,6 +94,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	return c.Status(201).JSON(fiber.Map{
 		"message": "variant created",
 		"id":      id,
+		"sku":     sku,
 	})
 }
 

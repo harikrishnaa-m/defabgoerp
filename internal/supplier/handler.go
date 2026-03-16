@@ -18,9 +18,7 @@ func NewHandler(s *Store) *Handler {
 	return &Handler{store: s}
 }
 
-//
 // CREATE
-//
 func (h *Handler) Create(c *fiber.Ctx) error {
 	var in CreateSupplierInput
 
@@ -32,7 +30,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return httperr.BadRequest(c, "Supplier name is required")
 	}
 
-	id, err := h.store.Create(in)
+	id, code, err := h.store.Create(in)
 	if err != nil {
 		log.Println("supplier create error:", err)
 
@@ -56,14 +54,13 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	}
 
 	return c.Status(201).JSON(fiber.Map{
-		"id":      id,
-		"message": "Supplier created successfully",
+		"id":            id,
+		"supplier_code": code,
+		"message":       "Supplier created successfully",
 	})
 }
 
-//
 // LIST
-//
 func (h *Handler) List(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
@@ -79,62 +76,66 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	var out []fiber.Map
 
 	for rows.Next() {
-		var id, name, phone, email, gst string
-		var created string
+		var id, code, name, phone, email, address, gst string
+		var created, updated string
+		var active bool
 
 		if err := rows.Scan(
-			&id, &name, &phone, &email, &gst, &created,
+			&id, &code, &name, &phone, &email, &address,
+			&gst, &active, &created, &updated,
 		); err != nil {
 			log.Println("supplier scan error:", err)
 			return httperr.Internal(c)
 		}
 
 		out = append(out, fiber.Map{
-			"id":         id,
-			"name":       name,
-			"phone":      phone,
-			"email":      email,
-			"gst_number": gst,
-			"created_at": created,
+			"id":            id,
+			"supplier_code": code,
+			"name":          name,
+			"phone":         phone,
+			"email":         email,
+			"address":       address,
+			"gst_number":    gst,
+			"is_active":     active,
+			"created_at":    created,
+			"updated_at":    updated,
 		})
 	}
 
 	return c.JSON(out)
 }
 
-//
 // GET
-//
 func (h *Handler) Get(c *fiber.Ctx) error {
 	id := c.Params("id")
 
 	row := h.store.Get(id)
 
-	var sid, name, phone, email, address, gst, created string
+	var sid, code, name, phone, email, address, gst, created, updated string
 	var active bool
 
 	if err := row.Scan(
-		&sid, &name, &phone, &email,
-		&address, &gst, &active, &created,
+		&sid, &code, &name, &phone, &email,
+		&address, &gst, &active, &created, &updated,
 	); err != nil {
 		return httperr.NotFound(c, "Supplier not found")
 	}
 
 	return c.JSON(fiber.Map{
-		"id":         sid,
-		"name":       name,
-		"phone":      phone,
-		"email":      email,
-		"address":    address,
-		"gst_number": gst,
-		"is_active":  active,
-		"created_at": created,
+		"id":            sid,
+		"supplier_code": code,
+		"name":          name,
+		"phone":         phone,
+		"email":         email,
+		"address":       address,
+		"gst_number":    gst,
+		"is_active":     active,
+		"created_at":    created,
+		"updated_at":    updated,
 	})
 }
 
-//
 // UPDATE
-//
 func (h *Handler) Update(c *fiber.Ctx) error {
 	id := c.Params("id")
 
@@ -162,9 +163,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	})
 }
 
-//
 // ACTIVATE / DEACTIVATE
-//
 func (h *Handler) Deactivate(c *fiber.Ctx) error {
 	return h.toggle(c, false)
 }

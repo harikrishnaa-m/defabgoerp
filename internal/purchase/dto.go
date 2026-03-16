@@ -3,6 +3,7 @@ package purchase
 type CreatePurchaseOrderInput struct {
 	SupplierID   string                    `json:"supplier_id"`
 	WarehouseID  string                    `json:"warehouse_id"`
+	OrderDate    string                    `json:"order_date"`
 	ExpectedDate string                    `json:"expected_date"`
 	Items        []CreatePurchaseOrderItem `json:"items"`
 }
@@ -21,27 +22,43 @@ type UpdatePOStatusInput struct {
 	Status string `json:"status"`
 }
 
+type UpdatePurchaseOrderInput struct {
+	SupplierID   *string `json:"supplier_id"`
+	WarehouseID  *string `json:"warehouse_id"`
+	OrderDate    *string `json:"order_date"`
+	ExpectedDate *string `json:"expected_date"`
+}
+
 type POListRow struct {
 	ID           string  `json:"id"`
 	PONumber     string  `json:"po_number"`
-	Status       string  `json:"status"`
+	SupplierID   string  `json:"supplier_id"`
 	SupplierName string  `json:"supplier_name"`
+	WarehouseID  string  `json:"warehouse_id"`
+	Status       string  `json:"status"`
+	OrderDate    string  `json:"order_date"`
+	ExpectedDate string  `json:"expected_date"`
+	TotalAmount  float64 `json:"total_amount"`
+	TaxAmount    float64 `json:"tax_amount"`
 	GrandTotal   float64 `json:"grand_total"`
 	CreatedAt    string  `json:"created_at"`
 }
 
 type PODetailResponse struct {
-	ID           string           `json:"id"`
-	PONumber     string           `json:"po_number"`
-	SupplierID   string           `json:"supplier_id"`
-	WarehouseID  string           `json:"warehouse_id"`
-	Status       string           `json:"status"`
-	ExpectedDate string           `json:"expected_date"`
-	TotalAmount  float64          `json:"total_amount"`
-	TaxAmount    float64          `json:"tax_amount"`
-	GrandTotal   float64          `json:"grand_total"`
-	CreatedAt    string           `json:"created_at"`
-	Items        []POItemResponse `json:"items"`
+	ID            string           `json:"id"`
+	PONumber      string           `json:"po_number"`
+	SupplierID    string           `json:"supplier_id"`
+	SupplierName  string           `json:"supplier_name"`
+	WarehouseID   string           `json:"warehouse_id"`
+	WarehouseName string           `json:"warehouse_name"`
+	Status        string           `json:"status"`
+	OrderDate     string           `json:"order_date"`
+	ExpectedDate  string           `json:"expected_date"`
+	TotalAmount   float64          `json:"total_amount"`
+	TaxAmount     float64          `json:"tax_amount"`
+	GrandTotal    float64          `json:"grand_total"`
+	CreatedAt     string           `json:"created_at"`
+	Items         []POItemResponse `json:"items"`
 }
 
 type POItemResponse struct {

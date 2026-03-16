@@ -175,6 +175,71 @@ func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	return c.SendString("Password reset successful.")
 }
 
+func (h *AuthHandler) Refresh(c *fiber.Ctx) error {
+	refreshToken := c.Cookies("refresh_token")
+	if refreshToken == "" {
+		return c.Status(401).SendString("refresh token missing")
+	}
+
+	u, err := h.store.GetUserByRefreshToken(refreshToken)
+	if err != nil {
+		return c.Status(401).SendString("invalid refresh token")
+	}
+
+	// Generate new access token
+	accessToken, err := GenerateJWT(u.ID.String(), u.Role.Name)
+	if err != nil {
+		return c.Status(500).SendString("token error")
+	}
+
+	// Rotate refresh token
+	newRefreshToken, err := GenerateRefreshToken()
+	if err != nil {
+		return c.Status(500).SendString("refresh token error")
+	}
+	if err := h.store.UpdateRefreshToken(u.ID, newRefreshToken); err != nil {
+		return c.Status(500).SendString("failed to store refresh token")
+	}
+
+	c.Cookie(&fiber.Cookie{
+		Name:     "refresh_token",
+		Value:    newRefreshToken,
+		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Strict",
+		Path:     "/",
+		MaxAge:   60 * 60 * 24 * 7, // 7 days
+	})
+
+	return c.JSON(fiber.Map{
+		"token": accessToken,
+	})
+}
+
+func (h *AuthHandler) Logout(c *fiber.Ctx) error {
+	refreshToken := c.Cookies("refresh_token")
+	if refreshToken != "" {
+		// Invalidate refresh token in DB
+		u, err := h.store.GetUserByRefreshToken(refreshToken)
+		if err == nil {
+			h.store.UpdateRefreshToken(u.ID, "")
+		}
+	}
+
+	// Clear the cookie
+	c.Cookie(&fiber.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "Strict",
+		Path:     "/",
+		MaxAge:   -1,
+	})
+
+	return c.SendString("logged out")
+}
+
 func sendResetEmail(toEmail, token string) error {
 	from := os.Getenv("GMAIL_USER")
 	pass := os.Getenv("GMAIL_PASS")

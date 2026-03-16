@@ -8,7 +8,9 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	g.Post("/", h.Create)
 	g.Get("/", h.List)
 	g.Get("/:id", h.Get)
+	g.Patch("/:id", h.Update)
 	g.Patch("/:id/status", h.UpdateStatus)
+	g.Delete("/:id", h.Delete)
 
 	// PO Item management
 	g.Post("/:id/items", h.AddItem)

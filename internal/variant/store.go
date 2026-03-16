@@ -19,12 +19,44 @@ func NewStore(db *sql.DB) *Store {
 // ================= CREATE =================
 //
 
-func (s *Store) Create(in CreateVariantInput) (string, error) {
+func (s *Store) Create(in CreateVariantInput) (string, string, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer tx.Rollback()
+
+	// Auto-generate SKU: first 3 letters of brand + product name + attribute values
+	var brand, productName string
+	err = tx.QueryRow(`SELECT COALESCE(brand,''), name FROM products WHERE id = $1`, in.ProductID).Scan(&brand, &productName)
+	if err != nil {
+		return "", "", fmt.Errorf("product not found: %w", err)
+	}
+
+	sku := strings.ToUpper(first3(brand) + " " + first3(productName))
+
+	// Append first 3 letters of each attribute value
+	for _, avid := range in.AttributeValueIDs {
+		var val string
+		err = tx.QueryRow(`SELECT value FROM attribute_values WHERE id = $1`, avid).Scan(&val)
+		if err == nil {
+			sku += " " + strings.ToUpper(first3(val))
+		}
+	}
+
+	// Ensure uniqueness by appending a number if needed
+	baseSku := sku
+	var exists bool
+	for i := 1; ; i++ {
+		err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM variants WHERE sku = $1)`, sku).Scan(&exists)
+		if err != nil {
+			return "", "", err
+		}
+		if !exists {
+			break
+		}
+		sku = fmt.Sprintf("%s %d", baseSku, i)
+	}
 
 	var id string
 
@@ -36,14 +68,14 @@ func (s *Store) Create(in CreateVariantInput) (string, error) {
 	`,
 		in.ProductID,
 		in.Name,
-		in.SKU,
+		sku,
 		in.Price,
 		in.CostPrice,
-		in.SKU,
+		sku,
 	).Scan(&id)
 
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	for _, avid := range in.AttributeValueIDs {
@@ -53,7 +85,7 @@ func (s *Store) Create(in CreateVariantInput) (string, error) {
 			VALUES ($1,$2)
 		`, id, avid)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 
@@ -65,11 +97,20 @@ func (s *Store) Create(in CreateVariantInput) (string, error) {
 			VALUES ($1,$2)
 		`, id, imgPath)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 
-	return id, tx.Commit()
+	return id, sku, tx.Commit()
+}
+
+// first3 returns the first 3 letters of a string (uppercase, no spaces)
+func first3(s string) string {
+	s = strings.ReplaceAll(s, " ", "")
+	if len(s) >= 3 {
+		return s[:3]
+	}
+	return s
 }
 
 //
@@ -230,7 +271,6 @@ func (s *Store) GenerateWithAttrOrder(productID string, basePrice float64, attrO
 	}
 
 	var created []string
-	prefix, _ := s.getProductPrefix(productID)
 
 	fmt.Printf("GenerateWithAttrOrder: combinations = %v\n", combinations)
 	for _, combo := range combinations {
@@ -239,20 +279,18 @@ func (s *Store) GenerateWithAttrOrder(productID string, basePrice float64, attrO
 			nameParts = append(nameParts, valMap[id])
 		}
 		name := strings.Join(nameParts, " ")
-		sku := prefix + "-" + strings.ToUpper(strings.Join(nameParts, "-"))
 
-		fmt.Printf("GenerateWithAttrOrder: Creating variant: name=%s, sku=%s, combo=%v\n", name, sku, combo)
-		id, err := s.Create(CreateVariantInput{
+		fmt.Printf("GenerateWithAttrOrder: Creating variant: name=%s, combo=%v\n", name, combo)
+		id, sku, err := s.Create(CreateVariantInput{
 			ProductID:         productID,
 			Name:              name,
-			SKU:               sku,
 			Price:             basePrice,
 			AttributeValueIDs: combo,
 		})
 		if err != nil {
 			fmt.Printf("GenerateWithAttrOrder: Create error: %v\n", err)
 		} else {
-			fmt.Printf("GenerateWithAttrOrder: Created variant id=%s\n", id)
+			fmt.Printf("GenerateWithAttrOrder: Created variant id=%s, sku=%s\n", id, sku)
 			created = append(created, id)
 		}
 	}

@@ -13,3 +13,5 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	g.Patch("/:id/deactivate", h.Deactivate)
 	g.Patch("/:id/activate", h.Activate)
 }
+
+//tested

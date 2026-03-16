@@ -141,6 +141,7 @@ CREATE TABLE suppliers (
     email VARCHAR(150),
     address TEXT,
     gst_number VARCHAR(15) UNIQUE,
+    is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
