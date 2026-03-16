@@ -279,3 +279,49 @@ CREATE TABLE raw_material_movements (
     reference VARCHAR(200),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Purchase Invoices (supplier bills linked to PO)
+CREATE TABLE purchase_invoices (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    invoice_number VARCHAR(50) UNIQUE NOT NULL,
+    purchase_order_id UUID NOT NULL REFERENCES purchase_orders(id),
+    supplier_id UUID NOT NULL REFERENCES suppliers(id),
+    warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+    invoice_date DATE NOT NULL,
+    sub_amount DECIMAL(12,2) DEFAULT 0,
+    discount_amount DECIMAL(12,2) DEFAULT 0,
+    gst_amount DECIMAL(12,2) DEFAULT 0,
+    round_off DECIMAL(12,2) DEFAULT 0,
+    net_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    paid_amount DECIMAL(12,2) DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    notes TEXT,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Purchase Invoice Items
+CREATE TABLE purchase_invoice_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    purchase_invoice_id UUID NOT NULL REFERENCES purchase_invoices(id) ON DELETE CASCADE,
+    purchase_order_item_id UUID NOT NULL REFERENCES purchase_order_items(id),
+    item_name VARCHAR(200) NOT NULL,
+    hsn_code VARCHAR(20),
+    unit VARCHAR(30),
+    quantity DECIMAL(10,3) NOT NULL,
+    unit_price DECIMAL(12,2) NOT NULL,
+    tax_percent DECIMAL(5,2) DEFAULT 0,
+    tax_amount DECIMAL(12,2) DEFAULT 0,
+    total_amount DECIMAL(12,2) NOT NULL
+);
+
+-- Supplier Payments
+CREATE TABLE supplier_payments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    purchase_invoice_id UUID NOT NULL REFERENCES purchase_invoices(id) ON DELETE CASCADE,
+    amount DECIMAL(12,2) NOT NULL,
+    payment_method VARCHAR(20) NOT NULL,
+    reference VARCHAR(100),
+    paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);

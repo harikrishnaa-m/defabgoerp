@@ -38,6 +38,7 @@ import (
 	"defab-erp/internal/coupon"
 	"defab-erp/internal/goodsreceipt"
 	"defab-erp/internal/purchase"
+	"defab-erp/internal/purchaseinvoice"
 	"defab-erp/internal/rawmaterial"
 	"defab-erp/internal/stock"
 	"defab-erp/internal/stockrequest"
@@ -116,6 +117,9 @@ func main() {
 
 	rawMaterialStore := rawmaterial.NewStore(database)
 	rawMaterialHandler := rawmaterial.NewHandler(rawMaterialStore)
+
+	purchaseInvoiceStore := purchaseinvoice.NewStore(database)
+	purchaseInvoiceHandler := purchaseinvoice.NewHandler(purchaseInvoiceStore)
 
 	// 4. Fiber
 	app := fiber.New(fiber.Config{
@@ -297,6 +301,16 @@ func main() {
 			),
 		),
 		rawMaterialHandler,
+	)
+
+	purchaseinvoice.RegisterRoutes(
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
+		),
+		purchaseInvoiceHandler,
 	)
 
 	protected.Get("/me", func(c *fiber.Ctx) error {
