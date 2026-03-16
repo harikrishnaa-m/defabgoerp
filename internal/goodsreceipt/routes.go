@@ -9,4 +9,7 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	g.Get("/", h.List)
 	g.Get("/po/:poId", h.ListByPO)
 	g.Get("/:id", h.GetByID)
+	g.Delete("/:id", h.Cancel)
 }
+
+//tested

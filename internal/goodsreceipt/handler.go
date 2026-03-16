@@ -18,6 +18,24 @@ func NewHandler(s *Store) *Handler {
 	return &Handler{store: s}
 }
 
+// Cancel handles DELETE /goods-receipts/:id
+func (h *Handler) Cancel(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	if err := h.store.Cancel(id); err != nil {
+		if err.Error() == "GRN is already cancelled" {
+			return httperr.BadRequest(c, err.Error())
+		}
+		if err == sql.ErrNoRows {
+			return httperr.NotFound(c, "Goods receipt not found")
+		}
+		log.Println("cancel grn error:", err)
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(fiber.Map{"message": "GRN cancelled and stock reversed"})
+}
+
 // Create handles POST /goods-receipts
 func (h *Handler) Create(c *fiber.Ctx) error {
 	var in CreateGoodsReceiptInput
@@ -26,8 +44,8 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return httperr.BadRequest(c, "Invalid JSON body")
 	}
 
-	if in.PurchaseOrderID == "" || in.SupplierID == "" || in.WarehouseID == "" {
-		return httperr.BadRequest(c, "purchase_order_id, supplier_id and warehouse_id required")
+	if in.PurchaseOrderID == "" {
+		return httperr.BadRequest(c, "purchase_order_id is required")
 	}
 
 	if len(in.Items) == 0 {

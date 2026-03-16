@@ -38,6 +38,7 @@ import (
 	"defab-erp/internal/coupon"
 	"defab-erp/internal/goodsreceipt"
 	"defab-erp/internal/purchase"
+	"defab-erp/internal/rawmaterial"
 	"defab-erp/internal/stock"
 	"defab-erp/internal/stockrequest"
 	"defab-erp/internal/supplier"
@@ -113,8 +114,13 @@ func main() {
 	couponStore := coupon.NewStore(database)
 	couponHandler := coupon.NewHandler(couponStore)
 
+	rawMaterialStore := rawmaterial.NewStore(database)
+	rawMaterialHandler := rawmaterial.NewHandler(rawMaterialStore)
+
 	// 4. Fiber
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		BodyLimit: 50 * 1024 * 1024, // 50 MB
+	})
 
 	app.Use(logger.New())
 	app.Use(recover.New())
@@ -281,6 +287,16 @@ func main() {
 			),
 		),
 		couponHandler,
+	)
+
+	rawmaterial.RegisterRoutes(
+		protected.Group("",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
+		),
+		rawMaterialHandler,
 	)
 
 	protected.Get("/me", func(c *fiber.Ctx) error {

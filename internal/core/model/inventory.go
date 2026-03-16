@@ -117,6 +117,32 @@ type GoodsReceiptItem struct {
 	ReceivedQty decimal.Decimal `gorm:"type:decimal(10,2);not null" json:"received_qty"`
 }
 
+// RawMaterialStock tracks raw material inventory per warehouse.
+type RawMaterialStock struct {
+	ID          uuid.UUID       `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	ItemName    string          `gorm:"size:200;not null;uniqueIndex:idx_rm_item_warehouse" json:"item_name"`
+	HSNCode     string          `gorm:"size:20" json:"hsn_code"`
+	Unit        string          `gorm:"size:20;not null" json:"unit"`
+	WarehouseID uuid.UUID       `gorm:"type:uuid;not null;uniqueIndex:idx_rm_item_warehouse" json:"warehouse_id"`
+	Warehouse   *Warehouse      `gorm:"foreignKey:WarehouseID;references:ID" json:"warehouse,omitempty"`
+	Quantity    decimal.Decimal `gorm:"type:decimal(10,2);not null;default:0" json:"quantity"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// RawMaterialMovement records stock changes for raw materials.
+type RawMaterialMovement struct {
+	ID              uuid.UUID       `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	ItemName        string          `gorm:"size:200;not null" json:"item_name"`
+	WarehouseID     uuid.UUID       `gorm:"type:uuid;not null;index" json:"warehouse_id"`
+	Warehouse       *Warehouse      `gorm:"foreignKey:WarehouseID;references:ID" json:"warehouse,omitempty"`
+	Quantity        decimal.Decimal `gorm:"type:decimal(10,2);not null" json:"quantity"`
+	MovementType    string          `gorm:"size:20;not null" json:"movement_type"` // IN, OUT, ADJUSTMENT
+	GoodsReceiptID  *uuid.UUID      `gorm:"type:uuid;index" json:"goods_receipt_id"`
+	PurchaseOrderID *uuid.UUID      `gorm:"type:uuid;index" json:"purchase_order_id"`
+	Reference       string          `gorm:"size:200" json:"reference"`
+	CreatedAt       time.Time       `gorm:"autoCreateTime" json:"created_at"`
+}
+
 type StockRequest struct {
 	ID uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
 

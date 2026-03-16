@@ -254,3 +254,28 @@ CREATE TABLE goods_receipt_items (
     ordered_qty DECIMAL(10,2) NOT NULL,
     received_qty DECIMAL(10,2) NOT NULL
 );
+
+-- Raw Material Stock (tracks raw material inventory per warehouse)
+CREATE TABLE raw_material_stocks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    item_name VARCHAR(200) NOT NULL,
+    hsn_code VARCHAR(20),
+    unit VARCHAR(20) NOT NULL,
+    warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+    quantity DECIMAL(10,2) NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(item_name, warehouse_id)
+);
+
+-- Raw Material Stock Movements (audit trail for raw material stock changes)
+CREATE TABLE raw_material_movements (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    item_name VARCHAR(200) NOT NULL,
+    warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+    quantity DECIMAL(10,2) NOT NULL,
+    movement_type VARCHAR(20) NOT NULL, -- IN, OUT, ADJUSTMENT
+    goods_receipt_id UUID REFERENCES goods_receipts(id),
+    purchase_order_id UUID REFERENCES purchase_orders(id),
+    reference VARCHAR(200),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
