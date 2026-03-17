@@ -129,7 +129,7 @@ func main() {
 	app.Use(logger.New())
 	app.Use(recover.New())
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:5173,https://defab-erp-frontend.vercel.app",
+		AllowOrigins:     "*",
 		AllowHeaders:     "*",
 		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
 		AllowCredentials: true,
