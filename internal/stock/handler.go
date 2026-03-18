@@ -304,6 +304,7 @@ func (h *Handler) All(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var (
+			stockID         string
 			pid, pname      string
 			vid, vname, sku string
 			wid, wname      string
@@ -311,6 +312,7 @@ func (h *Handler) All(c *fiber.Ctx) error {
 		)
 
 		if err := rows.Scan(
+			&stockID,
 			&pid, &pname,
 			&vid, &vname, &sku,
 			&wid, &wname,
@@ -320,6 +322,7 @@ func (h *Handler) All(c *fiber.Ctx) error {
 		}
 
 		data = append(data, fiber.Map{
+			"id":        stockID,
 			"product":   fiber.Map{"id": pid, "name": pname},
 			"variant":   fiber.Map{"id": vid, "name": vname, "sku": sku},
 			"warehouse": fiber.Map{"id": wid, "name": wname},

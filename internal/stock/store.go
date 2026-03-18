@@ -202,6 +202,7 @@ func (s *Store) LowStock(threshold int) (*sql.Rows, error) {
 func (s *Store) GetAll(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
 		SELECT
+			s.id,
 			p.id, p.name,
 			v.id, v.name, v.sku,
 			w.id, w.name,
