@@ -3,7 +3,10 @@ package stock
 import (
 	"database/sql"
 	"defab-erp/internal/core/httperr"
+	"defab-erp/internal/core/model"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -45,6 +48,11 @@ func (h *Handler) ByWarehouse(c *fiber.Ctx) error {
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
 
+	total, err := h.store.CountByWarehouse(warehouseID)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+
 	rows, err := h.store.ListByWarehouse(warehouseID, limit, offset)
 	if err != nil {
 		return httperr.Internal(c)
@@ -55,7 +63,7 @@ func (h *Handler) ByWarehouse(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var variantID, product, variant, warehouse string
-		var qty int
+		var qty decimal.Decimal
 
 		rows.Scan(&variantID, &product, &variant, &warehouse, &qty)
 
@@ -68,7 +76,13 @@ func (h *Handler) ByWarehouse(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.JSON(out)
+	return c.JSON(fiber.Map{
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"data":        out,
+	})
 }
 
 // GET /stocks/branch/:id
@@ -77,6 +91,11 @@ func (h *Handler) ByBranch(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
+
+	total, err := h.store.CountByBranch(branchID)
+	if err != nil {
+		return httperr.Internal(c)
+	}
 
 	rows, err := h.store.ListByBranch(branchID, limit, offset)
 	if err != nil {
@@ -101,10 +120,16 @@ func (h *Handler) ByBranch(c *fiber.Ctx) error {
 			"quantity":       qty,
 		})
 	}
-	return c.JSON(out)
+	return c.JSON(fiber.Map{
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"data":        out,
+	})
 }
 
-// PATCH /stocks/:id
+// PATCH /stocks/:id — raw update (backward compat)
 func (h *Handler) Update(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var in StockUpdateInput
@@ -121,6 +146,86 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "stock updated", "id": id})
 }
 
+// POST /stocks/:id/adjust — audited stock adjustment
+func (h *Handler) Adjust(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+	id := c.Params("id")
+
+	var in StockAdjustInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "invalid payload")
+	}
+	if in.NewQuantity.IsNegative() {
+		return httperr.BadRequest(c, "new_quantity cannot be negative")
+	}
+	if in.Reason == "" {
+		return httperr.BadRequest(c, "reason is required")
+	}
+
+	_ = user // userID available for future per-user audit
+	if err := h.store.Adjust(id, in.NewQuantity, in.Reason, user.ID.String()); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return c.Status(404).JSON(fiber.Map{"error": "stock not found"})
+		}
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(fiber.Map{"message": "stock adjusted", "id": id})
+}
+
+// GET /stocks/:id — single stock detail
+func (h *Handler) GetByID(c *fiber.Ctx) error {
+	id := c.Params("id")
+	row, _ := h.store.GetByID(id)
+
+	var (
+		stockID, variantID, variantName, sku string
+		productID, productName               string
+		warehouseID, warehouseName           string
+		qty                                  decimal.Decimal
+		stockType                            string
+		updatedAt                            time.Time
+	)
+
+	if err := row.Scan(
+		&stockID, &variantID, &variantName, &sku,
+		&productID, &productName,
+		&warehouseID, &warehouseName,
+		&qty, &stockType, &updatedAt,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return c.Status(404).JSON(fiber.Map{"error": "stock not found"})
+		}
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(fiber.Map{
+		"id":             stockID,
+		"variant_id":     variantID,
+		"variant_name":   variantName,
+		"sku":            sku,
+		"product_id":     productID,
+		"product_name":   productName,
+		"warehouse_id":   warehouseID,
+		"warehouse_name": warehouseName,
+		"quantity":       qty,
+		"stock_type":     stockType,
+		"updated_at":     updatedAt,
+	})
+}
+
+// DELETE /stocks/:id
+func (h *Handler) Delete(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if err := h.store.Delete(id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return c.Status(404).JSON(fiber.Map{"error": "stock not found"})
+		}
+		return httperr.Internal(c)
+	}
+	return c.JSON(fiber.Map{"message": "stock deleted"})
+}
+
 // GET /stocks/variant/:id
 func (h *Handler) ByVariant(c *fiber.Ctx) error {
 	variantID := c.Params("id")
@@ -135,7 +240,7 @@ func (h *Handler) ByVariant(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var warehouse string
-		var qty int
+		var qty decimal.Decimal
 		rows.Scan(&warehouse, &qty)
 
 		out = append(out, fiber.Map{
@@ -162,7 +267,7 @@ func (h *Handler) LowStock(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var product, variant, warehouse string
-		var qty int
+		var qty decimal.Decimal
 
 		rows.Scan(&product, &variant, &warehouse, &qty)
 
@@ -183,6 +288,11 @@ func (h *Handler) All(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
+
+	total, err := h.store.CountAll()
+	if err != nil {
+		return httperr.Internal(c)
+	}
 
 	rows, err := h.store.GetAll(limit, offset)
 	if err != nil {
@@ -218,9 +328,11 @@ func (h *Handler) All(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"page":  page,
-		"limit": limit,
-		"data":  data,
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"data":        data,
 	})
 }
 
@@ -269,7 +381,31 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
 
-	rows, err := h.store.GetMovements(limit, offset)
+	// Optional filters
+	var variantID, warehouseID, movementType, fromDate, toDate *string
+	if v := c.Query("variant_id"); v != "" {
+		variantID = &v
+	}
+	if v := c.Query("warehouse_id"); v != "" {
+		warehouseID = &v
+	}
+	if v := c.Query("type"); v != "" {
+		up := strings.ToUpper(v)
+		movementType = &up
+	}
+	if v := c.Query("from_date"); v != "" {
+		fromDate = &v
+	}
+	if v := c.Query("to_date"); v != "" {
+		toDate = &v
+	}
+
+	total, err := h.store.CountMovements(variantID, warehouseID, movementType, fromDate, toDate)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+
+	rows, err := h.store.GetMovements(variantID, warehouseID, movementType, fromDate, toDate, limit, offset)
 	if err != nil {
 		return httperr.Internal(c)
 	}
@@ -279,36 +415,51 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var (
-			id, variant, movement string
-			qty                   decimal.Decimal
-			fromWh, toWh          sql.NullString
-			created               time.Time
+			id                                     string
+			varID, varName                         string
+			movement                               string
+			qty                                    decimal.Decimal
+			fromWhID, fromWhName, toWhID, toWhName sql.NullString
+			reference, status                      string
+			created                                time.Time
 		)
 
 		if err := rows.Scan(
 			&id,
-			&variant,
+			&varID, &varName,
 			&movement,
 			&qty,
-			&fromWh,
-			&toWh,
+			&fromWhID, &fromWhName,
+			&toWhID, &toWhName,
+			&reference, &status,
 			&created,
 		); err != nil {
 			return httperr.Internal(c)
 		}
 
 		out = append(out, fiber.Map{
-			"id":         id,
-			"variant":    variant,
-			"type":       movement,
-			"quantity":   qty,
-			"from":       nullOrValue(fromWh),
-			"to":         nullOrValue(toWh),
-			"created_at": created,
+			"id":                  id,
+			"variant_id":          varID,
+			"variant_name":        varName,
+			"type":                movement,
+			"quantity":            qty,
+			"from_warehouse_id":   nullOrValue(fromWhID),
+			"from_warehouse_name": nullOrValue(fromWhName),
+			"to_warehouse_id":     nullOrValue(toWhID),
+			"to_warehouse_name":   nullOrValue(toWhName),
+			"reference":           reference,
+			"status":              status,
+			"created_at":          created,
 		})
 	}
 
-	return c.JSON(out)
+	return c.JSON(fiber.Map{
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"data":        out,
+	})
 }
 
 func (h *Handler) ByWarehouseProductSummary(c *fiber.Ctx) error {

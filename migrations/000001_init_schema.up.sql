@@ -280,6 +280,37 @@ CREATE TABLE raw_material_movements (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Stock Requests
+CREATE TABLE stock_requests (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    from_warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+    to_warehouse_id UUID NOT NULL REFERENCES warehouses(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    priority VARCHAR(10) DEFAULT 'MEDIUM',
+    expected_date TIMESTAMPTZ,
+    requested_by UUID NOT NULL REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE stock_request_items (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    stock_request_id UUID NOT NULL REFERENCES stock_requests(id) ON DELETE CASCADE,
+    variant_id UUID NOT NULL REFERENCES variants(id),
+    requested_qty DECIMAL(10,2) NOT NULL,
+    approved_qty DECIMAL(10,2) DEFAULT 0,
+    remarks TEXT
+);
+
+CREATE TABLE stock_request_approvals (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    stock_request_id UUID NOT NULL REFERENCES stock_requests(id) ON DELETE CASCADE,
+    action VARCHAR(20) NOT NULL,
+    approved_by UUID NOT NULL REFERENCES users(id),
+    remarks TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Purchase Invoices (supplier bills linked to PO)
 CREATE TABLE purchase_invoices (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

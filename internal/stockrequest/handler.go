@@ -18,8 +18,6 @@ func NewHandler(s *Store) *Handler {
 	return &Handler{store: s}
 }
 
-
-
 //  create stock request
 
 func (h *Handler) Create(c *fiber.Ctx) error {
@@ -28,8 +26,9 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	var in struct {
 		FromWarehouseID string  `json:"from_warehouse_id"`
 		ToWarehouseID   string  `json:"to_warehouse_id"`
+		Priority        string  `json:"priority"`
 		ExpectedDate    *string `json:"expected_date"`
-		Items []struct {
+		Items           []struct {
 			VariantID string `json:"variant_id"`
 			Qty       int    `json:"qty"`
 		} `json:"items"`
@@ -58,6 +57,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		in.FromWarehouseID,
 		in.ToWarehouseID,
 		user.ID.String(),
+		in.Priority,
 		in.ExpectedDate,
 	)
 	if err != nil {
@@ -85,16 +85,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	})
 }
 
-
-
-
-
-
-
-
-//
 // LIST STOCK REQUESTS
-//
 func (h *Handler) List(c *fiber.Ctx) error {
 	// 🔹 Query params
 	status := c.Query("status")
@@ -154,44 +145,47 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	var data []fiber.Map
 
 	for rows.Next() {
-		var id, status, priority, fromWh, toWh, created string
+		var id, status, priority string
+		var fromWhID, fromWhName, toWhID, toWhName string
+		var requestedByID, requestedByName, created string
 
 		if err := rows.Scan(
 			&id,
 			&status,
 			&priority,
-			&fromWh,
-			&toWh,
+			&fromWhID, &fromWhName,
+			&toWhID, &toWhName,
+			&requestedByID, &requestedByName,
 			&created,
 		); err != nil {
 			return httperr.Internal(c)
 		}
 
 		data = append(data, fiber.Map{
-			"id": id,
-			"status": status,
-			"priority": priority,
-			"from_warehouse_id": fromWh,
-			"to_warehouse_id": toWh,
-			"created_at": created,
+			"id":                  id,
+			"status":              status,
+			"priority":            priority,
+			"from_warehouse_id":   fromWhID,
+			"from_warehouse_name": fromWhName,
+			"to_warehouse_id":     toWhID,
+			"to_warehouse_name":   toWhName,
+			"requested_by":        requestedByID,
+			"requested_by_name":   requestedByName,
+			"created_at":          created,
 		})
 	}
 
 	// 🔹 Final response
 	return c.JSON(fiber.Map{
-		"page": page,
-		"limit": limit,
-		"total": total,
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
 		"total_pages": totalPages,
-		"data": data,
+		"data":        data,
 	})
 }
 
-
-
-//
 // APPROVE / PARTIAL / REJECT REQUEST
-//
 func (h *Handler) Approve(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 	id := c.Params("id")
@@ -208,36 +202,34 @@ func (h *Handler) Approve(c *fiber.Ctx) error {
 	status := strings.ToUpper(in.Status)
 
 	switch status {
-	case "APPROVED", "PARTIAL", "REJECTED":
+	case "APPROVED", "PARTIAL", "REJECTED", "CANCELLED":
 		// valid
 	default:
 		return httperr.BadRequest(c, "invalid status value")
 	}
 
 	if err := h.store.UpdateStatus(
-	id,
-	status,
-	user.ID.String(),
-	in.Remarks,
-); err != nil {
+		id,
+		status,
+		user.ID.String(),
+		in.Remarks,
+	); err != nil {
 
-	if strings.Contains(err.Error(), "closed") {
-		return httperr.BadRequest(c, err.Error())
+		if strings.Contains(err.Error(), "closed") {
+			return httperr.BadRequest(c, err.Error())
+		}
+
+		if strings.Contains(err.Error(), "invalid status") {
+			return httperr.BadRequest(c, err.Error())
+		}
+
+		return httperr.Internal(c)
 	}
-
-	if strings.Contains(err.Error(), "invalid status") {
-		return httperr.BadRequest(c, err.Error())
-	}
-
-	return httperr.Internal(c)
-}
 
 	return c.JSON(fiber.Map{
 		"message": "Stock request updated successfully",
 	})
 }
-
-
 
 // func (h *Handler) Dispatch(c *fiber.Ctx) error {
 // 	user := c.Locals("user").(*model.User)
@@ -278,7 +270,6 @@ func (h *Handler) Approve(c *fiber.Ctx) error {
 // 	})
 // }
 
-
 func (h *Handler) Dispatch(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 	requestID := c.Params("id")
@@ -289,7 +280,7 @@ func (h *Handler) Dispatch(c *fiber.Ctx) error {
 
 	var in struct {
 		FromWarehouseID string `json:"from_warehouse_id"`
-		Items []struct {
+		Items           []struct {
 			VariantID string `json:"variant_id"`
 			Qty       int    `json:"dispatch_qty"`
 		} `json:"items"`
@@ -339,3 +330,41 @@ func (h *Handler) Dispatch(c *fiber.Ctx) error {
 	})
 }
 
+// GET /:id — single stock request detail
+func (h *Handler) GetByID(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return httperr.BadRequest(c, "id is required")
+	}
+
+	result, err := h.store.GetByID(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return c.Status(404).JSON(fiber.Map{"error": "stock request not found"})
+		}
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(result)
+}
+
+// DELETE /:id — cancel a stock request
+func (h *Handler) Cancel(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+	id := c.Params("id")
+	if id == "" {
+		return httperr.BadRequest(c, "id is required")
+	}
+
+	if err := h.store.UpdateStatus(id, "CANCELLED", user.ID.String(), "Cancelled by user"); err != nil {
+		if strings.Contains(err.Error(), "closed") {
+			return httperr.BadRequest(c, err.Error())
+		}
+		if strings.Contains(err.Error(), "invalid status") {
+			return httperr.BadRequest(c, err.Error())
+		}
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(fiber.Map{"message": "Stock request cancelled"})
+}

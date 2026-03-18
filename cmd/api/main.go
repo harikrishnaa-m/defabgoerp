@@ -132,7 +132,7 @@ func main() {
 		AllowOrigins:     "*",
 		AllowHeaders:     "*",
 		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-		AllowCredentials: true,
+		AllowCredentials: false,
 	}))
 
 	api := app.Group("/api")

@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 type Store struct {
@@ -14,32 +16,35 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-
 //   Create Stock Request
-
 
 func (s *Store) CreateRequest(
 	fromWarehouse, toWarehouse, requestedBy string,
+	priority string,
 	expectedDate *string,
 ) (string, error) {
+
+	if priority == "" {
+		priority = "MEDIUM"
+	}
 
 	var id string
 
 	err := s.db.QueryRow(`
 	INSERT INTO stock_requests
-	(from_warehouse_id, to_warehouse_id, requested_by, expected_date)
-	VALUES ($1,$2,$3,$4)
+	(from_warehouse_id, to_warehouse_id, requested_by, priority, expected_date)
+	VALUES ($1,$2,$3,$4,$5)
 	RETURNING id
 	`,
 		fromWarehouse,
 		toWarehouse,
 		requestedBy,
+		priority,
 		expectedDate,
 	).Scan(&id)
 
 	return id, err
 }
-
 
 //  Add Request Items
 
@@ -61,7 +66,7 @@ func (s *Store) AddItem(
 	return err
 }
 
-//   List Requests 
+//   List Requests
 
 func (s *Store) ListRequests(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
@@ -72,53 +77,152 @@ func (s *Store) ListRequests(limit, offset int) (*sql.Rows, error) {
 	`, limit, offset)
 }
 
+// Get Request Detail with human-readable names
 
-// Get Request Detail
+func (s *Store) GetByID(id string) (fiber.Map, error) {
+	var (
+		srID, status, priority, createdAt      string
+		fromWhID, fromWhName, toWhID, toWhName string
+		requestedByID, requestedByName         string
+		expectedDate                           sql.NullString
+	)
 
-func (s *Store) GetRequest(id string) (*sql.Row, *sql.Rows) {
+	err := s.db.QueryRow(`
+		SELECT
+			sr.id, sr.status, sr.priority,
+			sr.from_warehouse_id, fw.name AS from_warehouse_name,
+			sr.to_warehouse_id, tw.name AS to_warehouse_name,
+			sr.requested_by, u.name AS requested_by_name,
+			sr.expected_date,
+			sr.created_at
+		FROM stock_requests sr
+		JOIN warehouses fw ON fw.id = sr.from_warehouse_id
+		JOIN warehouses tw ON tw.id = sr.to_warehouse_id
+		JOIN users u ON u.id = sr.requested_by
+		WHERE sr.id = $1
+	`, id).Scan(
+		&srID, &status, &priority,
+		&fromWhID, &fromWhName,
+		&toWhID, &toWhName,
+		&requestedByID, &requestedByName,
+		&expectedDate,
+		&createdAt,
+	)
+	if err != nil {
+		return nil, err
+	}
 
-	req := s.db.QueryRow(`
-	SELECT
-		id, status, priority,
-		from_warehouse_id, to_warehouse_id,
-		expected_date, created_at
-	FROM stock_requests
-	WHERE id=$1
+	// Fetch items with variant/product names
+	itemRows, err := s.db.Query(`
+		SELECT
+			sri.id,
+			sri.variant_id, v.name AS variant_name, v.sku,
+			p.id AS product_id, p.name AS product_name,
+			sri.requested_qty, sri.approved_qty,
+			COALESCE(sri.remarks, '') AS remarks
+		FROM stock_request_items sri
+		JOIN variants v ON v.id = sri.variant_id
+		JOIN products p ON p.id = v.product_id
+		WHERE sri.stock_request_id = $1
 	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer itemRows.Close()
 
-	items, _ := s.db.Query(`
-	SELECT
-		variant_id,
-		requested_qty,
-		approved_qty
-	FROM stock_request_items
-	WHERE stock_request_id=$1
+	var items []fiber.Map
+	for itemRows.Next() {
+		var itemID, varID, varName, sku, prodID, prodName, remarks string
+		var reqQty, appQty float64
+		if err := itemRows.Scan(&itemID, &varID, &varName, &sku, &prodID, &prodName, &reqQty, &appQty, &remarks); err != nil {
+			return nil, err
+		}
+		items = append(items, fiber.Map{
+			"id":            itemID,
+			"variant_id":    varID,
+			"variant_name":  varName,
+			"sku":           sku,
+			"product_id":    prodID,
+			"product_name":  prodName,
+			"requested_qty": reqQty,
+			"approved_qty":  appQty,
+			"remarks":       remarks,
+		})
+	}
+
+	// Fetch approval history
+	approvalRows, err := s.db.Query(`
+		SELECT
+			sra.id, sra.action,
+			sra.approved_by, u.name AS approved_by_name,
+			COALESCE(sra.remarks, '') AS remarks,
+			sra.created_at
+		FROM stock_request_approvals sra
+		JOIN users u ON u.id = sra.approved_by
+		WHERE sra.stock_request_id = $1
+		ORDER BY sra.created_at
 	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer approvalRows.Close()
 
-	return req, items
+	var approvals []fiber.Map
+	for approvalRows.Next() {
+		var aID, action, approverID, approverName, aRemarks, aCreated string
+		if err := approvalRows.Scan(&aID, &action, &approverID, &approverName, &aRemarks, &aCreated); err != nil {
+			return nil, err
+		}
+		approvals = append(approvals, fiber.Map{
+			"id":               aID,
+			"action":           action,
+			"approved_by":      approverID,
+			"approved_by_name": approverName,
+			"remarks":          aRemarks,
+			"created_at":       aCreated,
+		})
+	}
+
+	result := fiber.Map{
+		"id":                  srID,
+		"status":              status,
+		"priority":            priority,
+		"from_warehouse_id":   fromWhID,
+		"from_warehouse_name": fromWhName,
+		"to_warehouse_id":     toWhID,
+		"to_warehouse_name":   toWhName,
+		"requested_by":        requestedByID,
+		"requested_by_name":   requestedByName,
+		"expected_date":       nil,
+		"created_at":          createdAt,
+		"items":               items,
+		"approvals":           approvals,
+	}
+	if expectedDate.Valid {
+		result["expected_date"] = expectedDate.String
+	}
+
+	return result, nil
 }
 
 // Approve / Partial / Reject
-
 
 func isValidStatusTransition(current, next string) bool {
 
 	switch current {
 	case "PENDING":
-		return next == "APPROVED" || next == "REJECTED"
+		return next == "APPROVED" || next == "REJECTED" || next == "CANCELLED"
 
 	case "APPROVED":
-		return next == "PARTIAL" || next == "REJECTED"
+		return next == "PARTIAL" || next == "REJECTED" || next == "CANCELLED"
 
 	case "PARTIAL":
-		return next == "PARTIAL" || next == "COMPLETED"
+		return next == "PARTIAL" || next == "COMPLETED" || next == "CANCELLED"
 
 	default:
 		return false
 	}
 }
-
-
 
 func (s *Store) UpdateStatus(
 	requestID, newStatus, approvedBy, remarks string,
@@ -180,8 +284,6 @@ func (s *Store) UpdateStatus(
 	return tx.Commit()
 }
 
-
-
 func (s *Store) ListFiltered(
 	status *string,
 	fromDate *string,
@@ -195,10 +297,14 @@ func (s *Store) ListFiltered(
 		sr.id,
 		sr.status,
 		sr.priority,
-		sr.from_warehouse_id,
-		sr.to_warehouse_id,
+		sr.from_warehouse_id, fw.name AS from_warehouse_name,
+		sr.to_warehouse_id, tw.name AS to_warehouse_name,
+		sr.requested_by, u.name AS requested_by_name,
 		sr.created_at
 	FROM stock_requests sr
+	JOIN warehouses fw ON fw.id = sr.from_warehouse_id
+	JOIN warehouses tw ON tw.id = sr.to_warehouse_id
+	JOIN users u ON u.id = sr.requested_by
 	WHERE
 		($1::text IS NULL OR sr.status = $1)
 		AND ($2::date IS NULL OR sr.created_at::date >= $2)
@@ -216,7 +322,6 @@ func (s *Store) ListFiltered(
 		offset,
 	)
 }
-
 
 func (s *Store) CountFiltered(
 	status *string,
@@ -260,8 +365,6 @@ func (s *Store) GetFromWarehouse(requestID string) (string, error) {
 
 	return fromWarehouseID, nil
 }
-
-
 
 // func (s *Store) Dispatch(
 // 	requestID string,

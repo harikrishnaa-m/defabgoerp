@@ -15,3 +15,8 @@ type StockUpdateInput struct {
 	Quantity    decimal.Decimal `json:"quantity"`
 	StockType   string          `json:"stock_type"`
 }
+
+type StockAdjustInput struct {
+	NewQuantity decimal.Decimal `json:"new_quantity"`
+	Reason      string          `json:"reason"`
+}
