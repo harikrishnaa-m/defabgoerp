@@ -5,10 +5,14 @@ import "github.com/gofiber/fiber/v2"
 func RegisterRoutes(r fiber.Router, h *Handler) {
 	g := r.Group("/stocks")
 
-	g.Post("/", h.Create)            // create or upsert stock
-	g.Get("/", h.All)                // all stocks (paginated with total)
-	g.Get("/low", h.LowStock)        // low stock alert
-	g.Get("/movements", h.Movements) // movement audit log (filterable)
+	g.Post("/", h.Create)                           // create or upsert stock
+	g.Get("/", h.All)                               // all stocks (paginated with total)
+	g.Get("/low", h.LowStock)                       // low stock alert
+	g.Get("/movements", h.Movements)                // movement audit log (filterable) nned to test
+	g.Get("/movements/branch", h.MovementsByBranch) // movements for particular branch branch
+	g.Get("/movements/:id", h.MovementByID)         // single movement detail
+	g.Get("/available", h.Available)                // all central warehouse stocks need to test
+	g.Get("/available/new", h.AvailableNew)         // central stocks NOT in my branch need to test
 
 	g.Get("/warehouse/:id", h.ByWarehouse) // stocks in a warehouse (paginated with total)
 	g.Get("/warehouse/:id/products", h.ByWarehouseProductSummary)

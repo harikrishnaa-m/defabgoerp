@@ -90,7 +90,7 @@ func (s *Store) Adjust(stockID string, newQty decimal.Decimal, reason, userID st
 
 	_, err = tx.Exec(`
 		INSERT INTO stock_movements
-			(variant_id, to_warehouse_id, quantity, movement_type, reference, status, created_at)
+			(variant_id, from_warehouse_id, quantity, movement_type, reference, status, created_at)
 		VALUES ($1, $2, $3, $4, $5, 'COMPLETED', NOW())
 	`, variantID, warehouseID, qty, movementType, ref)
 	if err != nil {
@@ -199,6 +199,22 @@ func (s *Store) LowStock(threshold int) (*sql.Rows, error) {
 	`, threshold)
 }
 
+func (s *Store) LowStockByBranch(threshold int, branchID string) (*sql.Rows, error) {
+	return s.db.Query(`
+	SELECT
+		p.name AS product,
+		v.name AS variant,
+		w.name AS warehouse,
+		s.quantity
+	FROM stocks s
+	JOIN variants v ON v.id = s.variant_id
+	JOIN products p ON p.id = v.product_id
+	JOIN warehouses w ON w.id = s.warehouse_id
+	WHERE s.quantity <= $1 AND w.branch_id = $2
+	ORDER BY s.quantity ASC
+	`, threshold, branchID)
+}
+
 func (s *Store) GetAll(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
 		SELECT
@@ -214,6 +230,106 @@ func (s *Store) GetAll(limit, offset int) (*sql.Rows, error) {
 		ORDER BY p.name, v.name
 		LIMIT $1 OFFSET $2
 	`, limit, offset)
+}
+
+func (s *Store) GetAllByBranch(branchID string, limit, offset int) (*sql.Rows, error) {
+	return s.db.Query(`
+		SELECT
+			s.id,
+			p.id, p.name,
+			v.id, v.name, v.sku,
+			w.id, w.name,
+			s.quantity
+		FROM stocks s
+		JOIN variants v   ON v.id = s.variant_id
+		JOIN products p   ON p.id = v.product_id
+		JOIN warehouses w ON w.id = s.warehouse_id
+		WHERE w.branch_id = $1
+		ORDER BY p.name, v.name
+		LIMIT $2 OFFSET $3
+	`, branchID, limit, offset)
+}
+
+func (s *Store) CountAllByBranch(branchID string) (int, error) {
+	var total int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM stocks s
+		JOIN warehouses w ON w.id = s.warehouse_id
+		WHERE w.branch_id = $1
+	`, branchID).Scan(&total)
+	return total, err
+}
+
+// GetAvailable returns stocks in the CENTRAL warehouse that are not in the given branch
+func (s *Store) GetAvailable(branchID string, limit, offset int) (*sql.Rows, error) {
+	return s.db.Query(`
+		SELECT
+			s.id,
+			p.id, p.name,
+			v.id, v.name, v.sku,
+			w.id, w.name,
+			s.quantity
+		FROM stocks s
+		JOIN variants v   ON v.id = s.variant_id
+		JOIN products p   ON p.id = v.product_id
+		JOIN warehouses w ON w.id = s.warehouse_id
+		WHERE w.type = 'CENTRAL'
+		  AND s.quantity > 0
+		ORDER BY p.name, v.name
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+}
+
+func (s *Store) CountAvailable(branchID string) (int, error) {
+	var total int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM stocks s
+		JOIN warehouses w ON w.id = s.warehouse_id
+		WHERE w.type = 'CENTRAL'
+		  AND s.quantity > 0
+	`).Scan(&total)
+	return total, err
+}
+
+// GetAvailableNew returns central stocks whose variant does NOT exist in any warehouse belonging to the branch
+func (s *Store) GetAvailableNew(branchID string, limit, offset int) (*sql.Rows, error) {
+	return s.db.Query(`
+		SELECT
+			s.id,
+			p.id, p.name,
+			v.id, v.name, v.sku,
+			w.id, w.name,
+			s.quantity
+		FROM stocks s
+		JOIN variants v   ON v.id = s.variant_id
+		JOIN products p   ON p.id = v.product_id
+		JOIN warehouses w ON w.id = s.warehouse_id
+		WHERE w.type = 'CENTRAL'
+		  AND s.quantity > 0
+		  AND s.variant_id NOT IN (
+		      SELECT s2.variant_id FROM stocks s2
+		      JOIN warehouses w2 ON w2.id = s2.warehouse_id
+		      WHERE w2.branch_id = $1 AND s2.quantity > 0
+		  )
+		ORDER BY p.name, v.name
+		LIMIT $2 OFFSET $3
+	`, branchID, limit, offset)
+}
+
+func (s *Store) CountAvailableNew(branchID string) (int, error) {
+	var total int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM stocks s
+		JOIN warehouses w ON w.id = s.warehouse_id
+		WHERE w.type = 'CENTRAL'
+		  AND s.quantity > 0
+		  AND s.variant_id NOT IN (
+		      SELECT s2.variant_id FROM stocks s2
+		      JOIN warehouses w2 ON w2.id = s2.warehouse_id
+		      WHERE w2.branch_id = $1 AND s2.quantity > 0
+		  )
+	`, branchID).Scan(&total)
+	return total, err
 }
 
 func (s *Store) GetByProduct(productID string) (*sql.Rows, error) {
@@ -235,6 +351,7 @@ func (s *Store) GetMovements(variantID, warehouseID, movementType, fromDate, toD
 		SELECT
 			sm.id,
 			v.id AS variant_id, v.name AS variant_name,
+			p.id AS product_id, p.name AS product_name,
 			sm.movement_type,
 			sm.quantity,
 			sm.from_warehouse_id, COALESCE(fw.name,'') AS from_wh,
@@ -244,6 +361,7 @@ func (s *Store) GetMovements(variantID, warehouseID, movementType, fromDate, toD
 			sm.created_at
 		FROM stock_movements sm
 		JOIN variants v ON v.id = sm.variant_id
+		JOIN products p ON p.id = v.product_id
 		LEFT JOIN warehouses fw ON fw.id = sm.from_warehouse_id
 		LEFT JOIN warehouses tw ON tw.id = sm.to_warehouse_id
 		WHERE
@@ -277,6 +395,81 @@ func (s *Store) CountMovements(variantID, warehouseID, movementType, fromDate, t
 func (s *Store) CountAll() (int, error) {
 	var total int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM stocks`).Scan(&total)
+	return total, err
+}
+
+// GetMovementByID returns a single stock movement with full details.
+func (s *Store) GetMovementByID(id string) *sql.Row {
+	return s.db.QueryRow(`
+		SELECT
+			sm.id,
+			v.id, v.name, v.sku,
+			p.id, p.name,
+			sm.movement_type,
+			sm.quantity,
+			sm.from_warehouse_id, COALESCE(fw.name,''),
+			sm.to_warehouse_id, COALESCE(tw.name,''),
+			COALESCE(sm.reference,''),
+			sm.status,
+			COALESCE(sm.stock_request_id::text,''),
+			COALESCE(sm.purchase_order_id::text,''),
+			COALESCE(sm.supplier_id::text,''),
+			COALESCE(sm.sale_order_id::text,''),
+			sm.created_at,
+			sm.updated_at
+		FROM stock_movements sm
+		JOIN variants v ON v.id = sm.variant_id
+		JOIN products p ON p.id = v.product_id
+		LEFT JOIN warehouses fw ON fw.id = sm.from_warehouse_id
+		LEFT JOIN warehouses tw ON tw.id = sm.to_warehouse_id
+		WHERE sm.id = $1
+	`, id)
+}
+
+// GetMovementsByBranch returns movements where from/to warehouse belongs to the branch.
+func (s *Store) GetMovementsByBranch(branchID string, movementType, fromDate, toDate *string, limit, offset int) (*sql.Rows, error) {
+	return s.db.Query(`
+		SELECT
+			sm.id,
+			v.id, v.name,
+			p.id, p.name,
+			sm.movement_type,
+			sm.quantity,
+			sm.from_warehouse_id, COALESCE(fw.name,''),
+			sm.to_warehouse_id, COALESCE(tw.name,''),
+			COALESCE(sm.reference,''),
+			sm.status,
+			sm.created_at
+		FROM stock_movements sm
+		JOIN variants v ON v.id = sm.variant_id
+		JOIN products p ON p.id = v.product_id
+		LEFT JOIN warehouses fw ON fw.id = sm.from_warehouse_id
+		LEFT JOIN warehouses tw ON tw.id = sm.to_warehouse_id
+		WHERE (
+			fw.branch_id = $1 OR tw.branch_id = $1
+		)
+		AND ($2::text IS NULL OR sm.movement_type = $2)
+		AND ($3::date IS NULL OR sm.created_at::date >= $3::date)
+		AND ($4::date IS NULL OR sm.created_at::date <= $4::date)
+		ORDER BY sm.created_at DESC
+		LIMIT $5 OFFSET $6
+	`, branchID, movementType, fromDate, toDate, limit, offset)
+}
+
+func (s *Store) CountMovementsByBranch(branchID string, movementType, fromDate, toDate *string) (int, error) {
+	var total int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM stock_movements sm
+		LEFT JOIN warehouses fw ON fw.id = sm.from_warehouse_id
+		LEFT JOIN warehouses tw ON tw.id = sm.to_warehouse_id
+		WHERE (
+			fw.branch_id = $1 OR tw.branch_id = $1
+		)
+		AND ($2::text IS NULL OR sm.movement_type = $2)
+		AND ($3::date IS NULL OR sm.created_at::date >= $3::date)
+		AND ($4::date IS NULL OR sm.created_at::date <= $4::date)
+	`, branchID, movementType, fromDate, toDate).Scan(&total)
 	return total, err
 }
 

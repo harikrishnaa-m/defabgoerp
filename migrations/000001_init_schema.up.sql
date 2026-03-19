@@ -14,7 +14,7 @@ CREATE TABLE users (
     email VARCHAR(150) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role_id INT REFERENCES roles(id),
-    branch_id INT, -- Nullable (Admin has no branch)
+    branch_id UUID REFERENCES branches(id), -- Nullable (Admin has no branch)
     refresh_token VARCHAR(255), -- For storing refresh token securely
     reset_token VARCHAR(255), -- For password reset functionality
     is_active BOOLEAN DEFAULT TRUE,

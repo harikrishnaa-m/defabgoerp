@@ -31,7 +31,7 @@ func (s *Store) GetUserByRefreshToken(refreshToken string) (*model.User, error) 
 	var roleID uint
 	var roleName string
 	var rolePermissions string
-	var branchID sql.NullInt64
+	var branchID sql.NullString
 	query := `
 		SELECT u.id, u.name, u.email, u.password_hash, u.role_id, r.id, r.name, r.permissions, u.branch_id, u.is_active, u.created_at
 		FROM users u
@@ -61,8 +61,7 @@ func (s *Store) GetUserByRefreshToken(refreshToken string) (*model.User, error) 
 	u.Role.Name = roleName
 	u.Role.Permissions = rolePermissions
 	if branchID.Valid {
-		id := uint(branchID.Int64)
-		u.BranchID = &id
+		u.BranchID = &branchID.String
 	}
 	return u, nil
 }
@@ -73,7 +72,7 @@ func (s *Store) GetUserByResetToken(resetToken string) (*model.User, error) {
 	var roleID uint
 	var roleName string
 	var rolePermissions string
-	var branchID sql.NullInt64
+	var branchID sql.NullString
 	query := `
 		SELECT u.id, u.name, u.email, u.password_hash, u.role_id, r.id, r.name, r.permissions, u.branch_id, u.is_active, u.created_at
 		FROM users u
@@ -103,8 +102,7 @@ func (s *Store) GetUserByResetToken(resetToken string) (*model.User, error) {
 	u.Role.Name = roleName
 	u.Role.Permissions = rolePermissions
 	if branchID.Valid {
-		id := uint(branchID.Int64)
-		u.BranchID = &id
+		u.BranchID = &branchID.String
 	}
 	return u, nil
 }
@@ -145,7 +143,7 @@ func (s *Store) GetUserByEmail(email string) (*model.User, error) {
 	var roleID uint
 	var roleName string
 	var rolePermissions string
-	var branchID sql.NullInt64
+	var branchID sql.NullString
 
 	query := `
 	SELECT
@@ -192,8 +190,7 @@ func (s *Store) GetUserByEmail(email string) (*model.User, error) {
 	u.Role.Permissions = rolePermissions
 
 	if branchID.Valid {
-		id := uint(branchID.Int64)
-		u.BranchID = &id
+		u.BranchID = &branchID.String
 	}
 
 	fmt.Println("[DEBUG] User fetched:", u)
@@ -206,7 +203,7 @@ func (s *Store) GetUserByID(id string) (*model.User, error) {
 
 	var roleID uint
 	var roleName string
-	var branchID sql.NullInt64
+	var branchID sql.NullString
 
 	query := `
 	SELECT
@@ -246,8 +243,7 @@ func (s *Store) GetUserByID(id string) (*model.User, error) {
 	u.Role.Name = roleName
 
 	if branchID.Valid {
-		b := uint(branchID.Int64)
-		u.BranchID = &b
+		u.BranchID = &branchID.String
 	}
 
 	return u, nil

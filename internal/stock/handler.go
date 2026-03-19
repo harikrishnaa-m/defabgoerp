@@ -254,10 +254,21 @@ func (h *Handler) ByVariant(c *fiber.Ctx) error {
 
 // GET /stocks/low
 func (h *Handler) LowStock(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
 	t := c.Query("threshold", "10")
 	threshold, _ := strconv.Atoi(t)
 
-	rows, err := h.store.LowStock(threshold)
+	var rows *sql.Rows
+	var err error
+
+	if user.Role.Name == model.RoleSuperAdmin {
+		rows, err = h.store.LowStock(threshold)
+	} else {
+		if user.BranchID == nil {
+			return c.JSON([]fiber.Map{})
+		}
+		rows, err = h.store.LowStockByBranch(threshold, *user.BranchID)
+	}
 	if err != nil {
 		return httperr.Internal(c)
 	}
@@ -285,16 +296,31 @@ func (h *Handler) LowStock(c *fiber.Ctx) error {
 // gat all stocks
 
 func (h *Handler) All(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
 
-	total, err := h.store.CountAll()
-	if err != nil {
-		return httperr.Internal(c)
-	}
+	var total int
+	var rows *sql.Rows
+	var err error
 
-	rows, err := h.store.GetAll(limit, offset)
+	if user.Role.Name == model.RoleSuperAdmin {
+		total, err = h.store.CountAll()
+		if err != nil {
+			return httperr.Internal(c)
+		}
+		rows, err = h.store.GetAll(limit, offset)
+	} else {
+		if user.BranchID == nil {
+			return c.JSON(fiber.Map{"page": page, "limit": limit, "total": 0, "total_pages": 0, "data": []fiber.Map{}})
+		}
+		total, err = h.store.CountAllByBranch(*user.BranchID)
+		if err != nil {
+			return httperr.Internal(c)
+		}
+		rows, err = h.store.GetAllByBranch(*user.BranchID, limit, offset)
+	}
 	if err != nil {
 		return httperr.Internal(c)
 	}
@@ -321,6 +347,122 @@ func (h *Handler) All(c *fiber.Ctx) error {
 			return httperr.Internal(c)
 		}
 
+		data = append(data, fiber.Map{
+			"id":        stockID,
+			"product":   fiber.Map{"id": pid, "name": pname},
+			"variant":   fiber.Map{"id": vid, "name": vname, "sku": sku},
+			"warehouse": fiber.Map{"id": wid, "name": wname},
+			"quantity":  qty,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"data":        data,
+	})
+}
+
+// GET /stocks/available — stocks outside the user's branch (central + other branches)
+func (h *Handler) Available(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	offset := (page - 1) * limit
+
+	// SuperAdmin sees everything — use All instead
+	if user.Role.Name == model.RoleSuperAdmin || user.BranchID == nil {
+		return h.All(c)
+	}
+
+	total, err := h.store.CountAvailable(*user.BranchID)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+
+	rows, err := h.store.GetAvailable(*user.BranchID, limit, offset)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+	defer rows.Close()
+
+	var data []fiber.Map
+	for rows.Next() {
+		var (
+			stockID         string
+			pid, pname      string
+			vid, vname, sku string
+			wid, wname      string
+			qty             decimal.Decimal
+		)
+		if err := rows.Scan(
+			&stockID,
+			&pid, &pname,
+			&vid, &vname, &sku,
+			&wid, &wname,
+			&qty,
+		); err != nil {
+			return httperr.Internal(c)
+		}
+		data = append(data, fiber.Map{
+			"id":        stockID,
+			"product":   fiber.Map{"id": pid, "name": pname},
+			"variant":   fiber.Map{"id": vid, "name": vname, "sku": sku},
+			"warehouse": fiber.Map{"id": wid, "name": wname},
+			"quantity":  qty,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"data":        data,
+	})
+}
+
+func (h *Handler) AvailableNew(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	offset := (page - 1) * limit
+
+	if user.BranchID == nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user has no branch assigned"})
+	}
+
+	total, err := h.store.CountAvailableNew(*user.BranchID)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+
+	rows, err := h.store.GetAvailableNew(*user.BranchID, limit, offset)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+	defer rows.Close()
+
+	var data []fiber.Map
+	for rows.Next() {
+		var (
+			stockID         string
+			pid, pname      string
+			vid, vname, sku string
+			wid, wname      string
+			qty             decimal.Decimal
+		)
+		if err := rows.Scan(
+			&stockID,
+			&pid, &pname,
+			&vid, &vname, &sku,
+			&wid, &wname,
+			&qty,
+		); err != nil {
+			return httperr.Internal(c)
+		}
 		data = append(data, fiber.Map{
 			"id":        stockID,
 			"product":   fiber.Map{"id": pid, "name": pname},
@@ -380,6 +522,13 @@ func nullOrValue(ns sql.NullString) string {
 }
 
 func (h *Handler) Movements(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+
+	// StoreManagers see only their branch movements
+	if user.Role.Name != model.RoleSuperAdmin && user.BranchID != nil {
+		return h.MovementsByBranch(c)
+	}
+
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
@@ -420,6 +569,7 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 		var (
 			id                                     string
 			varID, varName                         string
+			pid, pname                             string
 			movement                               string
 			qty                                    decimal.Decimal
 			fromWhID, fromWhName, toWhID, toWhName sql.NullString
@@ -430,6 +580,7 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 		if err := rows.Scan(
 			&id,
 			&varID, &varName,
+			&pid, &pname,
 			&movement,
 			&qty,
 			&fromWhID, &fromWhName,
@@ -444,6 +595,167 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 			"id":                  id,
 			"variant_id":          varID,
 			"variant_name":        varName,
+			"product_id":          pid,
+			"product_name":        pname,
+			"type":                movement,
+			"quantity":            qty,
+			"from_warehouse_id":   nullOrValue(fromWhID),
+			"from_warehouse_name": nullOrValue(fromWhName),
+			"to_warehouse_id":     nullOrValue(toWhID),
+			"to_warehouse_name":   nullOrValue(toWhName),
+			"reference":           reference,
+			"status":              status,
+			"created_at":          created,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"data":        out,
+	})
+}
+
+func (h *Handler) MovementByID(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	var (
+		movID                    string
+		vid, vname, vsku         string
+		pid, pname               string
+		movType                  string
+		qty                      decimal.Decimal
+		fromWhID, fromWhName     sql.NullString
+		toWhID, toWhName         sql.NullString
+		reference, status        string
+		stockReqID, poID, suppID string
+		saleOrderID              string
+		createdAt, updatedAt     time.Time
+	)
+
+	err := h.store.GetMovementByID(id).Scan(
+		&movID,
+		&vid, &vname, &vsku,
+		&pid, &pname,
+		&movType,
+		&qty,
+		&fromWhID, &fromWhName,
+		&toWhID, &toWhName,
+		&reference,
+		&status,
+		&stockReqID, &poID, &suppID, &saleOrderID,
+		&createdAt, &updatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "movement not found"})
+	}
+	if err != nil {
+		return httperr.Internal(c)
+	}
+
+	result := fiber.Map{
+		"id":       movID,
+		"variant":  fiber.Map{"id": vid, "name": vname, "sku": vsku},
+		"product":  fiber.Map{"id": pid, "name": pname},
+		"type":     movType,
+		"quantity": qty,
+		"from_warehouse": fiber.Map{
+			"id":   nullOrValue(fromWhID),
+			"name": nullOrValue(fromWhName),
+		},
+		"to_warehouse": fiber.Map{
+			"id":   nullOrValue(toWhID),
+			"name": nullOrValue(toWhName),
+		},
+		"reference":  reference,
+		"status":     status,
+		"created_at": createdAt,
+		"updated_at": updatedAt,
+	}
+
+	if stockReqID != "" {
+		result["stock_request_id"] = stockReqID
+	}
+	if poID != "" {
+		result["purchase_order_id"] = poID
+	}
+	if suppID != "" {
+		result["supplier_id"] = suppID
+	}
+	if saleOrderID != "" {
+		result["sale_order_id"] = saleOrderID
+	}
+
+	return c.JSON(result)
+}
+
+func (h *Handler) MovementsByBranch(c *fiber.Ctx) error {
+	branchID := c.Query("branch_id")
+	if branchID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "branch_id query param is required"})
+	}
+
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	offset := (page - 1) * limit
+
+	var movementType, fromDate, toDate *string
+	if v := c.Query("type"); v != "" {
+		up := strings.ToUpper(v)
+		movementType = &up
+	}
+	if v := c.Query("from_date"); v != "" {
+		fromDate = &v
+	}
+	if v := c.Query("to_date"); v != "" {
+		toDate = &v
+	}
+
+	total, err := h.store.CountMovementsByBranch(branchID, movementType, fromDate, toDate)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+
+	rows, err := h.store.GetMovementsByBranch(branchID, movementType, fromDate, toDate, limit, offset)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+	defer rows.Close()
+
+	var out []fiber.Map
+	for rows.Next() {
+		var (
+			id                                     string
+			varID, varName                         string
+			pid, pname                             string
+			movement                               string
+			qty                                    decimal.Decimal
+			fromWhID, fromWhName, toWhID, toWhName sql.NullString
+			reference, status                      string
+			created                                time.Time
+		)
+
+		if err := rows.Scan(
+			&id,
+			&varID, &varName,
+			&pid, &pname,
+			&movement,
+			&qty,
+			&fromWhID, &fromWhName,
+			&toWhID, &toWhName,
+			&reference, &status,
+			&created,
+		); err != nil {
+			return httperr.Internal(c)
+		}
+		out = append(out, fiber.Map{
+			"id":                  id,
+			"variant_id":          varID,
+			"variant_name":        varName,
+			"product_id":          pid,
+			"product_name":        pname,
 			"type":                movement,
 			"quantity":            qty,
 			"from_warehouse_id":   nullOrValue(fromWhID),
