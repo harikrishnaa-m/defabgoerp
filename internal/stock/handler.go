@@ -569,6 +569,7 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 		var (
 			id                                     string
 			varID, varName                         string
+			pid, pname                             string
 			movement                               string
 			qty                                    decimal.Decimal
 			fromWhID, fromWhName, toWhID, toWhName sql.NullString
@@ -579,6 +580,7 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 		if err := rows.Scan(
 			&id,
 			&varID, &varName,
+			&pid, &pname,
 			&movement,
 			&qty,
 			&fromWhID, &fromWhName,
@@ -593,6 +595,8 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 			"id":                  id,
 			"variant_id":          varID,
 			"variant_name":        varName,
+			"product_id":          pid,
+			"product_name":        pname,
 			"type":                movement,
 			"quantity":            qty,
 			"from_warehouse_id":   nullOrValue(fromWhID),
@@ -688,9 +692,9 @@ func (h *Handler) MovementByID(c *fiber.Ctx) error {
 }
 
 func (h *Handler) MovementsByBranch(c *fiber.Ctx) error {
-	user := c.Locals("user").(*model.User)
-	if user.BranchID == nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user has no branch assigned"})
+	branchID := c.Query("branch_id")
+	if branchID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "branch_id query param is required"})
 	}
 
 	page := c.QueryInt("page", 1)
@@ -709,12 +713,12 @@ func (h *Handler) MovementsByBranch(c *fiber.Ctx) error {
 		toDate = &v
 	}
 
-	total, err := h.store.CountMovementsByBranch(*user.BranchID, movementType, fromDate, toDate)
+	total, err := h.store.CountMovementsByBranch(branchID, movementType, fromDate, toDate)
 	if err != nil {
 		return httperr.Internal(c)
 	}
 
-	rows, err := h.store.GetMovementsByBranch(*user.BranchID, movementType, fromDate, toDate, limit, offset)
+	rows, err := h.store.GetMovementsByBranch(branchID, movementType, fromDate, toDate, limit, offset)
 	if err != nil {
 		return httperr.Internal(c)
 	}
@@ -725,6 +729,7 @@ func (h *Handler) MovementsByBranch(c *fiber.Ctx) error {
 		var (
 			id                                     string
 			varID, varName                         string
+			pid, pname                             string
 			movement                               string
 			qty                                    decimal.Decimal
 			fromWhID, fromWhName, toWhID, toWhName sql.NullString
@@ -735,6 +740,7 @@ func (h *Handler) MovementsByBranch(c *fiber.Ctx) error {
 		if err := rows.Scan(
 			&id,
 			&varID, &varName,
+			&pid, &pname,
 			&movement,
 			&qty,
 			&fromWhID, &fromWhName,
@@ -748,6 +754,8 @@ func (h *Handler) MovementsByBranch(c *fiber.Ctx) error {
 			"id":                  id,
 			"variant_id":          varID,
 			"variant_name":        varName,
+			"product_id":          pid,
+			"product_name":        pname,
 			"type":                movement,
 			"quantity":            qty,
 			"from_warehouse_id":   nullOrValue(fromWhID),

@@ -76,6 +76,76 @@ func (s *Store) ListAll(limit, offset int) ([]RawMaterialStockRow, error) {
 	return list, nil
 }
 
+// ListByBranch returns raw material stock for warehouses belonging to a branch.
+func (s *Store) ListByBranch(branchID string, limit, offset int) ([]RawMaterialStockRow, error) {
+	rows, err := s.db.Query(`
+		SELECT rms.id, rms.item_name, rms.hsn_code, rms.unit,
+		       rms.warehouse_id, w.name AS warehouse_name,
+		       rms.quantity, rms.updated_at::text
+		FROM raw_material_stocks rms
+		JOIN warehouses w ON w.id = rms.warehouse_id
+		WHERE w.branch_id = $1
+		ORDER BY rms.item_name
+		LIMIT $2 OFFSET $3
+	`, branchID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []RawMaterialStockRow
+	for rows.Next() {
+		var r RawMaterialStockRow
+		if err := rows.Scan(
+			&r.ID, &r.ItemName, &r.HSNCode, &r.Unit,
+			&r.WarehouseID, &r.WarehouseName,
+			&r.Quantity, &r.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, nil
+}
+
+// ListMovementsByBranch returns raw material movements for warehouses in a branch.
+func (s *Store) ListMovementsByBranch(branchID string, limit, offset int) ([]RawMaterialMovementRow, error) {
+	rows, err := s.db.Query(`
+		SELECT rm.id, rm.item_name, rm.warehouse_id, w.name AS warehouse_name,
+		       rm.quantity, rm.movement_type,
+		       rm.goods_receipt_id, gr.grn_number,
+		       rm.purchase_order_id, po.po_number,
+		       rm.reference, rm.created_at::text
+		FROM raw_material_movements rm
+		JOIN warehouses w ON w.id = rm.warehouse_id
+		LEFT JOIN goods_receipts gr ON gr.id = rm.goods_receipt_id
+		LEFT JOIN purchase_orders po ON po.id = rm.purchase_order_id
+		WHERE w.branch_id = $1
+		ORDER BY rm.created_at DESC
+		LIMIT $2 OFFSET $3
+	`, branchID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []RawMaterialMovementRow
+	for rows.Next() {
+		var r RawMaterialMovementRow
+		if err := rows.Scan(
+			&r.ID, &r.ItemName, &r.WarehouseID, &r.WarehouseName,
+			&r.Quantity, &r.MovementType,
+			&r.GoodsReceiptID, &r.GRNNumber,
+			&r.PurchaseOrderID, &r.PONumber,
+			&r.Reference, &r.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, nil
+}
+
 // ListMovements returns raw material movements, filterable by stock_id or item_name+warehouse_id.
 func (s *Store) ListMovements(itemName, warehouseID string, limit, offset int) ([]RawMaterialMovementRow, error) {
 	rows, err := s.db.Query(`
@@ -125,7 +195,69 @@ func (s *Store) ListMovementsByStockID(stockID string, limit, offset int) ([]Raw
 	return s.ListMovements(itemName, warehouseID, limit, offset)
 }
 
-// AdjustStock subtracts (OUT) or corrects (ADJUSTMENT) raw material quantity by stock ID.
+// GetMovementByID returns a single raw material movement by ID.
+
+// ListAllMovements returns all raw material movements across all warehouses.
+func (s *Store) ListAllMovements(limit, offset int) ([]RawMaterialMovementRow, error) {
+	rows, err := s.db.Query(`
+		SELECT rm.id, rm.item_name, rm.warehouse_id, w.name AS warehouse_name,
+		       rm.quantity, rm.movement_type,
+		       rm.goods_receipt_id, gr.grn_number,
+		       rm.purchase_order_id, po.po_number,
+		       rm.reference, rm.created_at::text
+		FROM raw_material_movements rm
+		JOIN warehouses w ON w.id = rm.warehouse_id
+		LEFT JOIN goods_receipts gr ON gr.id = rm.goods_receipt_id
+		LEFT JOIN purchase_orders po ON po.id = rm.purchase_order_id
+		ORDER BY rm.created_at DESC
+		LIMIT $1 OFFSET $2
+	`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []RawMaterialMovementRow
+	for rows.Next() {
+		var r RawMaterialMovementRow
+		if err := rows.Scan(
+			&r.ID, &r.ItemName, &r.WarehouseID, &r.WarehouseName,
+			&r.Quantity, &r.MovementType,
+			&r.GoodsReceiptID, &r.GRNNumber,
+			&r.PurchaseOrderID, &r.PONumber,
+			&r.Reference, &r.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		list = append(list, r)
+	}
+	return list, nil
+}
+
+// GetMovementByID returns a single raw material movement by ID.
+func (s *Store) GetMovementByID(id string) (RawMaterialMovementRow, error) {
+	var r RawMaterialMovementRow
+	err := s.db.QueryRow(`
+		SELECT rm.id, rm.item_name, rm.warehouse_id, w.name AS warehouse_name,
+		       rm.quantity, rm.movement_type,
+		       rm.goods_receipt_id, gr.grn_number,
+		       rm.purchase_order_id, po.po_number,
+		       rm.reference, rm.created_at::text
+		FROM raw_material_movements rm
+		JOIN warehouses w ON w.id = rm.warehouse_id
+		LEFT JOIN goods_receipts gr ON gr.id = rm.goods_receipt_id
+		LEFT JOIN purchase_orders po ON po.id = rm.purchase_order_id
+		WHERE rm.id = $1
+	`, id).Scan(
+		&r.ID, &r.ItemName, &r.WarehouseID, &r.WarehouseName,
+		&r.Quantity, &r.MovementType,
+		&r.GoodsReceiptID, &r.GRNNumber,
+		&r.PurchaseOrderID, &r.PONumber,
+		&r.Reference, &r.CreatedAt,
+	)
+	return r, err
+}
+
 func (s *Store) AdjustStock(in AdjustStockInput) error {
 	tx, err := s.db.Begin()
 	if err != nil {

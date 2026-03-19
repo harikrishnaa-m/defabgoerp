@@ -90,7 +90,7 @@ func (s *Store) Adjust(stockID string, newQty decimal.Decimal, reason, userID st
 
 	_, err = tx.Exec(`
 		INSERT INTO stock_movements
-			(variant_id, to_warehouse_id, quantity, movement_type, reference, status, created_at)
+			(variant_id, from_warehouse_id, quantity, movement_type, reference, status, created_at)
 		VALUES ($1, $2, $3, $4, $5, 'COMPLETED', NOW())
 	`, variantID, warehouseID, qty, movementType, ref)
 	if err != nil {
@@ -351,6 +351,7 @@ func (s *Store) GetMovements(variantID, warehouseID, movementType, fromDate, toD
 		SELECT
 			sm.id,
 			v.id AS variant_id, v.name AS variant_name,
+			p.id AS product_id, p.name AS product_name,
 			sm.movement_type,
 			sm.quantity,
 			sm.from_warehouse_id, COALESCE(fw.name,'') AS from_wh,
@@ -360,6 +361,7 @@ func (s *Store) GetMovements(variantID, warehouseID, movementType, fromDate, toD
 			sm.created_at
 		FROM stock_movements sm
 		JOIN variants v ON v.id = sm.variant_id
+		JOIN products p ON p.id = v.product_id
 		LEFT JOIN warehouses fw ON fw.id = sm.from_warehouse_id
 		LEFT JOIN warehouses tw ON tw.id = sm.to_warehouse_id
 		WHERE
@@ -430,6 +432,7 @@ func (s *Store) GetMovementsByBranch(branchID string, movementType, fromDate, to
 		SELECT
 			sm.id,
 			v.id, v.name,
+			p.id, p.name,
 			sm.movement_type,
 			sm.quantity,
 			sm.from_warehouse_id, COALESCE(fw.name,''),
@@ -439,6 +442,7 @@ func (s *Store) GetMovementsByBranch(branchID string, movementType, fromDate, to
 			sm.created_at
 		FROM stock_movements sm
 		JOIN variants v ON v.id = sm.variant_id
+		JOIN products p ON p.id = v.product_id
 		LEFT JOIN warehouses fw ON fw.id = sm.from_warehouse_id
 		LEFT JOIN warehouses tw ON tw.id = sm.to_warehouse_id
 		WHERE (
