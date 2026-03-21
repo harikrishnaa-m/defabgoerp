@@ -2,13 +2,12 @@ package rawmaterial
 
 import "github.com/gofiber/fiber/v2"
 
-func RegisterRoutes(api fiber.Router, h *Handler) {
-	g := api.Group("/raw-material-stocks")
-	g.Get("/", h.ListAll)
-	g.Get("/warehouse/:warehouseId", h.ListByWarehouse)
-	g.Get("/movements", h.ListMovements)
-	g.Get("/movements/branch", h.MovementsByBranch)
-	g.Get("/movements/:id", h.MovementByID)
-	g.Get("/branch", h.StocksByBranch)
-	g.Post("/adjust", h.AdjustStock)
+func RegisterRoutes(r fiber.Router, h *Handler) {
+	r.Get("/", h.ListAll)
+	r.Get("/warehouse/:warehouseId", h.ListByWarehouse)
+	r.Get("/movements", h.ListMovements)
+	r.Get("/movements/branch", h.MovementsByBranch)
+	r.Get("/movements/:id", h.MovementByID)
+	r.Get("/branch", h.StocksByBranch)
+	r.Post("/adjust", h.AdjustStock)
 }

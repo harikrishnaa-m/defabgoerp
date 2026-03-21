@@ -3,13 +3,15 @@ package warehouse
 import "github.com/gofiber/fiber/v2"
 
 func RegisterRoutes(r fiber.Router, h *Handler) {
-	g := r.Group("/warehouses")
+	r.Post("/", h.Create)
+	r.Get("/", h.List)
+	r.Patch("/:id", h.Update)
+	r.Delete("/:id", h.Delete)
+	r.Get("/:id", h.GetByID)
+}
 
-	g.Post("/", h.Create)
-	g.Get("/", h.List)
-	g.Patch("/:id", h.Update)
-	g.Delete("/:id", h.Delete)
-	g.Get("/:id", h.GetByID)
+func RegisterListRoute(r fiber.Router, h *Handler) {
+	r.Get("/", h.List)
 }
 
 //tested

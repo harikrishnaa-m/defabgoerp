@@ -24,11 +24,9 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 
 	var in struct {
-		FromWarehouseID string  `json:"from_warehouse_id"`
-		ToWarehouseID   string  `json:"to_warehouse_id"`
-		Priority        string  `json:"priority"`
-		ExpectedDate    *string `json:"expected_date"`
-		Items           []struct {
+		Priority     string  `json:"priority"`
+		ExpectedDate *string `json:"expected_date"`
+		Items        []struct {
 			VariantID string `json:"variant_id"`
 			Qty       int    `json:"qty"`
 		} `json:"items"`
@@ -38,24 +36,32 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return httperr.BadRequest(c, "Invalid payload")
 	}
 
-	// 🔍 VALIDATIONS
-	if in.FromWarehouseID == "" || in.ToWarehouseID == "" {
-		return httperr.BadRequest(c, "warehouse ids required")
-	}
-
 	if len(in.Items) == 0 {
 		return httperr.BadRequest(c, "at least one item required")
 	}
 
-	log.Println("STOCK REQUEST PAYLOAD OK")
-	log.Println("FROM:", in.FromWarehouseID)
-	log.Println("TO:", in.ToWarehouseID)
-	log.Println("USER:", user.ID)
+	if user.BranchID == nil {
+		return httperr.BadRequest(c, "user has no branch assigned")
+	}
 
-	// 🔍 STEP 1: CREATE REQUEST
+	// Auto-fetch central warehouse
+	fromWarehouseID, err := h.store.GetCentralWarehouseID()
+	if err != nil {
+		log.Println("❌ No central warehouse found:", err)
+		return c.Status(500).JSON(fiber.Map{"error": "no central warehouse configured"})
+	}
+
+	// Auto-fetch branch warehouse
+	toWarehouseID, err := h.store.GetWarehouseByBranch(*user.BranchID)
+	if err != nil {
+		log.Println("❌ No warehouse for branch:", err)
+		return c.Status(500).JSON(fiber.Map{"error": "no warehouse found for your branch"})
+	}
+
+	// CREATE REQUEST
 	reqID, err := h.store.CreateRequest(
-		in.FromWarehouseID,
-		in.ToWarehouseID,
+		fromWarehouseID,
+		toWarehouseID,
 		user.ID.String(),
 		in.Priority,
 		in.ExpectedDate,
@@ -65,19 +71,13 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return httperr.Internal(c)
 	}
 
-	log.Println("✅ Stock request created:", reqID)
-
-	// 🔍 STEP 2: ADD ITEMS
+	// ADD ITEMS
 	for _, it := range in.Items {
-		log.Println("ADDING ITEM:", it.VariantID, "QTY:", it.Qty)
-
 		if err := h.store.AddItem(reqID, it.VariantID, it.Qty); err != nil {
 			log.Println("❌ AddItem failed:", err)
 			return httperr.Internal(c)
 		}
 	}
-
-	log.Println("✅ All items added")
 
 	return c.Status(201).JSON(fiber.Map{
 		"id":      reqID,
@@ -87,6 +87,13 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 // LIST STOCK REQUESTS
 func (h *Handler) List(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+
+	// StoreManager sees only their branch
+	if user.Role.Name != model.RoleSuperAdmin && user.BranchID != nil {
+		return h.listByBranch(c, *user.BranchID)
+	}
+
 	// 🔹 Query params
 	status := c.Query("status")
 	fromDate := c.Query("from_date")
@@ -108,7 +115,8 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	var statusPtr, fromPtr, toPtr *string
 
 	if status != "" {
-		statusPtr = &status
+		upper := strings.ToUpper(status)
+		statusPtr = &upper
 	}
 	if fromDate != "" {
 		fromPtr = &fromDate
@@ -147,7 +155,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	for rows.Next() {
 		var id, status, priority string
 		var fromWhID, fromWhName, toWhID, toWhName string
-		var requestedByID, requestedByName, created string
+		var requestedByID, requestedByName, expectedDate, created string
 
 		if err := rows.Scan(
 			&id,
@@ -156,6 +164,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 			&fromWhID, &fromWhName,
 			&toWhID, &toWhName,
 			&requestedByID, &requestedByName,
+			&expectedDate,
 			&created,
 		); err != nil {
 			return httperr.Internal(c)
@@ -171,6 +180,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 			"to_warehouse_name":   toWhName,
 			"requested_by":        requestedByID,
 			"requested_by_name":   requestedByName,
+			"expected_date":       expectedDate,
 			"created_at":          created,
 		})
 	}
@@ -183,6 +193,91 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		"total_pages": totalPages,
 		"data":        data,
 	})
+}
+
+func (h *Handler) listByBranch(c *fiber.Ctx, branchID string) error {
+	status := c.Query("status")
+	fromDate := c.Query("from_date")
+	toDate := c.Query("to_date")
+	page := c.QueryInt("page", 1)
+	limit := c.QueryInt("limit", 20)
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	var statusPtr, fromPtr, toPtr *string
+	if status != "" {
+		upper := strings.ToUpper(status)
+		statusPtr = &upper
+	}
+	if fromDate != "" {
+		fromPtr = &fromDate
+	}
+	if toDate != "" {
+		toPtr = &toDate
+	}
+
+	total, err := h.store.CountFilteredByBranch(branchID, statusPtr, fromPtr, toPtr)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+
+	rows, err := h.store.ListFilteredByBranch(branchID, statusPtr, fromPtr, toPtr, limit, offset)
+	if err != nil {
+		return httperr.Internal(c)
+	}
+	defer rows.Close()
+
+	var data []fiber.Map
+	for rows.Next() {
+		var id, st, priority string
+		var fromWhID, fromWhName, toWhID, toWhName string
+		var requestedByID, requestedByName, expectedDate, created string
+
+		if err := rows.Scan(
+			&id, &st, &priority,
+			&fromWhID, &fromWhName,
+			&toWhID, &toWhName,
+			&requestedByID, &requestedByName,
+			&expectedDate,
+			&created,
+		); err != nil {
+			return httperr.Internal(c)
+		}
+		data = append(data, fiber.Map{
+			"id":                  id,
+			"status":              st,
+			"priority":            priority,
+			"from_warehouse_id":   fromWhID,
+			"from_warehouse_name": fromWhName,
+			"to_warehouse_id":     toWhID,
+			"to_warehouse_name":   toWhName,
+			"requested_by":        requestedByID,
+			"requested_by_name":   requestedByName,
+			"expected_date":       expectedDate,
+			"created_at":          created,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"page":        page,
+		"limit":       limit,
+		"total":       total,
+		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"data":        data,
+	})
+}
+
+func (h *Handler) ByBranch(c *fiber.Ctx) error {
+	branchID := c.Query("branch_id")
+	if branchID == "" {
+		return httperr.BadRequest(c, "branch_id query param is required")
+	}
+	return h.listByBranch(c, branchID)
 }
 
 // APPROVE / PARTIAL / REJECT REQUEST
@@ -367,4 +462,23 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "Stock request cancelled"})
+}
+
+// POST /:id/receive — StoreManager confirms receipt of dispatched stock
+func (h *Handler) Receive(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+	id := c.Params("id")
+	if id == "" {
+		return httperr.BadRequest(c, "id is required")
+	}
+
+	if err := h.store.Receive(id, user.ID.String()); err != nil {
+		if strings.Contains(err.Error(), "no dispatched") ||
+			strings.Contains(err.Error(), "no in-transit") {
+			return httperr.BadRequest(c, err.Error())
+		}
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(fiber.Map{"message": "Stock received successfully"})
 }

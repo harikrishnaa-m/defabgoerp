@@ -3,25 +3,23 @@ package stock
 import "github.com/gofiber/fiber/v2"
 
 func RegisterRoutes(r fiber.Router, h *Handler) {
-	g := r.Group("/stocks")
+	r.Post("/", h.Create)                           // create or upsert stock
+	r.Get("/", h.All)                               // all stocks (paginated with total)
+	r.Get("/low", h.LowStock)                       // low stock alert
+	r.Get("/movements", h.Movements)                // movement audit log (filterable)
+	r.Get("/movements/branch", h.MovementsByBranch) // movements for particular branch
+	r.Get("/movements/:id", h.MovementByID)         // single movement detail
+	r.Get("/available", h.Available)                // all central warehouse stocks
+	r.Get("/available/new", h.AvailableNew)         // central stocks NOT in my branch
 
-	g.Post("/", h.Create)                           // create or upsert stock
-	g.Get("/", h.All)                               // all stocks (paginated with total)
-	g.Get("/low", h.LowStock)                       // low stock alert
-	g.Get("/movements", h.Movements)                // movement audit log (filterable) nned to test
-	g.Get("/movements/branch", h.MovementsByBranch) // movements for particular branch branch
-	g.Get("/movements/:id", h.MovementByID)         // single movement detail
-	g.Get("/available", h.Available)                // all central warehouse stocks need to test
-	g.Get("/available/new", h.AvailableNew)         // central stocks NOT in my branch need to test
+	r.Get("/warehouse/:id", h.ByWarehouse) // stocks in a warehouse (paginated with total)
+	r.Get("/warehouse/:id/products", h.ByWarehouseProductSummary)
+	r.Get("/branch/:id", h.ByBranch)   // stocks in a branch (paginated with total)
+	r.Get("/variant/:id", h.ByVariant) // stock for variant across warehouses
+	r.Get("/product/:id", h.ByProduct) // total stock per variant for a product
 
-	g.Get("/warehouse/:id", h.ByWarehouse) // stocks in a warehouse (paginated with total)
-	g.Get("/warehouse/:id/products", h.ByWarehouseProductSummary)
-	g.Get("/branch/:id", h.ByBranch)   // stocks in a branch (paginated with total)
-	g.Get("/variant/:id", h.ByVariant) // stock for variant across warehouses
-	g.Get("/product/:id", h.ByProduct) // total stock per variant for a product
-
-	g.Get("/:id", h.GetByID)        // single stock detail
-	g.Patch("/:id", h.Update)       // raw update (backward compat)
-	g.Post("/:id/adjust", h.Adjust) // audited adjustment with movement
-	g.Delete("/:id", h.Delete)      // delete stock record
+	r.Get("/:id", h.GetByID)        // single stock detail
+	r.Patch("/:id", h.Update)       // raw update (backward compat)
+	r.Post("/:id/adjust", h.Adjust) // audited adjustment with movement
+	r.Delete("/:id", h.Delete)      // delete stock record
 }

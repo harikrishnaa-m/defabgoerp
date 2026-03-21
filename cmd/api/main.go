@@ -149,35 +149,46 @@ func main() {
 	protected := api.Group("", middleware.JWTProtected(authStore))
 
 	role.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/roles",
 			middleware.RequireRole(model.RoleSuperAdmin),
 		),
 		roleHandler,
 	)
 
 	branch.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/branches",
 			middleware.RequireRole(model.RoleSuperAdmin),
 		),
 		branchHandler,
 	)
 
+	warehouse.RegisterListRoute(
+		protected.Group("/warehouses",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+				model.RoleStoreManager,
+			),
+		),
+		warehouseHandler,
+	)
+
 	warehouse.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/warehouses",
 			middleware.RequireRole(model.RoleSuperAdmin),
 		),
 		warehouseHandler,
 	)
 
 	user.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/users",
 			middleware.RequireRole(model.RoleSuperAdmin),
 		),
 		userHandler,
 	)
 
 	category.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/categories",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -187,7 +198,7 @@ func main() {
 	)
 
 	product.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/products",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -197,14 +208,14 @@ func main() {
 	)
 
 	productdescription.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/product-descriptions",
 			middleware.RequireRole(model.RoleSuperAdmin),
 		),
 		pdHandler,
 	)
 
 	attribute.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/attributes",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -214,15 +225,17 @@ func main() {
 	)
 
 	variant.RegisterRoutes(
-		protected.Group("", middleware.RequireRole(
-			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
-		)),
+		protected.Group("/variants",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleInventoryManager,
+			),
+		),
 		variantHandler,
 	)
 
 	supplier.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/suppliers",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -232,7 +245,7 @@ func main() {
 	)
 
 	purchase.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/purchase-orders",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -242,7 +255,7 @@ func main() {
 	)
 
 	goodsreceipt.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/goods-receipts",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -252,7 +265,7 @@ func main() {
 	)
 
 	stocktransfer.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/stock-transfers",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -262,7 +275,7 @@ func main() {
 	)
 
 	stock.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/stocks",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -273,7 +286,7 @@ func main() {
 	)
 
 	stockrequest.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/stock-requests",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -284,7 +297,7 @@ func main() {
 	)
 
 	coupon.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/coupons",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
@@ -294,22 +307,28 @@ func main() {
 	)
 
 	rawmaterial.RegisterRoutes(
-		protected.Group("",
+		protected.Group("/raw-material-stocks",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		rawMaterialHandler,
 	)
 
-	purchaseinvoice.RegisterRoutes(
-		protected.Group("",
-			middleware.RequireRole(
-				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
-			),
+	piMiddleware := protected.Group("",
+		middleware.RequireRole(
+			model.RoleSuperAdmin,
+			model.RoleInventoryManager,
 		),
+	)
+	purchaseinvoice.RegisterInvoiceRoutes(
+		piMiddleware.Group("/purchase-invoices"),
+		purchaseInvoiceHandler,
+	)
+	purchaseinvoice.RegisterPaymentRoutes(
+		piMiddleware.Group("/supplier-payments"),
 		purchaseInvoiceHandler,
 	)
 

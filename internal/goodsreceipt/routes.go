@@ -3,13 +3,11 @@ package goodsreceipt
 import "github.com/gofiber/fiber/v2"
 
 func RegisterRoutes(r fiber.Router, h *Handler) {
-	g := r.Group("/goods-receipts")
-
-	g.Post("/", h.Create)
-	g.Get("/", h.List)
-	g.Get("/po/:poId", h.ListByPO)
-	g.Get("/:id", h.GetByID)
-	g.Delete("/:id", h.Cancel)
+	r.Post("/", h.Create)
+	r.Get("/", h.List)
+	r.Get("/po/:poId", h.ListByPO)
+	r.Get("/:id", h.GetByID)
+	r.Delete("/:id", h.Cancel)
 }
 
 //tested

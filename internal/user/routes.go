@@ -3,14 +3,11 @@ package user
 import "github.com/gofiber/fiber/v2"
 
 func RegisterRoutes(r fiber.Router, h *Handler) {
-	g := r.Group("/users")
+	r.Post("/", h.Create)
+	r.Get("/", h.List)
+	r.Get("/:id", h.Get)
+	r.Patch("/:id", h.Update)
 
-	g.Post("/", h.Create)
-	g.Get("/", h.List)
-	g.Get("/:id", h.Get)
-	g.Patch("/:id", h.Update)
-
-	g.Patch("/:id/deactivate", h.Deactivate)
-	g.Patch("/:id/activate", h.Activate)
-
+	r.Patch("/:id/deactivate", h.Deactivate)
+	r.Patch("/:id/activate", h.Activate)
 }

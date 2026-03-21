@@ -16,6 +16,18 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+func (s *Store) GetCentralWarehouseID() (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM warehouses WHERE type = 'CENTRAL' LIMIT 1`).Scan(&id)
+	return id, err
+}
+
+func (s *Store) GetWarehouseByBranch(branchID string) (string, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM warehouses WHERE branch_id = $1 LIMIT 1`, branchID).Scan(&id)
+	return id, err
+}
+
 //   Create Stock Request
 
 func (s *Store) CreateRequest(
@@ -214,10 +226,10 @@ func isValidStatusTransition(current, next string) bool {
 		return next == "APPROVED" || next == "REJECTED" || next == "CANCELLED"
 
 	case "APPROVED":
-		return next == "PARTIAL" || next == "REJECTED" || next == "CANCELLED"
+		return next == "REJECTED" || next == "CANCELLED"
 
-	case "PARTIAL":
-		return next == "PARTIAL" || next == "COMPLETED" || next == "CANCELLED"
+	case "PARTIAL_DISPATCH":
+		return next == "CANCELLED"
 
 	default:
 		return false
@@ -261,6 +273,22 @@ func (s *Store) UpdateStatus(
 		return errors.New("invalid status transition")
 	}
 
+	// 🚫 Block rejection after any stock has been dispatched
+	if newStatus == "REJECTED" {
+		var dispatched float64
+		err = tx.QueryRow(`
+			SELECT COALESCE(SUM(approved_qty), 0)
+			FROM stock_request_items
+			WHERE stock_request_id = $1
+		`, requestID).Scan(&dispatched)
+		if err != nil {
+			return err
+		}
+		if dispatched > 0 {
+			return errors.New("cannot reject: stock has already been dispatched")
+		}
+	}
+
 	// ✅ Update status
 	_, err = tx.Exec(`
 		UPDATE stock_requests
@@ -300,6 +328,7 @@ func (s *Store) ListFiltered(
 		sr.from_warehouse_id, fw.name AS from_warehouse_name,
 		sr.to_warehouse_id, tw.name AS to_warehouse_name,
 		sr.requested_by, u.name AS requested_by_name,
+		COALESCE(sr.expected_date::text, '') AS expected_date,
 		sr.created_at
 	FROM stock_requests sr
 	JOIN warehouses fw ON fw.id = sr.from_warehouse_id
@@ -347,6 +376,59 @@ func (s *Store) CountFiltered(
 		toDate,
 	).Scan(&total)
 
+	return total, err
+}
+
+func (s *Store) ListFilteredByBranch(
+	branchID string,
+	status *string,
+	fromDate *string,
+	toDate *string,
+	limit int,
+	offset int,
+) (*sql.Rows, error) {
+	return s.db.Query(`
+		SELECT
+			sr.id,
+			sr.status,
+			sr.priority,
+			sr.from_warehouse_id, fw.name AS from_warehouse_name,
+			sr.to_warehouse_id, tw.name AS to_warehouse_name,
+			sr.requested_by, u.name AS requested_by_name,
+			COALESCE(sr.expected_date::text, '') AS expected_date,
+			sr.created_at
+		FROM stock_requests sr
+		JOIN warehouses fw ON fw.id = sr.from_warehouse_id
+		JOIN warehouses tw ON tw.id = sr.to_warehouse_id
+		JOIN users u ON u.id = sr.requested_by
+		WHERE
+			(fw.branch_id = $1 OR tw.branch_id = $1)
+			AND ($2::text IS NULL OR sr.status = $2)
+			AND ($3::date IS NULL OR sr.created_at::date >= $3)
+			AND ($4::date IS NULL OR sr.created_at::date <= $4)
+		ORDER BY sr.created_at DESC
+		LIMIT $5 OFFSET $6
+	`, branchID, status, fromDate, toDate, limit, offset)
+}
+
+func (s *Store) CountFilteredByBranch(
+	branchID string,
+	status *string,
+	fromDate *string,
+	toDate *string,
+) (int, error) {
+	var total int
+	err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM stock_requests sr
+		JOIN warehouses fw ON fw.id = sr.from_warehouse_id
+		JOIN warehouses tw ON tw.id = sr.to_warehouse_id
+		WHERE
+			(fw.branch_id = $1 OR tw.branch_id = $1)
+			AND ($2::text IS NULL OR sr.status = $2)
+			AND ($3::date IS NULL OR sr.created_at::date >= $3)
+			AND ($4::date IS NULL OR sr.created_at::date <= $4)
+	`, branchID, status, fromDate, toDate).Scan(&total)
 	return total, err
 }
 
@@ -496,7 +578,7 @@ func (s *Store) Dispatch(
 			return errors.New("dispatch qty must be greater than zero")
 		}
 
-		var requestedQty, approvedQty int
+		var requestedQty, approvedQty float64
 
 		// 🔒 Lock request item row
 		err = tx.QueryRow(`
@@ -511,7 +593,7 @@ func (s *Store) Dispatch(
 			return err
 		}
 
-		remaining := requestedQty - approvedQty
+		remaining := int(requestedQty) - int(approvedQty)
 		if remaining <= 0 {
 			return fmt.Errorf(
 				"no remaining quantity for variant %s",
@@ -613,9 +695,9 @@ func (s *Store) Dispatch(
 		return err
 	}
 
-	newStatus := "PARTIAL"
+	newStatus := "PARTIAL_DISPATCH"
 	if pending == 0 {
-		newStatus = "COMPLETED"
+		newStatus = "FULL_DISPATCH"
 	}
 
 	_, err = tx.Exec(`
@@ -626,6 +708,121 @@ func (s *Store) Dispatch(
 
 	if err != nil {
 		return err
+	}
+
+	return tx.Commit()
+}
+
+// Receive confirms receipt of dispatched stock at the destination warehouse.
+// Upserts stock into branch warehouse and marks movements as RECEIVED.
+func (s *Store) Receive(requestID, userID string) error {
+	if requestID == "" {
+		return errors.New("invalid stock request id")
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1️⃣ Get destination warehouse from the request
+	var toWarehouseID string
+	var status string
+	err = tx.QueryRow(`
+		SELECT to_warehouse_id, status
+		FROM stock_requests
+		WHERE id = $1
+		FOR UPDATE
+	`, requestID).Scan(&toWarehouseID, &status)
+	if err != nil {
+		return err
+	}
+
+	if status != "PARTIAL_DISPATCH" && status != "FULL_DISPATCH" {
+		return errors.New("no dispatched stock to receive")
+	}
+
+	// 2️⃣ Get all IN_TRANSIT movements for this request
+	rows, err := tx.Query(`
+		SELECT id, variant_id, quantity
+		FROM stock_movements
+		WHERE stock_request_id = $1
+		AND status = 'IN_TRANSIT'
+		FOR UPDATE
+	`, requestID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type movementRow struct {
+		ID        string
+		VariantID string
+		Quantity  float64
+	}
+
+	var movements []movementRow
+	for rows.Next() {
+		var m movementRow
+		if err := rows.Scan(&m.ID, &m.VariantID, &m.Quantity); err != nil {
+			return err
+		}
+		movements = append(movements, m)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if len(movements) == 0 {
+		return errors.New("no in-transit stock to receive")
+	}
+
+	// 3️⃣ For each movement: upsert stock into branch warehouse + mark RECEIVED
+	for _, m := range movements {
+		_, err = tx.Exec(`
+			INSERT INTO stocks (variant_id, warehouse_id, quantity, stock_type, updated_at)
+			VALUES ($1, $2, $3, 'FINISHED_GOOD', NOW())
+			ON CONFLICT (variant_id, warehouse_id)
+			DO UPDATE SET quantity = stocks.quantity + EXCLUDED.quantity,
+			             updated_at = NOW()
+		`, m.VariantID, toWarehouseID, m.Quantity)
+		if err != nil {
+			return err
+		}
+
+		_, err = tx.Exec(`
+			UPDATE stock_movements
+			SET status = 'RECEIVED', updated_at = NOW()
+			WHERE id = $1
+		`, m.ID)
+		if err != nil {
+			return err
+		}
+	}
+
+	// 4️⃣ Check if all movements are now received
+	var inTransitCount int
+	err = tx.QueryRow(`
+		SELECT COUNT(*)
+		FROM stock_movements
+		WHERE stock_request_id = $1
+		AND status = 'IN_TRANSIT'
+	`, requestID).Scan(&inTransitCount)
+	if err != nil {
+		return err
+	}
+
+	// If no more in-transit and fully dispatched → COMPLETED
+	if inTransitCount == 0 && status == "FULL_DISPATCH" {
+		_, err = tx.Exec(`
+			UPDATE stock_requests
+			SET status = 'COMPLETED', updated_at = NOW()
+			WHERE id = $1
+		`, requestID)
+		if err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit()

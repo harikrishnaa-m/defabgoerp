@@ -3,14 +3,14 @@ package stockrequest
 import "github.com/gofiber/fiber/v2"
 
 func RegisterRoutes(r fiber.Router, h *Handler) {
-	g := r.Group("/stock-requests")
+	r.Post("/", h.Create)
+	r.Get("/", h.List)
+	r.Get("/branch", h.ByBranch)
+	r.Get("/:id", h.GetByID)
 
-	g.Post("/", h.Create)
-	g.Get("/", h.List)
-	g.Get("/:id", h.GetByID)
+	r.Patch("/:id/decision", h.Approve)
+	r.Delete("/:id", h.Cancel)
 
-	g.Patch("/:id/decision", h.Approve)
-	g.Delete("/:id", h.Cancel)
-
-	g.Post("/:id/dispatch", h.Dispatch)
+	r.Post("/:id/dispatch", h.Dispatch)
+	r.Post("/:id/receive", h.Receive)
 }
