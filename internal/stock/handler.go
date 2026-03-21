@@ -524,9 +524,9 @@ func nullOrValue(ns sql.NullString) string {
 func (h *Handler) Movements(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 
-	// StoreManagers see only their branch movements
+	// StoreManagers see only their branch movements (branch from token)
 	if user.Role.Name != model.RoleSuperAdmin && user.BranchID != nil {
-		return h.MovementsByBranch(c)
+		return h.movementsByBranchID(c, *user.BranchID)
 	}
 
 	page := c.QueryInt("page", 1)
@@ -696,7 +696,10 @@ func (h *Handler) MovementsByBranch(c *fiber.Ctx) error {
 	if branchID == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "branch_id query param is required"})
 	}
+	return h.movementsByBranchID(c, branchID)
+}
 
+func (h *Handler) movementsByBranchID(c *fiber.Ctx, branchID string) error {
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
