@@ -35,11 +35,13 @@ import (
 
 	"defab-erp/internal/core/storage"
 
+	"defab-erp/internal/billing"
 	"defab-erp/internal/coupon"
 	"defab-erp/internal/goodsreceipt"
 	"defab-erp/internal/purchase"
 	"defab-erp/internal/purchaseinvoice"
 	"defab-erp/internal/rawmaterial"
+	"defab-erp/internal/salesperson"
 	"defab-erp/internal/stock"
 	"defab-erp/internal/stockrequest"
 	"defab-erp/internal/supplier"
@@ -120,6 +122,12 @@ func main() {
 
 	purchaseInvoiceStore := purchaseinvoice.NewStore(database)
 	purchaseInvoiceHandler := purchaseinvoice.NewHandler(purchaseInvoiceStore)
+
+	salespersonStore := salesperson.NewStore(database)
+	salespersonHandler := salesperson.NewHandler(salespersonStore)
+
+	billingStore := billing.NewStore(database)
+	billingHandler := billing.NewHandler(billingStore)
 
 	// 4. Fiber
 	app := fiber.New(fiber.Config{
@@ -242,6 +250,27 @@ func main() {
 			),
 		),
 		supplierHandler,
+	)
+
+	salesperson.RegisterRoutes(
+		protected.Group("/salespersons",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+			),
+		),
+		salespersonHandler,
+	)
+
+	billing.RegisterRoutes(
+		protected.Group("/billing",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleSalesperson,
+			),
+		),
+		billingHandler,
 	)
 
 	purchase.RegisterRoutes(
