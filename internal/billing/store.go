@@ -665,6 +665,33 @@ func (s *Store) GetSalespersonByUserID(userID string) (string, error) {
 	return spID, err
 }
 
+// GetCustomerByPhone returns customer details by phone number.
+func (s *Store) GetCustomerByPhone(phone string) (map[string]interface{}, error) {
+	var id, code, name, email string
+	var ph sql.NullString
+	var totalPurchases float64
+	var createdAt string
+
+	err := s.db.QueryRow(`
+		SELECT id, customer_code, name, COALESCE(phone, ''), COALESCE(email, ''),
+		       total_purchases, created_at::text
+		FROM customers WHERE phone = $1 AND is_active = true
+	`, phone).Scan(&id, &code, &name, &ph, &email, &totalPurchases, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"id":              id,
+		"customer_code":   code,
+		"name":            name,
+		"phone":           ph.String,
+		"email":           email,
+		"total_purchases": totalPurchases,
+		"created_at":      createdAt,
+	}, nil
+}
+
 // AddPayment adds a payment to an existing invoice and updates status.
 func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interface{}, error) {
 	tx, err := s.db.Begin()
