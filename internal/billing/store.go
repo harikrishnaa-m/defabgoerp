@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -85,16 +86,51 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		channel = "STORE"
 	}
 
-	// Calculate totals from items
+	// Calculate totals from items (auto-fetch price if not provided)
 	var subtotal, taxTotal, discountTotal, grandTotal float64
-	for _, item := range in.Items {
+	billDiscount := in.BillDiscount
+	if billDiscount < 0 {
+		billDiscount = 0
+	}
+
+	for i, item := range in.Items {
+		if item.UnitPrice <= 0 {
+			var price float64
+			err := tx.QueryRow(`SELECT price FROM variants WHERE id = $1`, item.VariantID).Scan(&price)
+			if err != nil {
+				return nil, fmt.Errorf("fetch price for variant %s: %w", item.VariantID, err)
+			}
+			in.Items[i].UnitPrice = price
+			item.UnitPrice = price
+		}
 		lineTotal := float64(item.Quantity) * item.UnitPrice
-		lineTax := (lineTotal - item.Discount) * item.TaxPercent / 100
 		subtotal += lineTotal
 		discountTotal += item.Discount
+	}
+
+	// Bill discount is applied after item discounts, before tax
+	taxableAmount := subtotal - discountTotal - billDiscount
+	if taxableAmount < 0 {
+		taxableAmount = 0
+	}
+
+	// Proportionally distribute tax across items based on taxable amount
+	for _, item := range in.Items {
+		lineTotal := float64(item.Quantity) * item.UnitPrice
+		// Proportional share of bill discount for this item
+		var itemBillDiscount float64
+		if subtotal > 0 {
+			itemBillDiscount = billDiscount * lineTotal / subtotal
+		}
+		lineTaxable := lineTotal - item.Discount - itemBillDiscount
+		if lineTaxable < 0 {
+			lineTaxable = 0
+		}
+		lineTax := lineTaxable * item.TaxPercent / 100
 		taxTotal += lineTax
 	}
-	grandTotal = subtotal - discountTotal + taxTotal
+
+	grandTotal = taxableAmount + taxTotal
 
 	// Determine payment status
 	var totalPaid float64
@@ -123,13 +159,13 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		INSERT INTO sales_orders
 			(so_number, channel, branch_id, customer_id, salesperson_id,
 			 warehouse_id, created_by, order_date,
-			 subtotal, tax_total, discount_total, grand_total,
+			 subtotal, tax_total, discount_total, bill_discount, grand_total,
 			 status, payment_status, notes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'CONFIRMED', $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'CONFIRMED', $14, $15)
 		RETURNING id
 	`, soNumber, channel, branchIDParam, customerID, salesPersonParam,
 		in.WarehouseID, userID, now,
-		subtotal, taxTotal, discountTotal, grandTotal,
+		subtotal, taxTotal, discountTotal, billDiscount, grandTotal,
 		paymentStatus, in.Notes).Scan(&salesOrderID)
 	if err != nil {
 		return nil, fmt.Errorf("create sales order: %w", err)
@@ -151,7 +187,14 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 
 	for _, item := range in.Items {
 		lineTotal := float64(item.Quantity) * item.UnitPrice
-		taxAmt := (lineTotal - item.Discount) * item.TaxPercent / 100
+		var itemBillDisc float64
+		if subtotal > 0 {
+			itemBillDisc = billDiscount * lineTotal / subtotal
+		}
+		taxAmt := (lineTotal - item.Discount - itemBillDisc) * item.TaxPercent / 100
+		if lineTotal-item.Discount-itemBillDisc < 0 {
+			taxAmt = 0
+		}
 		total := lineTotal - item.Discount + taxAmt
 
 		ic := itemCalc{
@@ -205,13 +248,13 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		INSERT INTO sales_invoices
 			(sales_order_id, customer_id, warehouse_id, channel, branch_id,
 			 invoice_number, invoice_date,
-			 sub_amount, discount_amount, gst_amount, round_off,
+			 sub_amount, discount_amount, bill_discount, gst_amount, round_off,
 			 net_amount, paid_amount, status, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15)
 		RETURNING id
 	`, salesOrderID, customerID, in.WarehouseID, channel, branchIDParam,
 		invoiceNumber, now,
-		subtotal, discountTotal, gstAmount,
+		subtotal, discountTotal, billDiscount, gstAmount,
 		netAmount, totalPaid, invoiceStatus, userID).Scan(&salesInvoiceID)
 	if err != nil {
 		return nil, fmt.Errorf("create sales invoice: %w", err)
@@ -310,6 +353,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		"customer_id":      customerID,
 		"subtotal":         subtotal,
 		"discount_total":   discountTotal,
+		"bill_discount":    billDiscount,
 		"tax_total":        taxTotal,
 		"grand_total":      grandTotal,
 		"paid_amount":      totalPaid,
@@ -323,14 +367,14 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var invoiceID, invoiceNumber, soID, soNumber, customerID, customerName string
 	var warehouseID, warehouseName, channel, status, createdAt string
 	var branchID, branchName sql.NullString
-	var subAmount, discountAmount, gstAmount, roundOff, netAmount, paidAmount float64
+	var subAmount, discountAmount, billDiscountAmt, gstAmount, roundOff, netAmount, paidAmount float64
 
 	err := s.db.QueryRow(`
 		SELECT si.id, si.invoice_number, si.sales_order_id, so.so_number,
 		       si.customer_id, c.name AS customer_name,
 		       si.warehouse_id, w.name AS warehouse_name,
 		       si.channel, si.branch_id, COALESCE(b.name, ''),
-		       si.sub_amount, si.discount_amount, si.gst_amount,
+		       si.sub_amount, si.discount_amount, si.bill_discount, si.gst_amount,
 		       si.round_off, si.net_amount, si.paid_amount,
 		       si.status, si.created_at::text
 		FROM sales_invoices si
@@ -344,7 +388,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		&customerID, &customerName,
 		&warehouseID, &warehouseName,
 		&channel, &branchID, &branchName,
-		&subAmount, &discountAmount, &gstAmount,
+		&subAmount, &discountAmount, &billDiscountAmt, &gstAmount,
 		&roundOff, &netAmount, &paidAmount,
 		&status, &createdAt,
 	)
@@ -431,10 +475,12 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"channel":         channel,
 		"sub_amount":      subAmount,
 		"discount_amount": discountAmount,
+		"bill_discount":   billDiscountAmt,
 		"gst_amount":      gstAmount,
 		"round_off":       roundOff,
 		"net_amount":      netAmount,
 		"paid_amount":     paidAmount,
+		"balance_due":     netAmount - paidAmount,
 		"status":          status,
 		"created_at":      createdAt,
 		"items":           items,
@@ -495,6 +541,7 @@ func (s *Store) List(branchID *string, limit, offset int) ([]map[string]interfac
 			"channel":        channel,
 			"net_amount":     netAmount,
 			"paid_amount":    paidAmount,
+			"balance_due":    netAmount - paidAmount,
 			"status":         status,
 			"created_at":     createdAt,
 		})
@@ -509,6 +556,87 @@ func (s *Store) GetWarehouseByBranch(branchID string) (string, error) {
 		SELECT id FROM warehouses WHERE branch_id = $1 LIMIT 1
 	`, branchID).Scan(&warehouseID)
 	return warehouseID, err
+}
+
+// GetSalespersonByUserID returns the salesperson ID linked to a user account.
+func (s *Store) GetSalespersonByUserID(userID string) (string, error) {
+	var spID string
+	err := s.db.QueryRow(`
+		SELECT id FROM salespersons WHERE user_id = $1 AND is_active = true
+	`, userID).Scan(&spID)
+	return spID, err
+}
+
+// AddPayment adds a payment to an existing invoice and updates status.
+func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interface{}, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	// Get current invoice totals and linked sales_order_id
+	var netAmount, paidAmount float64
+	var salesOrderID string
+	err = tx.QueryRow(`
+		SELECT net_amount, paid_amount, sales_order_id
+		FROM sales_invoices WHERE id = $1
+	`, invoiceID).Scan(&netAmount, &paidAmount, &salesOrderID)
+	if err != nil {
+		return nil, err
+	}
+
+	newPaid := paidAmount + p.Amount
+
+	// Determine new status
+	status := "PARTIAL"
+	if newPaid >= netAmount {
+		status = "PAID"
+		newPaid = netAmount // cap at net_amount
+	}
+
+	// Insert payment record
+	now := time.Now()
+	_, err = tx.Exec(`
+		INSERT INTO sales_payments
+			(sales_invoice_id, amount, payment_method, reference, paid_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, invoiceID, p.Amount, p.Method, p.Reference, now)
+	if err != nil {
+		return nil, fmt.Errorf("record payment: %w", err)
+	}
+
+	// Update invoice
+	_, err = tx.Exec(`
+		UPDATE sales_invoices
+		SET paid_amount = $1, status = $2, updated_at = NOW()
+		WHERE id = $3
+	`, newPaid, status, invoiceID)
+	if err != nil {
+		return nil, fmt.Errorf("update invoice: %w", err)
+	}
+
+	// Update sales order payment_status
+	_, err = tx.Exec(`
+		UPDATE sales_orders
+		SET payment_status = $1, updated_at = NOW()
+		WHERE id = $2
+	`, status, salesOrderID)
+	if err != nil {
+		return nil, fmt.Errorf("update order status: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"invoice_id":     invoiceID,
+		"payment_amount": p.Amount,
+		"paid_amount":    newPaid,
+		"net_amount":     netAmount,
+		"payment_status": status,
+	}, nil
 }
 
 // LookupVariant searches by SKU or barcode and returns variant details + available stock.
@@ -697,6 +825,135 @@ func (s *Store) GetCachedVariants() ([]map[string]interface{}, error) {
 				results = append(results, data)
 			}
 		}
+	}
+	return results, nil
+}
+
+// SearchVariants does partial/prefix matching on SKU, barcode, product name, or variant name.
+// Tries Redis first, falls back to DB.
+func (s *Store) SearchVariants(query string, warehouseID string, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 10
+	}
+
+	// Try Redis first
+	if s.rdb != nil {
+		results, err := s.searchFromRedis(query, warehouseID, limit)
+		if err == nil && len(results) > 0 {
+			return results, nil
+		}
+	}
+
+	// Fallback to DB
+	return s.searchFromDB(query, warehouseID, limit)
+}
+
+func (s *Store) searchFromRedis(query, warehouseID string, limit int) ([]map[string]interface{}, error) {
+	ctx := context.Background()
+	keys, err := s.rdb.Keys(ctx, "variant:lookup:*").Result()
+	if err != nil {
+		return nil, err
+	}
+
+	type variantCache struct {
+		VariantID   string  `json:"variant_id"`
+		SKU         string  `json:"sku"`
+		Barcode     string  `json:"barcode"`
+		VariantName string  `json:"variant_name"`
+		ProductName string  `json:"product_name"`
+		Price       float64 `json:"price"`
+		CostPrice   float64 `json:"cost_price"`
+	}
+
+	seen := map[string]bool{}
+	var results []map[string]interface{}
+	queryLower := strings.ToLower(query)
+
+	for _, key := range keys {
+		if len(results) >= limit {
+			break
+		}
+		val, err := s.rdb.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+		var vc variantCache
+		if json.Unmarshal([]byte(val), &vc) != nil {
+			continue
+		}
+		if seen[vc.VariantID] {
+			continue
+		}
+
+		// Match against SKU, barcode, product name, variant name
+		if strings.Contains(strings.ToLower(vc.SKU), queryLower) ||
+			strings.Contains(strings.ToLower(vc.Barcode), queryLower) ||
+			strings.Contains(strings.ToLower(vc.ProductName), queryLower) ||
+			strings.Contains(strings.ToLower(vc.VariantName), queryLower) {
+
+			seen[vc.VariantID] = true
+
+			// Fetch live stock
+			var stock float64
+			err := s.db.QueryRow(`
+				SELECT COALESCE(quantity, 0) FROM stocks
+				WHERE variant_id = $1 AND warehouse_id = $2
+			`, vc.VariantID, warehouseID).Scan(&stock)
+			if err != nil {
+				stock = 0
+			}
+
+			results = append(results, map[string]interface{}{
+				"variant_id":   vc.VariantID,
+				"sku":          vc.SKU,
+				"barcode":      vc.Barcode,
+				"variant_name": vc.VariantName,
+				"product_name": vc.ProductName,
+				"price":        vc.Price,
+				"cost_price":   vc.CostPrice,
+				"stock":        stock,
+			})
+		}
+	}
+	return results, nil
+}
+
+func (s *Store) searchFromDB(query, warehouseID string, limit int) ([]map[string]interface{}, error) {
+	pattern := "%" + query + "%"
+	rows, err := s.db.Query(`
+		SELECT v.id, v.sku, COALESCE(v.barcode, ''), v.name, p.name,
+		       v.price, COALESCE(v.cost_price, 0),
+		       COALESCE(st.quantity, 0)
+		FROM variants v
+		JOIN products p ON p.id = v.product_id
+		LEFT JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
+		WHERE v.is_active = true
+		  AND (v.sku ILIKE $2 OR v.barcode ILIKE $2 OR p.name ILIKE $2 OR v.name ILIKE $2)
+		LIMIT $3
+	`, warehouseID, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []map[string]interface{}
+	for rows.Next() {
+		var variantID, sku, barcode, variantName, productName string
+		var price, costPrice, stock float64
+		if err := rows.Scan(&variantID, &sku, &barcode, &variantName, &productName,
+			&price, &costPrice, &stock); err != nil {
+			return nil, err
+		}
+		results = append(results, map[string]interface{}{
+			"variant_id":   variantID,
+			"sku":          sku,
+			"barcode":      barcode,
+			"variant_name": variantName,
+			"product_name": productName,
+			"price":        price,
+			"cost_price":   costPrice,
+			"stock":        stock,
+		})
 	}
 	return results, nil
 }

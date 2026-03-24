@@ -32,9 +32,6 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if in.CustomerName == "" {
 		return httperr.BadRequest(c, "customer_name is required")
 	}
-	if in.WarehouseID == "" {
-		return httperr.BadRequest(c, "warehouse_id is required")
-	}
 	if len(in.Items) == 0 {
 		return httperr.BadRequest(c, "at least one item is required")
 	}
@@ -49,9 +46,6 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		if item.Quantity <= 0 {
 			return httperr.BadRequest(c, "items["+strconv.Itoa(i)+"].quantity must be > 0")
 		}
-		if item.UnitPrice <= 0 {
-			return httperr.BadRequest(c, "items["+strconv.Itoa(i)+"].unit_price must be > 0")
-		}
 	}
 
 	for i, p := range in.Payments {
@@ -65,9 +59,25 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 	user := c.Locals("user").(*model.User)
 
-	branchID := ""
-	if user.BranchID != nil {
-		branchID = *user.BranchID
+	// Auto-resolve warehouse from branch
+	if user.BranchID == nil {
+		return httperr.BadRequest(c, "Your account has no branch assigned")
+	}
+	branchID := *user.BranchID
+
+	warehouseID, err := h.store.GetWarehouseByBranch(branchID)
+	if err != nil {
+		return httperr.BadRequest(c, "No warehouse found for your branch")
+	}
+	in.WarehouseID = warehouseID
+
+	// Auto-set salesperson_id if logged-in user is a Salesperson
+	if user.Role.Name == model.RoleSalesperson && in.SalesPersonID == "" {
+		spID, err := h.store.GetSalespersonByUserID(user.ID.String())
+		if err != nil {
+			return httperr.BadRequest(c, "No salesperson profile found for your account")
+		}
+		in.SalesPersonID = spID
 	}
 
 	result, err := h.store.CreateBill(in, user.ID.String(), branchID)
@@ -182,4 +192,61 @@ func (h *Handler) CacheStatus(c *fiber.Ctx) error {
 		"cached_variants": len(variants),
 		"variants":        variants,
 	})
+}
+
+// Search handles GET /billing/search?q=ban — autocomplete for SKU/barcode/product name.
+func (h *Handler) Search(c *fiber.Ctx) error {
+	q := c.Query("q")
+	if q == "" {
+		return httperr.BadRequest(c, "q query param is required")
+	}
+
+	user := c.Locals("user").(*model.User)
+	if user.BranchID == nil {
+		return httperr.BadRequest(c, "Your account has no branch assigned")
+	}
+
+	warehouseID, err := h.store.GetWarehouseByBranch(*user.BranchID)
+	if err != nil {
+		return httperr.BadRequest(c, "No warehouse found for your branch")
+	}
+
+	limit, _ := strconv.Atoi(c.Query("limit", "10"))
+	results, err := h.store.SearchVariants(q, warehouseID, limit)
+	if err != nil {
+		log.Println("search variants error:", err)
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(fiber.Map{
+		"results": results,
+		"count":   len(results),
+	})
+}
+
+// AddPayment handles POST /billing/:id/payments — add payment to an existing bill.
+func (h *Handler) AddPayment(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	var p PaymentInput
+	if err := c.BodyParser(&p); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON body")
+	}
+	if p.Amount <= 0 {
+		return httperr.BadRequest(c, "amount must be > 0")
+	}
+	if p.Method == "" {
+		return httperr.BadRequest(c, "method is required")
+	}
+
+	result, err := h.store.AddPayment(id, p)
+	if err == sql.ErrNoRows {
+		return httperr.NotFound(c, "Invoice not found")
+	}
+	if err != nil {
+		log.Println("add payment error:", err)
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(result)
 }
