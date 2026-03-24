@@ -24,9 +24,8 @@ func (s *Store) Create(name string) error {
 
 func (s *Store) List(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
-	SELECT id, name
+	SELECT id, name, is_active
 	FROM attributes
-	WHERE is_active = TRUE
 	ORDER BY name
 	LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -55,7 +54,7 @@ func (s *Store) SetActive(id string, active bool) error {
 
 func (s *Store) CreateValue(attID, value string) error {
 	_, err := s.db.Exec(`
-	INSERT INTO attribute_values (att_id,value)
+	INSERT INTO attribute_values (attribute_id,value)
 	VALUES ($1,$2)
 	`, attID, value)
 	return err
@@ -63,9 +62,9 @@ func (s *Store) CreateValue(attID, value string) error {
 
 func (s *Store) ListValues(attID string) (*sql.Rows, error) {
 	return s.db.Query(`
-	SELECT id, value
+	SELECT id, value, is_active
 	FROM attribute_values
-	WHERE att_id=$1 AND is_active=TRUE
+	WHERE attribute_id=$1
 	ORDER BY value
 	`, attID)
 }
@@ -77,7 +76,6 @@ func (s *Store) SetValueActive(id string, active bool) error {
 	)
 	return err
 }
-
 
 func (s *Store) UpdateValue(id string, value *string) error {
 	_, err := s.db.Exec(`

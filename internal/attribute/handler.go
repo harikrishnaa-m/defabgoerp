@@ -45,11 +45,12 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var id, name string
-		rows.Scan(&id, &name)
-
+		var active bool
+		rows.Scan(&id, &name, &active)
 		out = append(out, fiber.Map{
-			"id":   id,
-			"name": name,
+			"id":        id,
+			"name":      name,
+			"is_active": active,
 		})
 	}
 
@@ -130,11 +131,12 @@ func (h *Handler) ListValues(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var id, value string
-		rows.Scan(&id, &value)
-
+		var active bool
+		rows.Scan(&id, &value, &active)
 		out = append(out, fiber.Map{
-			"id":    id,
-			"value": value,
+			"id":        id,
+			"value":     value,
+			"is_active": active,
 		})
 	}
 

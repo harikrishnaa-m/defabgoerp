@@ -3,22 +3,16 @@ package product
 import "github.com/gofiber/fiber/v2"
 
 func RegisterRoutes(r fiber.Router, h *Handler) {
-	g := r.Group("/products")
+	r.Post("/", h.Create) //tested
 
-	g.Post("/", h.Create)
+	r.Put("/:id/main-image", h.ReplaceMainImage)       //tested
+	r.Post("/:id/images", h.AddGalleryImages)          //tested
+	r.Delete("/images/:imageId", h.DeleteGalleryImage) //tested
 
+	r.Get("/", h.List)        //tested
+	r.Get("/:id", h.Get)      //tested
+	r.Patch("/:id", h.Update) //tested
 
-	g.Put("/:id/main-image", h.ReplaceMainImage)
-	g.Post("/:id/images", h.AddGalleryImages)
-	g.Delete("/images/:imageId", h.DeleteGalleryImage)
-
-
-	
-	g.Get("/", h.List)
-	g.Get("/:id", h.Get)
-	g.Patch("/:id", h.Update)
-
-	g.Patch("/:id/deactivate", h.Deactivate)
-	g.Patch("/:id/activate", h.Activate)
+	r.Patch("/:id/deactivate", h.Deactivate) //tested
+	r.Patch("/:id/activate", h.Activate)     //tested
 }
-

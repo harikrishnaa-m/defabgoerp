@@ -9,8 +9,10 @@ import (
 // ================== CATEGORY ==================
 
 type Category struct {
-	ID   uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	Name string    `gorm:"size:150;not null;uniqueIndex" json:"name"`
+	ID            uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	Name          string    `gorm:"size:150;not null;uniqueIndex" json:"name"`
+	ProductsCount int       `gorm:"default:0" json:"products_count"`
+	IsActive      bool      `gorm:"default:true" json:"is_active"`
 }
 
 // ================== PRODUCT ==================
@@ -28,6 +30,12 @@ type Product struct {
 	IsWebVisible bool   `gorm:"default:true;index" json:"is_web_visible"`
 	IsStitched   bool   `gorm:"default:false" json:"is_stitched"`
 	UOM          string `gorm:"size:20;default:'Unit'" json:"uom"`
+
+	Description       string `gorm:"type:text"`
+	FabricComposition string `gorm:"size:200"`
+	Pattern           string `gorm:"size:100"`
+	Occasion          string `gorm:"size:100"`
+	CareInstructions  string `gorm:"size:200"`
 
 	Variants []Variant      `gorm:"foreignKey:ProductID" json:"variants"`
 	Images   []ProductImage `gorm:"foreignKey:ProductID" json:"images"`

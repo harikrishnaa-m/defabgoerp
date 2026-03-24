@@ -19,7 +19,7 @@ type User struct {
 	PasswordHash string    `gorm:"not null" json:"-"`                  // Never return password in JSON
 	RoleID       uint      `json:"role_id"`
 	Role         Role      `json:"role"`
-	BranchID     *uint     `json:"branch_id"` // Nullable for Admin
+	BranchID     *string   `json:"branch_id"` // Nullable for Admin
 	IsActive     bool      `gorm:"default:true" json:"is_active"`
 	CreatedAt    time.Time `json:"created_at"`
 }
