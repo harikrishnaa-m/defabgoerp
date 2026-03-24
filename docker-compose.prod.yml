@@ -12,7 +12,7 @@ services:
       - "3000:3000"
     env_file:
       # Load environment variables from this file
-      - .env.prod
+      - .env
     depends_on:
       - redis
     networks:
