@@ -1,17 +1,24 @@
 package billing
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
+const variantCacheTTL = 30 * time.Minute
+
 type Store struct {
-	db *sql.DB
+	db  *sql.DB
+	rdb *redis.Client
 }
 
-func NewStore(db *sql.DB) *Store {
-	return &Store{db: db}
+func NewStore(db *sql.DB, rdb *redis.Client) *Store {
+	return &Store{db: db, rdb: rdb}
 }
 
 // CreateBill handles the entire billing flow in a single transaction:
@@ -491,6 +498,205 @@ func (s *Store) List(branchID *string, limit, offset int) ([]map[string]interfac
 			"status":         status,
 			"created_at":     createdAt,
 		})
+	}
+	return results, nil
+}
+
+// GetWarehouseByBranch returns the warehouse ID for a given branch.
+func (s *Store) GetWarehouseByBranch(branchID string) (string, error) {
+	var warehouseID string
+	err := s.db.QueryRow(`
+		SELECT id FROM warehouses WHERE branch_id = $1 LIMIT 1
+	`, branchID).Scan(&warehouseID)
+	return warehouseID, err
+}
+
+// LookupVariant searches by SKU or barcode and returns variant details + available stock.
+// Variant catalog data is cached in Redis; stock is always fetched live.
+func (s *Store) LookupVariant(query, warehouseID string) (map[string]interface{}, error) {
+	ctx := context.Background()
+
+	// -- Try Redis cache for variant catalog --
+	type variantCache struct {
+		VariantID   string  `json:"variant_id"`
+		SKU         string  `json:"sku"`
+		Barcode     string  `json:"barcode"`
+		VariantName string  `json:"variant_name"`
+		ProductName string  `json:"product_name"`
+		Price       float64 `json:"price"`
+		CostPrice   float64 `json:"cost_price"`
+	}
+
+	cacheKey := "variant:lookup:" + query
+	var vc variantCache
+	cached := false
+
+	if s.rdb != nil {
+		val, err := s.rdb.Get(ctx, cacheKey).Result()
+		if err == nil {
+			if json.Unmarshal([]byte(val), &vc) == nil {
+				cached = true
+			}
+		}
+	}
+
+	if !cached {
+		// DB lookup
+		var barcodeNull sql.NullString
+		err := s.db.QueryRow(`
+			SELECT v.id, v.sku, v.name, p.name, v.price, COALESCE(v.cost_price, 0),
+			       v.barcode
+			FROM variants v
+			JOIN products p ON p.id = v.product_id
+			WHERE (v.sku = $1 OR v.barcode = $1) AND v.is_active = true
+		`, query).Scan(&vc.VariantID, &vc.SKU, &vc.VariantName, &vc.ProductName,
+			&vc.Price, &vc.CostPrice, &barcodeNull)
+		if err != nil {
+			return nil, err
+		}
+		if barcodeNull.Valid {
+			vc.Barcode = barcodeNull.String
+		}
+
+		// Cache in Redis (both by SKU and barcode keys)
+		if s.rdb != nil {
+			if data, err := json.Marshal(vc); err == nil {
+				s.rdb.Set(ctx, "variant:lookup:"+vc.SKU, data, variantCacheTTL)
+				if vc.Barcode != "" {
+					s.rdb.Set(ctx, "variant:lookup:"+vc.Barcode, data, variantCacheTTL)
+				}
+			}
+		}
+	}
+
+	// Stock is ALWAYS fetched live — never cached
+	var stock float64
+	err := s.db.QueryRow(`
+		SELECT COALESCE(quantity, 0)
+		FROM stocks
+		WHERE variant_id = $1 AND warehouse_id = $2
+	`, vc.VariantID, warehouseID).Scan(&stock)
+	if err == sql.ErrNoRows {
+		stock = 0
+	} else if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"variant_id":   vc.VariantID,
+		"sku":          vc.SKU,
+		"barcode":      vc.Barcode,
+		"variant_name": vc.VariantName,
+		"product_name": vc.ProductName,
+		"price":        vc.Price,
+		"cost_price":   vc.CostPrice,
+		"stock":        stock,
+	}, nil
+}
+
+// InvalidateVariantCache removes cached variant data when a variant is updated.
+func (s *Store) InvalidateVariantCache(sku, barcode string) {
+	if s.rdb == nil {
+		return
+	}
+	ctx := context.Background()
+	if sku != "" {
+		s.rdb.Del(ctx, "variant:lookup:"+sku)
+	}
+	if barcode != "" {
+		s.rdb.Del(ctx, "variant:lookup:"+barcode)
+	}
+}
+
+// WarmCache loads all active variants into Redis on startup.
+func (s *Store) WarmCache() error {
+	if s.rdb == nil {
+		return nil
+	}
+
+	rows, err := s.db.Query(`
+		SELECT v.id, v.sku, v.name, p.name, v.price, COALESCE(v.cost_price, 0),
+		       v.barcode
+		FROM variants v
+		JOIN products p ON p.id = v.product_id
+		WHERE v.is_active = true
+	`)
+	if err != nil {
+		return fmt.Errorf("warm cache query: %w", err)
+	}
+	defer rows.Close()
+
+	ctx := context.Background()
+	count := 0
+
+	type variantCache struct {
+		VariantID   string  `json:"variant_id"`
+		SKU         string  `json:"sku"`
+		Barcode     string  `json:"barcode"`
+		VariantName string  `json:"variant_name"`
+		ProductName string  `json:"product_name"`
+		Price       float64 `json:"price"`
+		CostPrice   float64 `json:"cost_price"`
+	}
+
+	for rows.Next() {
+		var vc variantCache
+		var barcodeNull sql.NullString
+
+		if err := rows.Scan(&vc.VariantID, &vc.SKU, &vc.VariantName, &vc.ProductName,
+			&vc.Price, &vc.CostPrice, &barcodeNull); err != nil {
+			return fmt.Errorf("warm cache scan: %w", err)
+		}
+		if barcodeNull.Valid {
+			vc.Barcode = barcodeNull.String
+		}
+
+		data, err := json.Marshal(vc)
+		if err != nil {
+			continue
+		}
+
+		// Cache by SKU
+		s.rdb.Set(ctx, "variant:lookup:"+vc.SKU, data, variantCacheTTL)
+		// Cache by barcode
+		if vc.Barcode != "" {
+			s.rdb.Set(ctx, "variant:lookup:"+vc.Barcode, data, variantCacheTTL)
+		}
+		count++
+	}
+
+	fmt.Printf("✅ Redis cache warmed: %d variants loaded\n", count)
+	return nil
+}
+
+// GetCachedVariants returns all cached variant keys and their data from Redis.
+func (s *Store) GetCachedVariants() ([]map[string]interface{}, error) {
+	if s.rdb == nil {
+		return nil, fmt.Errorf("redis not connected")
+	}
+	ctx := context.Background()
+
+	keys, err := s.rdb.Keys(ctx, "variant:lookup:*").Result()
+	if err != nil {
+		return nil, err
+	}
+
+	var results []map[string]interface{}
+	seen := map[string]bool{}
+
+	for _, key := range keys {
+		val, err := s.rdb.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+		var data map[string]interface{}
+		if json.Unmarshal([]byte(val), &data) == nil {
+			vid, _ := data["variant_id"].(string)
+			if !seen[vid] {
+				seen[vid] = true
+				results = append(results, data)
+			}
+		}
 	}
 	return results, nil
 }

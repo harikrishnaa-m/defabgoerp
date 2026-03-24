@@ -57,6 +57,12 @@ func main() {
 	database := db.Connect()
 	defer database.Close()
 
+	// Redis (optional — nil means caching disabled)
+	redisClient := db.ConnectRedis()
+	if redisClient != nil {
+		defer redisClient.Close()
+	}
+
 	if err := storage.InitSpaces(); err != nil {
 		log.Fatal("spaces init failed:", err)
 	}
@@ -126,8 +132,13 @@ func main() {
 	salespersonStore := salesperson.NewStore(database)
 	salespersonHandler := salesperson.NewHandler(salespersonStore)
 
-	billingStore := billing.NewStore(database)
+	billingStore := billing.NewStore(database, redisClient)
 	billingHandler := billing.NewHandler(billingStore)
+
+	// Warm Redis cache with all variants
+	if err := billingStore.WarmCache(); err != nil {
+		log.Println("⚠ Cache warm-up failed:", err)
+	}
 
 	// 4. Fiber
 	app := fiber.New(fiber.Config{

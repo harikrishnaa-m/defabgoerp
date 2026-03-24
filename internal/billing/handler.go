@@ -140,3 +140,46 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		"offset": offset,
 	})
 }
+
+// Lookup handles GET /billing/lookup?sku=XXX
+// Searches by SKU or barcode. Warehouse is auto-resolved from the user's branch.
+func (h *Handler) Lookup(c *fiber.Ctx) error {
+	sku := c.Query("sku")
+	if sku == "" {
+		return httperr.BadRequest(c, "sku query param is required")
+	}
+
+	user := c.Locals("user").(*model.User)
+	if user.BranchID == nil {
+		return httperr.BadRequest(c, "Your account has no branch assigned")
+	}
+
+	warehouseID, err := h.store.GetWarehouseByBranch(*user.BranchID)
+	if err != nil {
+		log.Println("resolve warehouse error:", err)
+		return httperr.BadRequest(c, "No warehouse found for your branch")
+	}
+
+	result, err := h.store.LookupVariant(sku, warehouseID)
+	if err == sql.ErrNoRows {
+		return httperr.NotFound(c, "No active variant found for this SKU/barcode")
+	}
+	if err != nil {
+		log.Println("lookup variant error:", err)
+		return httperr.Internal(c)
+	}
+
+	return c.JSON(result)
+}
+
+// CacheStatus handles GET /billing/cache — shows all cached variants.
+func (h *Handler) CacheStatus(c *fiber.Ctx) error {
+	variants, err := h.store.GetCachedVariants()
+	if err != nil {
+		return httperr.BadRequest(c, err.Error())
+	}
+	return c.JSON(fiber.Map{
+		"cached_variants": len(variants),
+		"variants":        variants,
+	})
+}
