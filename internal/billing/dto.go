@@ -23,13 +23,15 @@ type CreateBillInput struct {
 	// Sale context
 	Channel       string `json:"channel"`        // STORE or ONLINE (defaults to STORE)
 	SalesPersonID string `json:"salesperson_id"` // optional for ONLINE
-	WarehouseID   string `json:"warehouse_id"`
+	WarehouseID   string `json:"-"`              // auto-resolved from user's branch
 
 	// Items
 	Items []BillItemInput `json:"items"`
 
 	// Payments (can be split)
 	Payments []PaymentInput `json:"payments"`
+
+	BillDiscount float64 `json:"bill_discount"` // flat amount discount on total bill (before tax)
 
 	Notes string `json:"notes"`
 }
