@@ -88,10 +88,6 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 
 	// Calculate totals from items (auto-fetch price if not provided)
 	var subtotal, taxTotal, discountTotal, grandTotal float64
-	billDiscount := in.BillDiscount
-	if billDiscount < 0 {
-		billDiscount = 0
-	}
 
 	for i, item := range in.Items {
 		if item.UnitPrice <= 0 {
@@ -104,8 +100,25 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			item.UnitPrice = price
 		}
 		lineTotal := float64(item.Quantity) * item.UnitPrice
+
+		// Resolve item discount: percent → flat
+		itemDisc := item.Discount
+		if item.DiscountType == "percent" {
+			itemDisc = lineTotal * item.Discount / 100
+		}
+		in.Items[i].Discount = itemDisc // store resolved flat amount
+
 		subtotal += lineTotal
-		discountTotal += item.Discount
+		discountTotal += itemDisc
+	}
+
+	// Resolve bill discount: percent → flat
+	billDiscount := in.BillDiscount
+	if in.BillDiscountType == "percent" {
+		billDiscount = subtotal * in.BillDiscount / 100
+	}
+	if billDiscount < 0 {
+		billDiscount = 0
 	}
 
 	// Bill discount is applied after item discounts, before tax
@@ -344,21 +357,99 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		return nil, err
 	}
 
-	// Return summary
+	// ──────────────────────────────────────────
+	// Build rich response for receipt/print
+	// ──────────────────────────────────────────
+
+	// Fetch branch name
+	var branchName string
+	if branchID != "" {
+		s.db.QueryRow(`SELECT name FROM branches WHERE id = $1`, branchID).Scan(&branchName)
+	}
+
+	// Fetch warehouse name
+	var warehouseName string
+	s.db.QueryRow(`SELECT name FROM warehouses WHERE id = $1`, in.WarehouseID).Scan(&warehouseName)
+
+	// Fetch salesperson name
+	var salespersonName string
+	if in.SalesPersonID != "" {
+		s.db.QueryRow(`SELECT name FROM sales_persons WHERE id = $1`, in.SalesPersonID).Scan(&salespersonName)
+	}
+
+	// Build items array with product details
+	var responseItems []map[string]interface{}
+	for _, ic := range itemCalcs {
+		var sku, productName, variantName string
+		s.db.QueryRow(`
+			SELECT COALESCE(v.sku, ''), COALESCE(p.name, ''), COALESCE(v.name, '')
+			FROM variants v
+			JOIN products p ON p.id = v.product_id
+			WHERE v.id = $1
+		`, ic.variantID).Scan(&sku, &productName, &variantName)
+
+		responseItems = append(responseItems, map[string]interface{}{
+			"variant_id":   ic.variantID,
+			"sku":          sku,
+			"product_name": productName,
+			"variant_name": variantName,
+			"quantity":     ic.quantity,
+			"unit_price":   ic.unitPrice,
+			"discount":     ic.discount,
+			"tax_percent":  ic.taxPercent,
+			"tax_amount":   ic.taxAmount,
+			"total_price":  ic.totalPrice,
+		})
+	}
+
+	// Build payments array
+	var responsePayments []map[string]interface{}
+	for _, p := range in.Payments {
+		responsePayments = append(responsePayments, map[string]interface{}{
+			"method":    p.Method,
+			"amount":    p.Amount,
+			"reference": p.Reference,
+		})
+	}
+
 	return map[string]interface{}{
+		// Identifiers
 		"sales_order_id":   salesOrderID,
 		"so_number":        soNumber,
 		"sales_invoice_id": salesInvoiceID,
 		"invoice_number":   invoiceNumber,
-		"customer_id":      customerID,
-		"subtotal":         subtotal,
-		"discount_total":   discountTotal,
-		"bill_discount":    billDiscount,
-		"tax_total":        taxTotal,
-		"grand_total":      grandTotal,
-		"paid_amount":      totalPaid,
-		"payment_status":   paymentStatus,
-		"items_count":      len(itemCalcs),
+		"invoice_date":     now.Format("2006-01-02 15:04:05"),
+
+		// Customer
+		"customer_id":    customerID,
+		"customer_name":  in.CustomerName,
+		"customer_phone": in.CustomerPhone,
+		"customer_email": in.CustomerEmail,
+
+		// Context
+		"channel":          channel,
+		"branch_name":      branchName,
+		"warehouse_name":   warehouseName,
+		"salesperson_name": salespersonName,
+
+		// Financials
+		"subtotal":       subtotal,
+		"item_discount":  discountTotal,
+		"bill_discount":  billDiscount,
+		"total_discount": discountTotal + billDiscount,
+		"tax_total":      taxTotal,
+		"grand_total":    grandTotal,
+		"paid_amount":    totalPaid,
+		"balance_due":    grandTotal - totalPaid,
+		"payment_status": paymentStatus,
+
+		// Line items & payments
+		"items":       responseItems,
+		"items_count": len(itemCalcs),
+		"payments":    responsePayments,
+
+		// Notes
+		"notes": in.Notes,
 	}, nil
 }
 
@@ -366,7 +457,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var invoiceID, invoiceNumber, soID, soNumber, customerID, customerName string
 	var warehouseID, warehouseName, channel, status, createdAt string
-	var branchID, branchName sql.NullString
+	var branchID, branchName, salespersonName sql.NullString
 	var subAmount, discountAmount, billDiscountAmt, gstAmount, roundOff, netAmount, paidAmount float64
 
 	err := s.db.QueryRow(`
@@ -376,12 +467,14 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		       si.channel, si.branch_id, COALESCE(b.name, ''),
 		       si.sub_amount, si.discount_amount, si.bill_discount, si.gst_amount,
 		       si.round_off, si.net_amount, si.paid_amount,
-		       si.status, si.created_at::text
+		       si.status, si.created_at::text,
+		       COALESCE(sp.name, '')
 		FROM sales_invoices si
 		JOIN sales_orders so ON so.id = si.sales_order_id
 		JOIN customers c ON c.id = si.customer_id
 		JOIN warehouses w ON w.id = si.warehouse_id
 		LEFT JOIN branches b ON b.id = si.branch_id
+		LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
 		WHERE si.id = $1
 	`, id).Scan(
 		&invoiceID, &invoiceNumber, &soID, &soNumber,
@@ -391,6 +484,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		&subAmount, &discountAmount, &billDiscountAmt, &gstAmount,
 		&roundOff, &netAmount, &paidAmount,
 		&status, &createdAt,
+		&salespersonName,
 	)
 	if err != nil {
 		return nil, err
@@ -464,27 +558,28 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	}
 
 	result := map[string]interface{}{
-		"id":              invoiceID,
-		"invoice_number":  invoiceNumber,
-		"sales_order_id":  soID,
-		"so_number":       soNumber,
-		"customer_id":     customerID,
-		"customer_name":   customerName,
-		"warehouse_id":    warehouseID,
-		"warehouse_name":  warehouseName,
-		"channel":         channel,
-		"sub_amount":      subAmount,
-		"discount_amount": discountAmount,
-		"bill_discount":   billDiscountAmt,
-		"gst_amount":      gstAmount,
-		"round_off":       roundOff,
-		"net_amount":      netAmount,
-		"paid_amount":     paidAmount,
-		"balance_due":     netAmount - paidAmount,
-		"status":          status,
-		"created_at":      createdAt,
-		"items":           items,
-		"payments":        payments,
+		"id":               invoiceID,
+		"invoice_number":   invoiceNumber,
+		"sales_order_id":   soID,
+		"so_number":        soNumber,
+		"customer_id":      customerID,
+		"customer_name":    customerName,
+		"warehouse_id":     warehouseID,
+		"warehouse_name":   warehouseName,
+		"channel":          channel,
+		"sub_amount":       subAmount,
+		"discount_amount":  discountAmount,
+		"bill_discount":    billDiscountAmt,
+		"gst_amount":       gstAmount,
+		"round_off":        roundOff,
+		"net_amount":       netAmount,
+		"paid_amount":      paidAmount,
+		"balance_due":      netAmount - paidAmount,
+		"status":           status,
+		"created_at":       createdAt,
+		"salesperson_name": salespersonName.String,
+		"items":            items,
+		"payments":         payments,
 	}
 
 	if branchID.Valid {
@@ -501,10 +596,12 @@ func (s *Store) List(branchID *string, limit, offset int) ([]map[string]interfac
 		SELECT si.id, si.invoice_number, so.so_number,
 		       c.name AS customer_name, c.phone AS customer_phone,
 		       si.channel, si.net_amount, si.paid_amount, si.status,
-		       si.created_at::text
+		       si.created_at::text,
+		       COALESCE(sp.name, '') AS salesperson_name
 		FROM sales_invoices si
 		JOIN sales_orders so ON so.id = si.sales_order_id
 		JOIN customers c ON c.id = si.customer_id
+		LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
 	`
 	args := []interface{}{}
 	argIdx := 1
@@ -526,24 +623,25 @@ func (s *Store) List(branchID *string, limit, offset int) ([]map[string]interfac
 
 	var results []map[string]interface{}
 	for rows.Next() {
-		var id, invNum, soNum, custName, custPhone, channel, status, createdAt string
+		var id, invNum, soNum, custName, custPhone, channel, status, createdAt, spName string
 		var netAmount, paidAmount float64
 		if err := rows.Scan(&id, &invNum, &soNum, &custName, &custPhone,
-			&channel, &netAmount, &paidAmount, &status, &createdAt); err != nil {
+			&channel, &netAmount, &paidAmount, &status, &createdAt, &spName); err != nil {
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
-			"id":             id,
-			"invoice_number": invNum,
-			"so_number":      soNum,
-			"customer_name":  custName,
-			"customer_phone": custPhone,
-			"channel":        channel,
-			"net_amount":     netAmount,
-			"paid_amount":    paidAmount,
-			"balance_due":    netAmount - paidAmount,
-			"status":         status,
-			"created_at":     createdAt,
+			"id":               id,
+			"invoice_number":   invNum,
+			"so_number":        soNum,
+			"customer_name":    custName,
+			"customer_phone":   custPhone,
+			"channel":          channel,
+			"net_amount":       netAmount,
+			"paid_amount":      paidAmount,
+			"balance_due":      netAmount - paidAmount,
+			"salesperson_name": spName,
+			"status":           status,
+			"created_at":       createdAt,
 		})
 	}
 	return results, nil
@@ -562,7 +660,7 @@ func (s *Store) GetWarehouseByBranch(branchID string) (string, error) {
 func (s *Store) GetSalespersonByUserID(userID string) (string, error) {
 	var spID string
 	err := s.db.QueryRow(`
-		SELECT id FROM salespersons WHERE user_id = $1 AND is_active = true
+		SELECT id FROM sales_persons WHERE user_id = $1 AND is_active = true
 	`, userID).Scan(&spID)
 	return spID, err
 }
