@@ -250,3 +250,23 @@ func (h *Handler) AddPayment(c *fiber.Ctx) error {
 
 	return c.JSON(result)
 }
+
+// CustomerLookup handles GET /billing/customer?phone=9876543210
+func (h *Handler) CustomerLookup(c *fiber.Ctx) error {
+	phone := c.Query("phone")
+	if phone == "" {
+		return httperr.BadRequest(c, "phone query param is required")
+	}
+
+	result, err := h.store.GetCustomerByPhone(phone)
+	if err == sql.ErrNoRows {
+		return c.JSON(fiber.Map{"exists": false})
+	}
+	if err != nil {
+		log.Println("customer lookup error:", err)
+		return httperr.Internal(c)
+	}
+
+	result["exists"] = true
+	return c.JSON(result)
+}
