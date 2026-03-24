@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: defab_backend_prod
+    restart: always
+    ports:
+      # Map container port 3000 to host port 3000
+      - "3000:3000"
+    env_file:
+      # Load environment variables from this file
+      - .env.prod
+    depends_on:
+      - redis
+    networks:
+      - defab-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: defab_redis_prod
+    restart: always
+    volumes:
+      - redis_data:/data
+    networks:
+      - defab-network
+
+volumes:
+  redis_data:
+
+networks:
+  defab-network:
+    driver: bridge
