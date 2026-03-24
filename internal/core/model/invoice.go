@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 )
 
 //////////////////////////////////////////////////////////////
@@ -23,23 +24,26 @@ type SalesInvoice struct {
 	WarehouseID uuid.UUID  `gorm:"type:uuid;not null;index" json:"warehouse_id"`
 	Warehouse   *Warehouse `gorm:"foreignKey:WarehouseID;references:ID" json:"warehouse,omitempty"`
 
+	Channel  string     `gorm:"size:20;not null;default:'STORE'" json:"channel"` // STORE or ONLINE
+	BranchID *uuid.UUID `gorm:"type:uuid;index" json:"branch_id"`                // null for online orders
+	Branch   *Branch    `gorm:"foreignKey:BranchID;references:ID" json:"branch,omitempty"`
+
 	InvoiceNumber string    `gorm:"size:50;uniqueIndex;not null" json:"invoice_number"`
 	InvoiceDate   time.Time `gorm:"not null;index" json:"invoice_date"`
 
-	SubAmount      float64 `gorm:"type:numeric(12,2);default:0" json:"sub_amount"`
-	DiscountAmount float64 `gorm:"type:numeric(12,2);default:0" json:"discount_amount"`
+	SubAmount      decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"sub_amount"`
+	DiscountAmount decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"discount_amount"`
+	GSTAmount      decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"gst_amount"`
+	RoundOff       decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"round_off"`
 
-	CGST     float64 `gorm:"type:numeric(12,2);default:0" json:"cgst"`
-	SGST     float64 `gorm:"type:numeric(12,2);default:0" json:"sgst"`
-	IGST     float64 `gorm:"type:numeric(12,2);default:0" json:"igst"`
-	RoundOff float64 `gorm:"type:numeric(12,2);default:0" json:"round_off"`
+	NetAmount  decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"net_amount"`
+	PaidAmount decimal.Decimal `gorm:"type:decimal(12,2);default:0" json:"paid_amount"`
 
-	NetAmount  float64 `gorm:"type:numeric(12,2);not null" json:"net_amount"`
-	PaidAmount float64 `gorm:"type:numeric(12,2);default:0" json:"paid_amount"`
-
-	Status string `gorm:"size:20;not null;index" json:"status"` // PAID, PARTIAL, UNPAID, CANCELLED
+	Status    string    `gorm:"size:20;not null;index" json:"status"` // PAID, PARTIAL, UNPAID, CANCELLED
+	CreatedBy uuid.UUID `gorm:"type:uuid;not null" json:"created_by"`
 
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	// Relations
 	Payments []SalesPayment     `gorm:"foreignKey:SalesInvoiceID;constraint:OnDelete:CASCADE" json:"payments,omitempty"`
@@ -56,9 +60,9 @@ type SalesPayment struct {
 	SalesInvoiceID uuid.UUID     `gorm:"type:uuid;not null;index" json:"sales_invoice_id"`
 	SalesInvoice   *SalesInvoice `gorm:"foreignKey:SalesInvoiceID;references:ID;constraint:OnDelete:CASCADE" json:"sales_invoice,omitempty"`
 
-	Amount float64 `gorm:"type:numeric(12,2);not null" json:"amount"`
+	Amount decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"amount"`
 
-	PaymentMethod string `gorm:"size:20;not null;index" json:"payment_method"` // CASH, UPI, CARD
+	PaymentMethod string `gorm:"size:20;not null;index" json:"payment_method"` // CASH, UPI, CARD, BANK_TRANSFER
 	Reference     string `gorm:"size:50" json:"reference"`
 
 	PaidAt time.Time `gorm:"index" json:"paid_at"`
@@ -77,11 +81,12 @@ type SalesInvoiceItem struct {
 	VariantID uuid.UUID `gorm:"type:uuid;not null;index" json:"variant_id"`
 	Variant   *Variant  `gorm:"foreignKey:VariantID;references:ID" json:"variant,omitempty"`
 
-	Quantity int `gorm:"not null" json:"quantity"`
-
-	UnitPrice   float64 `gorm:"type:numeric(12,2);not null" json:"unit_price"`
-	TaxAmount   float64 `gorm:"type:numeric(12,2);default:0" json:"tax_amount"`
-	TotalAmount float64 `gorm:"type:numeric(12,2);not null" json:"total_amount"`
+	Quantity   int             `gorm:"not null" json:"quantity"`
+	UnitPrice  decimal.Decimal `gorm:"type:decimal(12,2);not null" json:"unit_price"`
+	Discount   decimal.Decimal `gorm:"type:decimal(12,2);not null;default:0" json:"discount"`
+	TaxPercent decimal.Decimal `gorm:"type:decimal(5,2);not null;default:0" json:"tax_percent"`
+	TaxAmount  decimal.Decimal `gorm:"type:decimal(12,2);not null;default:0" json:"tax_amount"`
+	TotalPrice decimal.Decimal `gorm:"type:decimal(12,2);not null;default:0" json:"total_price"`
 }
 
 //////////////////////////////////////////////////////////////
