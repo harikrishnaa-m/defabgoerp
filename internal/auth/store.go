@@ -33,7 +33,7 @@ func (s *Store) GetUserByRefreshToken(refreshToken string) (*model.User, error) 
 	var rolePermissions string
 	var branchID sql.NullString
 	query := `
-		SELECT u.id, u.name, u.email, u.password_hash, u.role_id, r.id, r.name, r.permissions, u.branch_id, u.is_active, u.created_at
+		SELECT u.id, u.name, u.email, u.password_hash, u.role_id, r.id, r.name, COALESCE(r.permissions, ''), u.branch_id, u.is_active, u.created_at
 		FROM users u
 		JOIN roles r ON u.role_id = r.id
 		WHERE u.refresh_token = $1
@@ -74,7 +74,7 @@ func (s *Store) GetUserByResetToken(resetToken string) (*model.User, error) {
 	var rolePermissions string
 	var branchID sql.NullString
 	query := `
-		SELECT u.id, u.name, u.email, u.password_hash, u.role_id, r.id, r.name, r.permissions, u.branch_id, u.is_active, u.created_at
+		SELECT u.id, u.name, u.email, u.password_hash, u.role_id, r.id, r.name, COALESCE(r.permissions, ''), u.branch_id, u.is_active, u.created_at
 		FROM users u
 		JOIN roles r ON u.role_id = r.id
 		WHERE u.reset_token = $1
@@ -154,7 +154,7 @@ func (s *Store) GetUserByEmail(email string) (*model.User, error) {
 		u.role_id,
 		r.id,
 		r.name,
-		r.permissions,
+		COALESCE(r.permissions, ''),
 		u.branch_id,
 		u.is_active,
 		u.created_at

@@ -10,6 +10,7 @@ type CreateUserInput struct {
 
 type UpdateUserInput struct {
 	Name     *string `json:"name"`
+	Email    *string `json:"email"`
 	RoleID   *uint   `json:"role_id"`
 	BranchID *string `json:"branch_id"`
 	IsActive *bool   `json:"is_active"`

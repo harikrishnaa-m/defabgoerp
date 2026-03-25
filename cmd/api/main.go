@@ -185,7 +185,6 @@ func main() {
 		protected.Group("/warehouses",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
 				model.RoleStoreManager,
 			),
 		),
@@ -210,7 +209,7 @@ func main() {
 		protected.Group("/categories",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		categoryHandler,
@@ -220,7 +219,7 @@ func main() {
 		protected.Group("/products",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		productHandler,
@@ -237,7 +236,7 @@ func main() {
 		protected.Group("/attributes",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		attributeHandler,
@@ -247,7 +246,7 @@ func main() {
 		protected.Group("/variants",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		variantHandler,
@@ -257,7 +256,7 @@ func main() {
 		protected.Group("/suppliers",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		supplierHandler,
@@ -278,7 +277,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
-				model.RoleSalesperson,
+				model.RoleSalesPerson,
 			),
 		),
 		billingHandler,
@@ -288,7 +287,7 @@ func main() {
 		protected.Group("/purchase-orders",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		purchaseHandler,
@@ -298,7 +297,7 @@ func main() {
 		protected.Group("/goods-receipts",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		goodsHandler,
@@ -308,7 +307,7 @@ func main() {
 		protected.Group("/stock-transfers",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		stockTransferHandler,
@@ -318,7 +317,6 @@ func main() {
 		protected.Group("/stocks",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
 				model.RoleStoreManager,
 			),
 		),
@@ -329,7 +327,6 @@ func main() {
 		protected.Group("/stock-requests",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
 				model.RoleStoreManager,
 			),
 		),
@@ -340,7 +337,7 @@ func main() {
 		protected.Group("/coupons",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
+				model.RoleStoreManager,
 			),
 		),
 		couponHandler,
@@ -350,7 +347,6 @@ func main() {
 		protected.Group("/raw-material-stocks",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
-				model.RoleInventoryManager,
 				model.RoleStoreManager,
 			),
 		),
@@ -360,7 +356,7 @@ func main() {
 	piMiddleware := protected.Group("",
 		middleware.RequireRole(
 			model.RoleSuperAdmin,
-			model.RoleInventoryManager,
+			model.RoleStoreManager,
 		),
 	)
 	purchaseinvoice.RegisterInvoiceRoutes(

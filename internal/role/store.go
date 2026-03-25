@@ -13,6 +13,12 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+func (s *Store) ExistsByName(name string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM roles WHERE name = $1)`, name).Scan(&exists)
+	return exists, err
+}
+
 func (s *Store) Create(name, permissions string) error {
 	_, err := s.db.Exec(
 		`INSERT INTO roles (name, permissions)

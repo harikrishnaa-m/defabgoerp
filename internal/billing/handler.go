@@ -72,7 +72,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	in.WarehouseID = warehouseID
 
 	// Auto-set salesperson_id if logged-in user is a Salesperson
-	if user.Role.Name == model.RoleSalesperson && in.SalesPersonID == "" {
+	if user.Role.Name == model.RoleSalesPerson && in.SalesPersonID == "" {
 		spID, err := h.store.GetSalespersonByUserID(user.ID.String())
 		if err != nil {
 			return httperr.BadRequest(c, "No salesperson profile found for your account")
@@ -134,7 +134,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	}
 
 	var branchID *string
-	if user.Role.Name == model.RoleStoreManager || user.Role.Name == model.RoleSalesperson {
+	if user.Role.Name == model.RoleStoreManager || user.Role.Name == model.RoleSalesPerson {
 		branchID = user.BranchID
 	}
 

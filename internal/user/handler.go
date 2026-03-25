@@ -53,7 +53,6 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	return c.Status(201).JSON(full)
 }
 
-
 //
 // ✅ LIST USERS (with role data)
 //
@@ -73,7 +72,9 @@ func (h *Handler) List(c *fiber.Ctx) error {
 
 	offset := (page - 1) * limit
 
-	rows, err := h.store.ListActive(limit, offset)
+	roleFilter := c.Query("role")
+
+	rows, err := h.store.ListActive(limit, offset, roleFilter)
 	if err != nil {
 		return c.Status(500).SendString(err.Error())
 	}
@@ -104,7 +105,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		out = append(out, u)
 	}
 
-	total, err := h.store.CountActive()
+	total, err := h.store.CountActive(roleFilter)
 	if err != nil {
 		return c.Status(500).SendString(err.Error())
 	}
@@ -116,7 +117,6 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		"total": total,
 	})
 }
-
 
 //
 // ✅ GET USER BY ID (with role data)
@@ -152,7 +152,6 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 
 	return c.SendStatus(200)
 }
-
 
 func (h *Handler) Deactivate(c *fiber.Ctx) error {
 	id := c.Params("id")
