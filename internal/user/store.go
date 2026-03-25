@@ -137,7 +137,7 @@ func (s *Store) ListActive(limit, offset int, role string) (*sql.Rows, error) {
 		  u.created_at
 		FROM users u
 		JOIN roles r ON u.role_id = r.id
-		WHERE u.is_active = TRUE AND r.name = $3
+		WHERE r.name = $3
 		ORDER BY u.created_at DESC
 		LIMIT $1 OFFSET $2
 		`, limit, offset, role)
@@ -156,7 +156,6 @@ func (s *Store) ListActive(limit, offset int, role string) (*sql.Rows, error) {
 	  u.created_at
 	FROM users u
 	JOIN roles r ON u.role_id = r.id
-	WHERE u.is_active = TRUE
 	ORDER BY u.created_at DESC
 	LIMIT $1 OFFSET $2
 	`, limit, offset)
@@ -167,11 +166,11 @@ func (s *Store) CountActive(role string) (int, error) {
 	var err error
 	if role != "" {
 		err = s.db.QueryRow(
-			`SELECT COUNT(*) FROM users u JOIN roles r ON u.role_id = r.id WHERE u.is_active = TRUE AND r.name = $1`, role,
+			`SELECT COUNT(*) FROM users u JOIN roles r ON u.role_id = r.id WHERE r.name = $1`, role,
 		).Scan(&total)
 	} else {
 		err = s.db.QueryRow(
-			`SELECT COUNT(*) FROM users WHERE is_active = TRUE`,
+			`SELECT COUNT(*) FROM users`,
 		).Scan(&total)
 	}
 	return total, err

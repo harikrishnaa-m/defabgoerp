@@ -37,10 +37,13 @@ import (
 
 	"defab-erp/internal/billing"
 	"defab-erp/internal/coupon"
+	"defab-erp/internal/customer"
 	"defab-erp/internal/goodsreceipt"
 	"defab-erp/internal/purchase"
 	"defab-erp/internal/purchaseinvoice"
 	"defab-erp/internal/rawmaterial"
+	"defab-erp/internal/salesinvoice"
+	"defab-erp/internal/salesorder"
 	"defab-erp/internal/salesperson"
 	"defab-erp/internal/stock"
 	"defab-erp/internal/stockrequest"
@@ -131,6 +134,15 @@ func main() {
 
 	salespersonStore := salesperson.NewStore(database)
 	salespersonHandler := salesperson.NewHandler(salespersonStore)
+
+	customerStore := customer.NewStore(database)
+	customerHandler := customer.NewHandler(customerStore)
+
+	salesOrderStore := salesorder.NewStore(database)
+	salesOrderHandler := salesorder.NewHandler(salesOrderStore)
+
+	salesInvoiceStore := salesinvoice.NewStore(database)
+	salesInvoiceHandler := salesinvoice.NewHandler(salesInvoiceStore)
 
 	billingStore := billing.NewStore(database, redisClient)
 	billingHandler := billing.NewHandler(billingStore)
@@ -270,6 +282,39 @@ func main() {
 			),
 		),
 		salespersonHandler,
+	)
+
+	customer.RegisterRoutes(
+		protected.Group("/customers",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleSalesPerson,
+			),
+		),
+		customerHandler,
+	)
+
+	salesorder.RegisterRoutes(
+		protected.Group("/sales-orders",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleSalesPerson,
+			),
+		),
+		salesOrderHandler,
+	)
+
+	salesinvoice.RegisterRoutes(
+		protected.Group("/sales-invoices",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleSalesPerson,
+			),
+		),
+		salesInvoiceHandler,
 	)
 
 	billing.RegisterRoutes(
