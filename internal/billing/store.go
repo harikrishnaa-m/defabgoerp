@@ -711,13 +711,20 @@ func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interfa
 		return nil, err
 	}
 
+	balanceDue := netAmount - paidAmount
+	if balanceDue <= 0 {
+		return nil, fmt.Errorf("invoice is already fully paid")
+	}
+	if p.Amount > balanceDue {
+		return nil, fmt.Errorf("payment amount %.2f exceeds balance due %.2f", p.Amount, balanceDue)
+	}
+
 	newPaid := paidAmount + p.Amount
 
 	// Determine new status
 	status := "PARTIAL"
 	if newPaid >= netAmount {
 		status = "PAID"
-		newPaid = netAmount // cap at net_amount
 	}
 
 	// Insert payment record

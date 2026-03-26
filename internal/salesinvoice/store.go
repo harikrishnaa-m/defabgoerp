@@ -13,7 +13,7 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
-func (s *Store) List(branchID *string, status string, limit, offset int) ([]map[string]interface{}, int, error) {
+func (s *Store) List(branchID *string, status, search string, limit, offset int) ([]map[string]interface{}, int, error) {
 	baseWhere := "WHERE 1=1"
 	var args []interface{}
 	argIdx := 1
@@ -30,9 +30,18 @@ func (s *Store) List(branchID *string, status string, limit, offset int) ([]map[
 		argIdx++
 	}
 
+	if search != "" {
+		baseWhere += fmt.Sprintf(" AND (si.invoice_number ILIKE $%d OR so.so_number ILIKE $%d OR c.name ILIKE $%d OR c.phone ILIKE $%d)", argIdx, argIdx, argIdx, argIdx)
+		args = append(args, "%"+search+"%")
+		argIdx++
+	}
+
 	// Count
 	var total int
-	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM sales_invoices si %s`, baseWhere)
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM sales_invoices si
+		JOIN sales_orders so ON so.id = si.sales_order_id
+		LEFT JOIN customers c ON c.id = si.customer_id
+		%s`, baseWhere)
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}

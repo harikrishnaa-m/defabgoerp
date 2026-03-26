@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"log"
 	"strconv"
+	"strings"
 
 	"defab-erp/internal/core/httperr"
 	"defab-erp/internal/core/model"
@@ -244,6 +245,10 @@ func (h *Handler) AddPayment(c *fiber.Ctx) error {
 		return httperr.NotFound(c, "Invoice not found")
 	}
 	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "already fully paid") || strings.Contains(msg, "exceeds balance due") {
+			return httperr.BadRequest(c, msg)
+		}
 		log.Println("add payment error:", err)
 		return httperr.Internal(c)
 	}

@@ -28,6 +28,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	offset := (page - 1) * limit
 
 	status := c.Query("status")
+	search := c.Query("search")
 
 	var branchID *string
 	if user.Role.Name == model.RoleStoreManager || user.Role.Name == model.RoleSalesPerson {
@@ -37,7 +38,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		branchID = &bid
 	}
 
-	invoices, total, err := h.store.List(branchID, status, limit, offset)
+	invoices, total, err := h.store.List(branchID, status, search, limit, offset)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
