@@ -14,6 +14,11 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+// DB exposes the database connection for the handler layer.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 func (s *Store) generateInvoiceNumber() (string, error) {
 	var count int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM purchase_invoices`).Scan(&count)

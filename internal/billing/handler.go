@@ -12,12 +12,24 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// AccountingRecorder is an optional hook for auto-recording vouchers.
+type AccountingRecorder interface {
+	RecordSalesInvoice(salesInvoiceID, userID string) error
+	RecordSalesPayment(salesPaymentID, userID string) error
+}
+
 type Handler struct {
-	store *Store
+	store    *Store
+	recorder AccountingRecorder
 }
 
 func NewHandler(s *Store) *Handler {
 	return &Handler{store: s}
+}
+
+// SetRecorder injects the accounting recorder for auto-recording.
+func (h *Handler) SetRecorder(r AccountingRecorder) {
+	h.recorder = r
 }
 
 // Create handles POST /billing — the main POS endpoint.
@@ -89,6 +101,17 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 			return httperr.BadRequest(c, errMsg)
 		}
 		return httperr.Internal(c)
+	}
+
+	// Auto-record in accounting (non-blocking)
+	if h.recorder != nil {
+		if invoiceID, ok := result["sales_invoice_id"].(string); ok {
+			go func() {
+				if err := h.recorder.RecordSalesInvoice(invoiceID, user.ID.String()); err != nil {
+					log.Println("accounting auto-record sales invoice error:", err)
+				}
+			}()
+		}
 	}
 
 	return c.Status(201).JSON(result)
@@ -251,6 +274,21 @@ func (h *Handler) AddPayment(c *fiber.Ctx) error {
 		}
 		log.Println("add payment error:", err)
 		return httperr.Internal(c)
+	}
+
+	// Auto-record payment in accounting (non-blocking)
+	if h.recorder != nil {
+		user := c.Locals("user").(*model.User)
+		go func() {
+			// Get latest sales_payment ID for this invoice
+			var paymentID string
+			h.store.QueryLatestSalesPaymentID(id, &paymentID)
+			if paymentID != "" {
+				if err := h.recorder.RecordSalesPayment(paymentID, user.ID.String()); err != nil {
+					log.Println("accounting auto-record sales payment error:", err)
+				}
+			}
+		}()
 	}
 
 	return c.JSON(result)

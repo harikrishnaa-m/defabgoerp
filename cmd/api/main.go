@@ -35,6 +35,7 @@ import (
 
 	"defab-erp/internal/core/storage"
 
+	"defab-erp/internal/accounting"
 	"defab-erp/internal/billing"
 	"defab-erp/internal/coupon"
 	"defab-erp/internal/customer"
@@ -146,6 +147,14 @@ func main() {
 
 	billingStore := billing.NewStore(database, redisClient)
 	billingHandler := billing.NewHandler(billingStore)
+
+	accountingStore := accounting.NewStore(database)
+	accountingRecorder := accounting.NewRecorder(database, accountingStore)
+	accountingHandler := accounting.NewHandler(accountingStore, accountingRecorder)
+
+	// Wire auto-recording into billing & purchase handlers
+	billingHandler.SetRecorder(accountingRecorder)
+	purchaseInvoiceHandler.SetRecorder(accountingRecorder)
 
 	// Warm Redis cache with all variants
 	if err := billingStore.WarmCache(); err != nil {
@@ -411,6 +420,16 @@ func main() {
 	purchaseinvoice.RegisterPaymentRoutes(
 		piMiddleware.Group("/supplier-payments"),
 		purchaseInvoiceHandler,
+	)
+
+	accounting.RegisterRoutes(
+		protected.Group("/accounting",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleAccountsManager,
+			),
+		),
+		accountingHandler,
 	)
 
 	protected.Get("/me", func(c *fiber.Ctx) error {

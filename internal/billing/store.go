@@ -771,6 +771,14 @@ func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interfa
 	}, nil
 }
 
+// QueryLatestSalesPaymentID fetches the most recently created sales_payment ID for an invoice.
+func (s *Store) QueryLatestSalesPaymentID(invoiceID string, dest *string) {
+	s.db.QueryRow(
+		`SELECT id FROM sales_payments WHERE sales_invoice_id = $1 ORDER BY paid_at DESC LIMIT 1`,
+		invoiceID,
+	).Scan(dest)
+}
+
 // LookupVariant searches by SKU or barcode and returns variant details + available stock.
 // Variant catalog data is cached in Redis; stock is always fetched live.
 func (s *Store) LookupVariant(query, warehouseID string) (map[string]interface{}, error) {
