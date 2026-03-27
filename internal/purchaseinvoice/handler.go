@@ -11,12 +11,24 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// AccountingRecorder is an optional hook for auto-recording vouchers.
+type AccountingRecorder interface {
+	RecordPurchaseInvoice(purchaseInvoiceID, userID string) error
+	RecordSupplierPayment(supplierPaymentID, userID string) error
+}
+
 type Handler struct {
-	store *Store
+	store    *Store
+	recorder AccountingRecorder
 }
 
 func NewHandler(s *Store) *Handler {
 	return &Handler{store: s}
+}
+
+// SetRecorder injects the accounting recorder for auto-recording.
+func (h *Handler) SetRecorder(r AccountingRecorder) {
+	h.recorder = r
 }
 
 // Create handles POST /purchase-invoices
@@ -51,6 +63,15 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		log.Println("create purchase invoice error:", err)
 		return httperr.Internal(c)
+	}
+
+	// Auto-record in accounting (non-blocking)
+	if h.recorder != nil {
+		go func() {
+			if err := h.recorder.RecordPurchaseInvoice(invoiceID, user.ID.String()); err != nil {
+				log.Println("accounting auto-record purchase invoice error:", err)
+			}
+		}()
 	}
 
 	invoice, err := h.store.GetByID(invoiceID)
@@ -118,6 +139,23 @@ func (h *Handler) RecordPayment(c *fiber.Ctx) error {
 		}
 		log.Println("record payment error:", err)
 		return httperr.Internal(c)
+	}
+
+	// Auto-record supplier payment in accounting (non-blocking)
+	if h.recorder != nil {
+		// Get the latest supplier_payment ID for this invoice
+		var paymentID string
+		err := h.store.DB().QueryRow(
+			`SELECT id FROM supplier_payments WHERE purchase_invoice_id = $1 ORDER BY created_at DESC LIMIT 1`, id,
+		).Scan(&paymentID)
+		if err == nil && paymentID != "" {
+			user := c.Locals("user").(*model.User)
+			go func() {
+				if err := h.recorder.RecordSupplierPayment(paymentID, user.ID.String()); err != nil {
+					log.Println("accounting auto-record supplier payment error:", err)
+				}
+			}()
+		}
 	}
 
 	invoice, err := h.store.GetByID(id)
