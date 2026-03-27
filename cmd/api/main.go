@@ -197,7 +197,7 @@ func main() {
 
 	branch.RegisterRoutes(
 		protected.Group("/branches",
-			middleware.RequireRole(model.RoleSuperAdmin),
+			middleware.RequireRole(model.RoleSuperAdmin, model.RoleAccountsManager),
 		),
 		branchHandler,
 	)
@@ -207,6 +207,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		warehouseHandler,
@@ -214,7 +215,7 @@ func main() {
 
 	warehouse.RegisterRoutes(
 		protected.Group("/warehouses",
-			middleware.RequireRole(model.RoleSuperAdmin),
+			middleware.RequireRole(model.RoleSuperAdmin, model.RoleAccountsManager),
 		),
 		warehouseHandler,
 	)
@@ -231,6 +232,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		categoryHandler,
@@ -241,6 +243,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		productHandler,
@@ -248,7 +251,7 @@ func main() {
 
 	productdescription.RegisterRoutes(
 		protected.Group("/product-descriptions",
-			middleware.RequireRole(model.RoleSuperAdmin),
+			middleware.RequireRole(model.RoleSuperAdmin, model.RoleAccountsManager),
 		),
 		pdHandler,
 	)
@@ -258,6 +261,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		attributeHandler,
@@ -268,6 +272,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		variantHandler,
@@ -278,6 +283,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		supplierHandler,
@@ -288,6 +294,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		salespersonHandler,
@@ -299,6 +306,7 @@ func main() {
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
 				model.RoleSalesPerson,
+				model.RoleAccountsManager,
 			),
 		),
 		customerHandler,
@@ -310,6 +318,7 @@ func main() {
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
 				model.RoleSalesPerson,
+				model.RoleAccountsManager,
 			),
 		),
 		salesOrderHandler,
@@ -321,6 +330,7 @@ func main() {
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
 				model.RoleSalesPerson,
+				model.RoleAccountsManager,
 			),
 		),
 		salesInvoiceHandler,
@@ -332,6 +342,7 @@ func main() {
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
 				model.RoleSalesPerson,
+				model.RoleAccountsManager,
 			),
 		),
 		billingHandler,
@@ -342,6 +353,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		purchaseHandler,
@@ -352,6 +364,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		goodsHandler,
@@ -362,6 +375,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		stockTransferHandler,
@@ -372,6 +386,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		stockHandler,
@@ -382,6 +397,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		stockRequestHandler,
@@ -392,6 +408,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		couponHandler,
@@ -402,6 +419,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		rawMaterialHandler,
@@ -412,6 +430,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		purchaseInvoiceHandler,
@@ -421,6 +440,7 @@ func main() {
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
+				model.RoleAccountsManager,
 			),
 		),
 		purchaseInvoiceHandler,
