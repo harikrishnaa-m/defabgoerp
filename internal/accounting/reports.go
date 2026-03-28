@@ -155,17 +155,17 @@ func (s *Store) Ledger(accountID, from, to string) ([]LedgerEntry, error) {
 // ════════════════════════════════════════════
 
 func (s *Store) ProfitAndLoss(from, to string) (map[string]interface{}, error) {
-	where := "WHERE v.is_cancelled = FALSE"
+	joinCond := "AND v.is_cancelled = FALSE"
 	args := []interface{}{}
 	idx := 1
 
 	if from != "" {
-		where += fmt.Sprintf(" AND v.voucher_date >= $%d", idx)
+		joinCond += fmt.Sprintf(" AND v.voucher_date >= $%d", idx)
 		args = append(args, from)
 		idx++
 	}
 	if to != "" {
-		where += fmt.Sprintf(" AND v.voucher_date <= $%d", idx)
+		joinCond += fmt.Sprintf(" AND v.voucher_date <= $%d", idx)
 		args = append(args, to)
 		idx++
 	}
@@ -181,7 +181,7 @@ func (s *Store) ProfitAndLoss(from, to string) (map[string]interface{}, error) {
 		GROUP BY la.id, la.code, la.name, ag.nature
 		HAVING COALESCE(SUM(vl.debit), 0) != 0 OR COALESCE(SUM(vl.credit), 0) != 0
 		ORDER BY ag.nature, la.code
-	`, where)
+	`, joinCond)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

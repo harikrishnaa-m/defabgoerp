@@ -150,17 +150,22 @@ func (r *Recorder) RecordPurchaseInvoice(purchaseInvoiceID, userID string) error
 		SubAmount, DiscountAmount        float64
 		GSTAmount, NetAmount, PaidAmount float64
 		InvoiceDate                      string
+		BranchID                         sql.NullString
 	}
 	err = r.db.QueryRow(`
-		SELECT id, invoice_number,
-		       sub_amount, discount_amount,
-		       gst_amount, net_amount, paid_amount,
-		       invoice_date::date
-		FROM purchase_invoices WHERE id = $1
+		SELECT pi.id, pi.invoice_number,
+		       pi.sub_amount, pi.discount_amount,
+		       pi.gst_amount, pi.net_amount, pi.paid_amount,
+		       pi.invoice_date::date,
+		       w.branch_id
+		FROM purchase_invoices pi
+		LEFT JOIN warehouses w ON w.id = pi.warehouse_id
+		WHERE pi.id = $1
 	`, purchaseInvoiceID).Scan(
 		&inv.ID, &inv.InvoiceNumber,
 		&inv.SubAmount, &inv.DiscountAmount,
 		&inv.GSTAmount, &inv.NetAmount, &inv.PaidAmount, &inv.InvoiceDate,
+		&inv.BranchID,
 	)
 	if err != nil {
 		return fmt.Errorf("read purchase invoice: %w", err)
@@ -210,12 +215,18 @@ func (r *Recorder) RecordPurchaseInvoice(purchaseInvoiceID, userID string) error
 		}
 	}
 
+	branchID := ""
+	if inv.BranchID.Valid {
+		branchID = inv.BranchID.String
+	}
+
 	return r.store.CreateVoucher(Voucher{
 		VoucherType: VoucherTypePurchase,
 		VoucherDate: inv.InvoiceDate,
 		Narration:   "Purchase Invoice " + inv.InvoiceNumber,
 		RefType:     RefPurchaseInvoice,
 		RefID:       purchaseInvoiceID,
+		BranchID:    branchID,
 		CreatedBy:   userID,
 		Lines:       lines,
 	})
@@ -380,5 +391,31 @@ func (r *Recorder) BackfillAll(userID string) (map[string]int, error) {
 		return result, err
 	}
 
+	patched, err := r.PatchPurchaseBranchIDs()
+	result["purchase_branch_patched"] = patched
+	if err != nil {
+		return result, err
+	}
+
 	return result, nil
+}
+
+// PatchPurchaseBranchIDs back-fills branch_id on existing purchase vouchers
+// by looking up purchase_invoices → warehouses → branch_id.
+func (r *Recorder) PatchPurchaseBranchIDs() (int, error) {
+	res, err := r.db.Exec(`
+		UPDATE vouchers v
+		SET branch_id = w.branch_id
+		FROM purchase_invoices pi
+		JOIN warehouses w ON w.id = pi.warehouse_id
+		WHERE v.ref_type = 'purchase_invoice'
+		  AND v.ref_id = pi.id
+		  AND v.branch_id IS NULL
+		  AND w.branch_id IS NOT NULL
+	`)
+	if err != nil {
+		return 0, fmt.Errorf("patch purchase branch ids: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
