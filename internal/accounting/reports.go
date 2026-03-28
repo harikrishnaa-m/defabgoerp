@@ -59,27 +59,34 @@ type DayBookEntry struct {
 // Trial Balance
 // ════════════════════════════════════════════
 
-func (s *Store) TrialBalance(asOf string) ([]TrialBalanceRow, error) {
-	query := `
+func (s *Store) TrialBalance(from, to string) ([]TrialBalanceRow, error) {
+	joinCond := "AND v.is_cancelled = FALSE"
+	args := []interface{}{}
+	idx := 1
+
+	if from != "" {
+		joinCond += fmt.Sprintf(" AND v.voucher_date >= $%d", idx)
+		args = append(args, from)
+		idx++
+	}
+	if to != "" {
+		joinCond += fmt.Sprintf(" AND v.voucher_date <= $%d", idx)
+		args = append(args, to)
+		idx++
+	}
+
+	query := fmt.Sprintf(`
 		SELECT la.id, la.code, la.name, la.nature,
 		       COALESCE(SUM(vl.debit), 0) AS total_debit,
 		       COALESCE(SUM(vl.credit), 0) AS total_credit
 		FROM ledger_accounts la
 		LEFT JOIN voucher_lines vl ON vl.ledger_account_id = la.id
-		LEFT JOIN vouchers v ON v.id = vl.voucher_id
-		    AND v.is_cancelled = FALSE
-	`
-	args := []interface{}{}
-	if asOf != "" {
-		query += " AND v.voucher_date <= $1"
-		args = append(args, asOf)
-	}
-	query += `
+		LEFT JOIN vouchers v ON v.id = vl.voucher_id %s
 		GROUP BY la.id, la.code, la.name, la.nature
 		HAVING COALESCE(SUM(vl.debit), 0) != 0
 		    OR COALESCE(SUM(vl.credit), 0) != 0
 		ORDER BY la.code
-	`
+	`, joinCond)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -228,27 +235,34 @@ func (s *Store) ProfitAndLoss(from, to string) (map[string]interface{}, error) {
 // Balance Sheet
 // ════════════════════════════════════════════
 
-func (s *Store) BalanceSheet(asOf string) (map[string]interface{}, error) {
-	query := `
+func (s *Store) BalanceSheet(from, to string) (map[string]interface{}, error) {
+	joinCond := "AND v.is_cancelled = FALSE"
+	args := []interface{}{}
+	idx := 1
+
+	if from != "" {
+		joinCond += fmt.Sprintf(" AND v.voucher_date >= $%d", idx)
+		args = append(args, from)
+		idx++
+	}
+	if to != "" {
+		joinCond += fmt.Sprintf(" AND v.voucher_date <= $%d", idx)
+		args = append(args, to)
+		idx++
+	}
+
+	query := fmt.Sprintf(`
 		SELECT la.id, la.code, la.name, ag.name, ag.nature,
 		       COALESCE(SUM(vl.debit), 0), COALESCE(SUM(vl.credit), 0)
 		FROM ledger_accounts la
 		JOIN account_groups ag ON ag.id = la.account_group_id
 		LEFT JOIN voucher_lines vl ON vl.ledger_account_id = la.id
-		LEFT JOIN vouchers v ON v.id = vl.voucher_id
-		    AND v.is_cancelled = FALSE
-	`
-	args := []interface{}{}
-	if asOf != "" {
-		query += " AND v.voucher_date <= $1"
-		args = append(args, asOf)
-	}
-	query += `
+		LEFT JOIN vouchers v ON v.id = vl.voucher_id %s
 		WHERE ag.nature IN ('ASSET', 'LIABILITY', 'EQUITY')
 		GROUP BY la.id, la.code, la.name, ag.name, ag.nature
 		HAVING COALESCE(SUM(vl.debit), 0) != 0 OR COALESCE(SUM(vl.credit), 0) != 0
 		ORDER BY ag.nature, la.code
-	`
+	`, joinCond)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

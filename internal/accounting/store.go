@@ -154,6 +154,13 @@ func (s *Store) GetActiveFinancialYear(date time.Time) (string, error) {
 	return id, err
 }
 
+// GetFinancialYearDates returns start_date and end_date for a given financial year ID.
+func (s *Store) GetFinancialYearDates(fyID string) (string, string, error) {
+	var start, end string
+	err := s.db.QueryRow(`SELECT start_date::text, end_date::text FROM financial_years WHERE id = $1`, fyID).Scan(&start, &end)
+	return start, end, err
+}
+
 // ════════════════════════════════════════════
 // Vouchers
 // ════════════════════════════════════════════

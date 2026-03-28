@@ -285,8 +285,23 @@ func (h *Handler) Backfill(c *fiber.Ctx) error {
 // ════════════════════════════════════════════
 
 func (h *Handler) TrialBalance(c *fiber.Ctx) error {
-	asOf := c.Query("as_of")
-	rows, err := h.store.TrialBalance(asOf)
+	from := c.Query("from")
+	to := c.Query("to")
+
+	if fyID := c.Query("financial_year_id"); fyID != "" {
+		start, end, err := h.store.GetFinancialYearDates(fyID)
+		if err != nil {
+			return httperr.BadRequest(c, "Invalid financial_year_id")
+		}
+		from, to = start, end
+	}
+
+	// Backward compat: as_of sets the to-date
+	if asOf := c.Query("as_of"); asOf != "" && to == "" {
+		to = asOf
+	}
+
+	rows, err := h.store.TrialBalance(from, to)
 	if err != nil {
 		log.Println("trial balance error:", err)
 		return httperr.Internal(c)
@@ -302,7 +317,8 @@ func (h *Handler) TrialBalance(c *fiber.Ctx) error {
 		"trial_balance": rows,
 		"total_debit":   totalDebit,
 		"total_credit":  totalCredit,
-		"as_of":         asOf,
+		"from":          from,
+		"to":            to,
 	})
 }
 
@@ -310,6 +326,14 @@ func (h *Handler) Ledger(c *fiber.Ctx) error {
 	accountID := c.Params("accountId")
 	from := c.Query("from")
 	to := c.Query("to")
+
+	if fyID := c.Query("financial_year_id"); fyID != "" {
+		start, end, err := h.store.GetFinancialYearDates(fyID)
+		if err != nil {
+			return httperr.BadRequest(c, "Invalid financial_year_id")
+		}
+		from, to = start, end
+	}
 
 	entries, err := h.store.Ledger(accountID, from, to)
 	if err != nil {
@@ -327,6 +351,15 @@ func (h *Handler) Ledger(c *fiber.Ctx) error {
 func (h *Handler) ProfitAndLoss(c *fiber.Ctx) error {
 	from := c.Query("from")
 	to := c.Query("to")
+
+	if fyID := c.Query("financial_year_id"); fyID != "" {
+		start, end, err := h.store.GetFinancialYearDates(fyID)
+		if err != nil {
+			return httperr.BadRequest(c, "Invalid financial_year_id")
+		}
+		from, to = start, end
+	}
+
 	result, err := h.store.ProfitAndLoss(from, to)
 	if err != nil {
 		log.Println("P&L error:", err)
@@ -338,18 +371,40 @@ func (h *Handler) ProfitAndLoss(c *fiber.Ctx) error {
 }
 
 func (h *Handler) BalanceSheet(c *fiber.Ctx) error {
-	asOf := c.Query("as_of")
-	result, err := h.store.BalanceSheet(asOf)
+	from := c.Query("from")
+	to := c.Query("to")
+
+	if fyID := c.Query("financial_year_id"); fyID != "" {
+		start, end, err := h.store.GetFinancialYearDates(fyID)
+		if err != nil {
+			return httperr.BadRequest(c, "Invalid financial_year_id")
+		}
+		from, to = start, end
+	}
+
+	// Backward compat: as_of sets the to-date
+	if asOf := c.Query("as_of"); asOf != "" && to == "" {
+		to = asOf
+	}
+
+	result, err := h.store.BalanceSheet(from, to)
 	if err != nil {
 		log.Println("balance sheet error:", err)
 		return httperr.Internal(c)
 	}
-	result["as_of"] = asOf
+	result["from"] = from
+	result["to"] = to
 	return c.JSON(result)
 }
 
 func (h *Handler) DayBook(c *fiber.Ctx) error {
 	date := c.Query("date")
+
+	// If financial_year_id is passed without date, return error
+	if fyID := c.Query("financial_year_id"); fyID != "" && date == "" {
+		return httperr.BadRequest(c, "date query param is required for day-book (YYYY-MM-DD)")
+	}
+
 	if date == "" {
 		return httperr.BadRequest(c, "date query param is required (YYYY-MM-DD)")
 	}
