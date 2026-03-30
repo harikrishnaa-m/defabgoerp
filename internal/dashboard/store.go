@@ -205,6 +205,7 @@ func (s *Store) PurchaseTrend(from, to, groupBy string) ([]TrendPoint, error) {
 
 type TopProduct struct {
 	VariantID   string  `json:"variant_id"`
+	VariantCode int     `json:"variant_code"`
 	ProductName string  `json:"product_name"`
 	VariantName string  `json:"variant_name"`
 	SKU         string  `json:"sku"`
@@ -214,7 +215,7 @@ type TopProduct struct {
 
 func (s *Store) TopSellingProducts(from, to string, limit int) ([]TopProduct, error) {
 	query := `
-		SELECT sii.variant_id, p.name, v.name, v.sku,
+		SELECT sii.variant_id, v.variant_code, p.name, v.name, v.sku,
 		       COALESCE(SUM(sii.quantity), 0),
 		       COALESCE(SUM(sii.total_price), 0)
 		FROM sales_invoice_items sii
@@ -236,7 +237,7 @@ func (s *Store) TopSellingProducts(from, to string, limit int) ([]TopProduct, er
 		idx++
 	}
 	query += fmt.Sprintf(`
-		GROUP BY sii.variant_id, p.name, v.name, v.sku
+		GROUP BY sii.variant_id, v.variant_code, p.name, v.name, v.sku
 		ORDER BY SUM(sii.quantity) DESC
 		LIMIT $%d
 	`, idx)
@@ -251,7 +252,7 @@ func (s *Store) TopSellingProducts(from, to string, limit int) ([]TopProduct, er
 	var products []TopProduct
 	for rows.Next() {
 		var tp TopProduct
-		if err := rows.Scan(&tp.VariantID, &tp.ProductName, &tp.VariantName, &tp.SKU,
+		if err := rows.Scan(&tp.VariantID, &tp.VariantCode, &tp.ProductName, &tp.VariantName, &tp.SKU,
 			&tp.TotalQty, &tp.TotalAmount); err != nil {
 			return nil, err
 		}
@@ -418,6 +419,7 @@ func (s *Store) BranchWiseSales(from, to string) ([]BranchSales, error) {
 
 type LowStockItem struct {
 	VariantID   string  `json:"variant_id"`
+	VariantCode int     `json:"variant_code"`
 	ProductName string  `json:"product_name"`
 	VariantName string  `json:"variant_name"`
 	SKU         string  `json:"sku"`
@@ -426,12 +428,12 @@ type LowStockItem struct {
 
 func (s *Store) LowStockAlerts(threshold float64, limit int) ([]LowStockItem, error) {
 	rows, err := s.db.Query(`
-		SELECT st.variant_id, p.name, v.name, v.sku, SUM(st.quantity)
+		SELECT st.variant_id, v.variant_code, p.name, v.name, v.sku, SUM(st.quantity)
 		FROM stocks st
 		JOIN variants v ON v.id = st.variant_id
 		JOIN products p ON p.id = v.product_id
 		WHERE st.stock_type = 'PRODUCT'
-		GROUP BY st.variant_id, p.name, v.name, v.sku
+		GROUP BY st.variant_id, v.variant_code, p.name, v.name, v.sku
 		HAVING SUM(st.quantity) < $1
 		ORDER BY SUM(st.quantity) ASC
 		LIMIT $2
@@ -444,7 +446,7 @@ func (s *Store) LowStockAlerts(threshold float64, limit int) ([]LowStockItem, er
 	var items []LowStockItem
 	for rows.Next() {
 		var li LowStockItem
-		if err := rows.Scan(&li.VariantID, &li.ProductName, &li.VariantName, &li.SKU, &li.TotalQty); err != nil {
+		if err := rows.Scan(&li.VariantID, &li.VariantCode, &li.ProductName, &li.VariantName, &li.SKU, &li.TotalQty); err != nil {
 			return nil, err
 		}
 		items = append(items, li)

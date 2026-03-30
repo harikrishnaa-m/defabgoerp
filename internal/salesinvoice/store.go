@@ -202,7 +202,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		SELECT
 			sii.id, sii.quantity, sii.unit_price, sii.discount,
 			sii.tax_percent, sii.tax_amount, sii.total_price,
-			v.sku, v.name AS variant_name, COALESCE(v.barcode, '') AS barcode,
+			v.variant_code, v.sku, v.name AS variant_name, COALESCE(v.barcode, '') AS barcode,
 			p.name AS product_name
 		FROM sales_invoice_items sii
 		JOIN variants v ON v.id = sii.variant_id
@@ -218,13 +218,13 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var items []map[string]interface{}
 	for itemRows.Next() {
 		var itemID, sku, variantName, barcode, productName string
-		var quantity int
+		var variantCode, quantity int
 		var unitPrice, discount, taxPercent, taxAmount, totalPrice float64
 
 		if err := itemRows.Scan(
 			&itemID, &quantity, &unitPrice, &discount,
 			&taxPercent, &taxAmount, &totalPrice,
-			&sku, &variantName, &barcode, &productName,
+			&variantCode, &sku, &variantName, &barcode, &productName,
 		); err != nil {
 			return nil, err
 		}
@@ -233,6 +233,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 			"id":           itemID,
 			"product_name": productName,
 			"variant_name": variantName,
+			"variant_code": variantCode,
 			"sku":          sku,
 			"barcode":      barcode,
 			"quantity":     quantity,

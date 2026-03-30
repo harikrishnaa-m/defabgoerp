@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -381,15 +382,17 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	var responseItems []map[string]interface{}
 	for _, ic := range itemCalcs {
 		var sku, productName, variantName string
+		var variantCode int
 		s.db.QueryRow(`
-			SELECT COALESCE(v.sku, ''), COALESCE(p.name, ''), COALESCE(v.name, '')
+			SELECT COALESCE(v.sku, ''), COALESCE(p.name, ''), COALESCE(v.name, ''), v.variant_code
 			FROM variants v
 			JOIN products p ON p.id = v.product_id
 			WHERE v.id = $1
-		`, ic.variantID).Scan(&sku, &productName, &variantName)
+		`, ic.variantID).Scan(&sku, &productName, &variantName, &variantCode)
 
 		responseItems = append(responseItems, map[string]interface{}{
 			"variant_id":   ic.variantID,
+			"variant_code": variantCode,
 			"sku":          sku,
 			"product_name": productName,
 			"variant_name": variantName,
@@ -495,6 +498,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		SELECT sii.id, sii.variant_id,
 		       COALESCE(v.sku, '') AS sku,
 		       COALESCE(p.name, '') AS product_name,
+		       v.variant_code,
 		       sii.quantity, sii.unit_price, sii.discount,
 		       sii.tax_percent, sii.tax_amount, sii.total_price
 		FROM sales_invoice_items sii
@@ -510,15 +514,17 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var items []map[string]interface{}
 	for rows.Next() {
 		var itemID, variantID, sku, productName string
+		var variantCode int
 		var qty int
 		var uPrice, disc, taxPct, taxAmt, totPrice float64
-		if err := rows.Scan(&itemID, &variantID, &sku, &productName,
+		if err := rows.Scan(&itemID, &variantID, &sku, &productName, &variantCode,
 			&qty, &uPrice, &disc, &taxPct, &taxAmt, &totPrice); err != nil {
 			return nil, err
 		}
 		items = append(items, map[string]interface{}{
 			"id":           itemID,
 			"variant_id":   variantID,
+			"variant_code": variantCode,
 			"sku":          sku,
 			"product_name": productName,
 			"quantity":     qty,
@@ -787,6 +793,7 @@ func (s *Store) LookupVariant(query, warehouseID string) (map[string]interface{}
 	// -- Try Redis cache for variant catalog --
 	type variantCache struct {
 		VariantID   string  `json:"variant_id"`
+		VariantCode int     `json:"variant_code"`
 		SKU         string  `json:"sku"`
 		Barcode     string  `json:"barcode"`
 		VariantName string  `json:"variant_name"`
@@ -812,12 +819,12 @@ func (s *Store) LookupVariant(query, warehouseID string) (map[string]interface{}
 		// DB lookup
 		var barcodeNull sql.NullString
 		err := s.db.QueryRow(`
-			SELECT v.id, v.sku, v.name, p.name, v.price, COALESCE(v.cost_price, 0),
+			SELECT v.id, v.variant_code, v.sku, v.name, p.name, v.price, COALESCE(v.cost_price, 0),
 			       v.barcode
 			FROM variants v
 			JOIN products p ON p.id = v.product_id
 			WHERE (v.sku = $1 OR v.barcode = $1) AND v.is_active = true
-		`, query).Scan(&vc.VariantID, &vc.SKU, &vc.VariantName, &vc.ProductName,
+		`, query).Scan(&vc.VariantID, &vc.VariantCode, &vc.SKU, &vc.VariantName, &vc.ProductName,
 			&vc.Price, &vc.CostPrice, &barcodeNull)
 		if err != nil {
 			return nil, err
@@ -852,6 +859,7 @@ func (s *Store) LookupVariant(query, warehouseID string) (map[string]interface{}
 
 	return map[string]interface{}{
 		"variant_id":   vc.VariantID,
+		"variant_code": vc.VariantCode,
 		"sku":          vc.SKU,
 		"barcode":      vc.Barcode,
 		"variant_name": vc.VariantName,
@@ -883,7 +891,7 @@ func (s *Store) WarmCache() error {
 	}
 
 	rows, err := s.db.Query(`
-		SELECT v.id, v.sku, v.name, p.name, v.price, COALESCE(v.cost_price, 0),
+		SELECT v.id, v.variant_code, v.sku, v.name, p.name, v.price, COALESCE(v.cost_price, 0),
 		       v.barcode
 		FROM variants v
 		JOIN products p ON p.id = v.product_id
@@ -899,6 +907,7 @@ func (s *Store) WarmCache() error {
 
 	type variantCache struct {
 		VariantID   string  `json:"variant_id"`
+		VariantCode int     `json:"variant_code"`
 		SKU         string  `json:"sku"`
 		Barcode     string  `json:"barcode"`
 		VariantName string  `json:"variant_name"`
@@ -911,7 +920,7 @@ func (s *Store) WarmCache() error {
 		var vc variantCache
 		var barcodeNull sql.NullString
 
-		if err := rows.Scan(&vc.VariantID, &vc.SKU, &vc.VariantName, &vc.ProductName,
+		if err := rows.Scan(&vc.VariantID, &vc.VariantCode, &vc.SKU, &vc.VariantName, &vc.ProductName,
 			&vc.Price, &vc.CostPrice, &barcodeNull); err != nil {
 			return fmt.Errorf("warm cache scan: %w", err)
 		}
@@ -997,6 +1006,7 @@ func (s *Store) searchFromRedis(query, warehouseID string, limit int) ([]map[str
 
 	type variantCache struct {
 		VariantID   string  `json:"variant_id"`
+		VariantCode int     `json:"variant_code"`
 		SKU         string  `json:"sku"`
 		Barcode     string  `json:"barcode"`
 		VariantName string  `json:"variant_name"`
@@ -1025,11 +1035,13 @@ func (s *Store) searchFromRedis(query, warehouseID string, limit int) ([]map[str
 			continue
 		}
 
-		// Match against SKU, barcode, product name, variant name
+		// Match against SKU, barcode, product name, variant name, variant code
+		variantCodeStr := strconv.Itoa(vc.VariantCode)
 		if strings.Contains(strings.ToLower(vc.SKU), queryLower) ||
 			strings.Contains(strings.ToLower(vc.Barcode), queryLower) ||
 			strings.Contains(strings.ToLower(vc.ProductName), queryLower) ||
-			strings.Contains(strings.ToLower(vc.VariantName), queryLower) {
+			strings.Contains(strings.ToLower(vc.VariantName), queryLower) ||
+			strings.Contains(variantCodeStr, query) {
 
 			seen[vc.VariantID] = true
 
@@ -1045,6 +1057,7 @@ func (s *Store) searchFromRedis(query, warehouseID string, limit int) ([]map[str
 
 			results = append(results, map[string]interface{}{
 				"variant_id":   vc.VariantID,
+				"variant_code": vc.VariantCode,
 				"sku":          vc.SKU,
 				"barcode":      vc.Barcode,
 				"variant_name": vc.VariantName,
@@ -1061,14 +1074,14 @@ func (s *Store) searchFromRedis(query, warehouseID string, limit int) ([]map[str
 func (s *Store) searchFromDB(query, warehouseID string, limit int) ([]map[string]interface{}, error) {
 	pattern := "%" + query + "%"
 	rows, err := s.db.Query(`
-		SELECT v.id, v.sku, COALESCE(v.barcode, ''), v.name, p.name,
+		SELECT v.id, v.variant_code, v.sku, COALESCE(v.barcode, ''), v.name, p.name,
 		       v.price, COALESCE(v.cost_price, 0),
 		       COALESCE(st.quantity, 0)
 		FROM variants v
 		JOIN products p ON p.id = v.product_id
 		LEFT JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
 		WHERE v.is_active = true
-		  AND (v.sku ILIKE $2 OR v.barcode ILIKE $2 OR p.name ILIKE $2 OR v.name ILIKE $2)
+		  AND (v.sku ILIKE $2 OR v.barcode ILIKE $2 OR p.name ILIKE $2 OR v.name ILIKE $2 OR v.variant_code::text LIKE $2)
 		LIMIT $3
 	`, warehouseID, pattern, limit)
 	if err != nil {
@@ -1079,13 +1092,15 @@ func (s *Store) searchFromDB(query, warehouseID string, limit int) ([]map[string
 	var results []map[string]interface{}
 	for rows.Next() {
 		var variantID, sku, barcode, variantName, productName string
+		var variantCode int
 		var price, costPrice, stock float64
-		if err := rows.Scan(&variantID, &sku, &barcode, &variantName, &productName,
+		if err := rows.Scan(&variantID, &variantCode, &sku, &barcode, &variantName, &productName,
 			&price, &costPrice, &stock); err != nil {
 			return nil, err
 		}
 		results = append(results, map[string]interface{}{
 			"variant_id":   variantID,
+			"variant_code": variantCode,
 			"sku":          sku,
 			"barcode":      barcode,
 			"variant_name": variantName,

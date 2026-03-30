@@ -63,16 +63,18 @@ func (h *Handler) ByWarehouse(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var variantID, product, variant, warehouse string
+		var variantCode int
 		var qty decimal.Decimal
 
-		rows.Scan(&variantID, &product, &variant, &warehouse, &qty)
+		rows.Scan(&variantID, &variantCode, &product, &variant, &warehouse, &qty)
 
 		out = append(out, fiber.Map{
-			"variant_id": variantID,
-			"product":    product,
-			"variant":    variant,
-			"warehouse":  warehouse,
-			"quantity":   qty,
+			"variant_id":   variantID,
+			"variant_code": variantCode,
+			"product":      product,
+			"variant":      variant,
+			"warehouse":    warehouse,
+			"quantity":     qty,
 		})
 	}
 
@@ -106,14 +108,16 @@ func (h *Handler) ByBranch(c *fiber.Ctx) error {
 	var out []fiber.Map
 	for rows.Next() {
 		var productID, productName, variantID, variantName, warehouseID, warehouseName string
+		var variantCode int
 		var qty decimal.Decimal
-		if err := rows.Scan(&productID, &productName, &variantID, &variantName, &warehouseID, &warehouseName, &qty); err != nil {
+		if err := rows.Scan(&productID, &productName, &variantID, &variantCode, &variantName, &warehouseID, &warehouseName, &qty); err != nil {
 			return httperr.Internal(c)
 		}
 		out = append(out, fiber.Map{
 			"product_id":     productID,
 			"product_name":   productName,
 			"variant_id":     variantID,
+			"variant_code":   variantCode,
 			"variant_name":   variantName,
 			"warehouse_id":   warehouseID,
 			"warehouse_name": warehouseName,
@@ -180,6 +184,7 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 
 	var (
 		stockID, variantID, variantName, sku string
+		variantCode                          int
 		productID, productName               string
 		warehouseID, warehouseName           string
 		qty                                  decimal.Decimal
@@ -188,7 +193,7 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 	)
 
 	if err := row.Scan(
-		&stockID, &variantID, &variantName, &sku,
+		&stockID, &variantID, &variantCode, &variantName, &sku,
 		&productID, &productName,
 		&warehouseID, &warehouseName,
 		&qty, &stockType, &updatedAt,
@@ -202,6 +207,7 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"id":             stockID,
 		"variant_id":     variantID,
+		"variant_code":   variantCode,
 		"variant_name":   variantName,
 		"sku":            sku,
 		"product_id":     productID,
@@ -278,15 +284,17 @@ func (h *Handler) LowStock(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var product, variant, warehouse string
+		var variantCode int
 		var qty decimal.Decimal
 
-		rows.Scan(&product, &variant, &warehouse, &qty)
+		rows.Scan(&product, &variant, &variantCode, &warehouse, &qty)
 
 		out = append(out, fiber.Map{
-			"product":   product,
-			"variant":   variant,
-			"warehouse": warehouse,
-			"quantity":  qty,
+			"product":      product,
+			"variant":      variant,
+			"variant_code": variantCode,
+			"warehouse":    warehouse,
+			"quantity":     qty,
 		})
 	}
 
@@ -330,17 +338,19 @@ func (h *Handler) All(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var (
-			stockID         string
-			pid, pname      string
-			vid, vname, sku string
-			wid, wname      string
-			qty             decimal.Decimal
+			stockID     string
+			pid, pname  string
+			vid         string
+			variantCode int
+			vname, sku  string
+			wid, wname  string
+			qty         decimal.Decimal
 		)
 
 		if err := rows.Scan(
 			&stockID,
 			&pid, &pname,
-			&vid, &vname, &sku,
+			&vid, &variantCode, &vname, &sku,
 			&wid, &wname,
 			&qty,
 		); err != nil {
@@ -350,7 +360,7 @@ func (h *Handler) All(c *fiber.Ctx) error {
 		data = append(data, fiber.Map{
 			"id":        stockID,
 			"product":   fiber.Map{"id": pid, "name": pname},
-			"variant":   fiber.Map{"id": vid, "name": vname, "sku": sku},
+			"variant":   fiber.Map{"id": vid, "variant_code": variantCode, "name": vname, "sku": sku},
 			"warehouse": fiber.Map{"id": wid, "name": wname},
 			"quantity":  qty,
 		})
@@ -391,16 +401,18 @@ func (h *Handler) Available(c *fiber.Ctx) error {
 	var data []fiber.Map
 	for rows.Next() {
 		var (
-			stockID         string
-			pid, pname      string
-			vid, vname, sku string
-			wid, wname      string
-			qty             decimal.Decimal
+			stockID     string
+			pid, pname  string
+			vid         string
+			variantCode int
+			vname, sku  string
+			wid, wname  string
+			qty         decimal.Decimal
 		)
 		if err := rows.Scan(
 			&stockID,
 			&pid, &pname,
-			&vid, &vname, &sku,
+			&vid, &variantCode, &vname, &sku,
 			&wid, &wname,
 			&qty,
 		); err != nil {
@@ -409,7 +421,7 @@ func (h *Handler) Available(c *fiber.Ctx) error {
 		data = append(data, fiber.Map{
 			"id":        stockID,
 			"product":   fiber.Map{"id": pid, "name": pname},
-			"variant":   fiber.Map{"id": vid, "name": vname, "sku": sku},
+			"variant":   fiber.Map{"id": vid, "variant_code": variantCode, "name": vname, "sku": sku},
 			"warehouse": fiber.Map{"id": wid, "name": wname},
 			"quantity":  qty,
 		})
@@ -448,16 +460,18 @@ func (h *Handler) AvailableNew(c *fiber.Ctx) error {
 	var data []fiber.Map
 	for rows.Next() {
 		var (
-			stockID         string
-			pid, pname      string
-			vid, vname, sku string
-			wid, wname      string
-			qty             decimal.Decimal
+			stockID     string
+			pid, pname  string
+			vid         string
+			variantCode int
+			vname, sku  string
+			wid, wname  string
+			qty         decimal.Decimal
 		)
 		if err := rows.Scan(
 			&stockID,
 			&pid, &pname,
-			&vid, &vname, &sku,
+			&vid, &variantCode, &vname, &sku,
 			&wid, &wname,
 			&qty,
 		); err != nil {
@@ -466,7 +480,7 @@ func (h *Handler) AvailableNew(c *fiber.Ctx) error {
 		data = append(data, fiber.Map{
 			"id":        stockID,
 			"product":   fiber.Map{"id": pid, "name": pname},
-			"variant":   fiber.Map{"id": vid, "name": vname, "sku": sku},
+			"variant":   fiber.Map{"id": vid, "variant_code": variantCode, "name": vname, "sku": sku},
 			"warehouse": fiber.Map{"id": wid, "name": wname},
 			"quantity":  qty,
 		})
@@ -494,17 +508,19 @@ func (h *Handler) ByProduct(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var id, name, sku string
+		var variantCode int
 		var qty decimal.Decimal
 
-		if err := rows.Scan(&id, &name, &sku, &qty); err != nil {
+		if err := rows.Scan(&id, &variantCode, &name, &sku, &qty); err != nil {
 			return httperr.Internal(c)
 		}
 
 		out = append(out, fiber.Map{
-			"id":        id,
-			"name":      name,
-			"sku":       sku,
-			"total_qty": qty,
+			"id":           id,
+			"variant_code": variantCode,
+			"name":         name,
+			"sku":          sku,
+			"total_qty":    qty,
 		})
 	}
 
@@ -569,6 +585,7 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 		var (
 			id                                     string
 			varID, varName                         string
+			variantCode                            int
 			pid, pname                             string
 			movement                               string
 			qty                                    decimal.Decimal
@@ -579,7 +596,7 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 
 		if err := rows.Scan(
 			&id,
-			&varID, &varName,
+			&varID, &variantCode, &varName,
 			&pid, &pname,
 			&movement,
 			&qty,
@@ -594,6 +611,7 @@ func (h *Handler) Movements(c *fiber.Ctx) error {
 		out = append(out, fiber.Map{
 			"id":                  id,
 			"variant_id":          varID,
+			"variant_code":        variantCode,
 			"variant_name":        varName,
 			"product_id":          pid,
 			"product_name":        pname,
@@ -624,6 +642,7 @@ func (h *Handler) MovementByID(c *fiber.Ctx) error {
 	var (
 		movID                    string
 		vid, vname, vsku         string
+		variantCode              int
 		pid, pname               string
 		movType                  string
 		qty                      decimal.Decimal
@@ -637,7 +656,7 @@ func (h *Handler) MovementByID(c *fiber.Ctx) error {
 
 	err := h.store.GetMovementByID(id).Scan(
 		&movID,
-		&vid, &vname, &vsku,
+		&vid, &variantCode, &vname, &vsku,
 		&pid, &pname,
 		&movType,
 		&qty,
@@ -657,7 +676,7 @@ func (h *Handler) MovementByID(c *fiber.Ctx) error {
 
 	result := fiber.Map{
 		"id":       movID,
-		"variant":  fiber.Map{"id": vid, "name": vname, "sku": vsku},
+		"variant":  fiber.Map{"id": vid, "variant_code": variantCode, "name": vname, "sku": vsku},
 		"product":  fiber.Map{"id": pid, "name": pname},
 		"type":     movType,
 		"quantity": qty,
@@ -732,6 +751,7 @@ func (h *Handler) movementsByBranchID(c *fiber.Ctx, branchID string) error {
 		var (
 			id                                     string
 			varID, varName                         string
+			variantCode                            int
 			pid, pname                             string
 			movement                               string
 			qty                                    decimal.Decimal
@@ -742,7 +762,7 @@ func (h *Handler) movementsByBranchID(c *fiber.Ctx, branchID string) error {
 
 		if err := rows.Scan(
 			&id,
-			&varID, &varName,
+			&varID, &variantCode, &varName,
 			&pid, &pname,
 			&movement,
 			&qty,
@@ -756,6 +776,7 @@ func (h *Handler) movementsByBranchID(c *fiber.Ctx, branchID string) error {
 		out = append(out, fiber.Map{
 			"id":                  id,
 			"variant_id":          varID,
+			"variant_code":        variantCode,
 			"variant_name":        varName,
 			"product_id":          pid,
 			"product_name":        pname,

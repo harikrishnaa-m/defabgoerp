@@ -104,7 +104,7 @@ func (s *Store) Adjust(stockID string, newQty decimal.Decimal, reason, userID st
 func (s *Store) GetByID(id string) (*sql.Row, error) {
 	return s.db.QueryRow(`
 		SELECT
-			s.id, s.variant_id, v.name AS variant_name, v.sku,
+			s.id, s.variant_id, v.variant_code, v.name AS variant_name, v.sku,
 			p.id AS product_id, p.name AS product_name,
 			s.warehouse_id, w.name AS warehouse_name,
 			s.quantity, s.stock_type, s.updated_at
@@ -136,6 +136,7 @@ func (s *Store) ListByBranch(branchID string, limit, offset int) (*sql.Rows, err
 			p.id,
 			p.name AS product_name,
 			v.id AS variant_id,
+			v.variant_code,
 			v.name AS variant_name,
 			w.id AS warehouse_id,
 			w.name AS warehouse_name,
@@ -155,6 +156,7 @@ func (s *Store) ListByWarehouse(warehouseID string, limit, offset int) (*sql.Row
 	return s.db.Query(`
 	SELECT
 		v.id,
+		v.variant_code,
 		p.name AS product_name,
 		v.name AS variant_name,
 		w.name AS warehouse_name,
@@ -188,6 +190,7 @@ func (s *Store) LowStock(threshold int) (*sql.Rows, error) {
 	SELECT
 		p.name AS product,
 		v.name AS variant,
+		v.variant_code,
 		w.name AS warehouse,
 		s.quantity
 	FROM stocks s
@@ -204,6 +207,7 @@ func (s *Store) LowStockByBranch(threshold int, branchID string) (*sql.Rows, err
 	SELECT
 		p.name AS product,
 		v.name AS variant,
+		v.variant_code,
 		w.name AS warehouse,
 		s.quantity
 	FROM stocks s
@@ -220,7 +224,7 @@ func (s *Store) GetAll(limit, offset int) (*sql.Rows, error) {
 		SELECT
 			s.id,
 			p.id, p.name,
-			v.id, v.name, v.sku,
+			v.id, v.variant_code, v.name, v.sku,
 			w.id, w.name,
 			s.quantity
 		FROM stocks s
@@ -237,7 +241,7 @@ func (s *Store) GetAllByBranch(branchID string, limit, offset int) (*sql.Rows, e
 		SELECT
 			s.id,
 			p.id, p.name,
-			v.id, v.name, v.sku,
+			v.id, v.variant_code, v.name, v.sku,
 			w.id, w.name,
 			s.quantity
 		FROM stocks s
@@ -266,7 +270,7 @@ func (s *Store) GetAvailable(branchID string, limit, offset int) (*sql.Rows, err
 		SELECT
 			s.id,
 			p.id, p.name,
-			v.id, v.name, v.sku,
+			v.id, v.variant_code, v.name, v.sku,
 			w.id, w.name,
 			s.quantity
 		FROM stocks s
@@ -297,7 +301,7 @@ func (s *Store) GetAvailableNew(branchID string, limit, offset int) (*sql.Rows, 
 		SELECT
 			s.id,
 			p.id, p.name,
-			v.id, v.name, v.sku,
+			v.id, v.variant_code, v.name, v.sku,
 			w.id, w.name,
 			s.quantity
 		FROM stocks s
@@ -335,12 +339,12 @@ func (s *Store) CountAvailableNew(branchID string) (int, error) {
 func (s *Store) GetByProduct(productID string) (*sql.Rows, error) {
 	return s.db.Query(`
 		SELECT
-			v.id, v.name, v.sku,
+			v.id, v.variant_code, v.name, v.sku,
 			SUM(s.quantity) AS total_qty
 		FROM stocks s
 		JOIN variants v ON v.id = s.variant_id
 		WHERE v.product_id = $1
-		GROUP BY v.id, v.name, v.sku
+		GROUP BY v.id, v.variant_code, v.name, v.sku
 		ORDER BY v.name
 	`, productID)
 }
@@ -350,7 +354,7 @@ func (s *Store) GetMovements(variantID, warehouseID, movementType, fromDate, toD
 	return s.db.Query(`
 		SELECT
 			sm.id,
-			v.id AS variant_id, v.name AS variant_name,
+			v.id AS variant_id, v.variant_code, v.name AS variant_name,
 			p.id AS product_id, p.name AS product_name,
 			sm.movement_type,
 			sm.quantity,
@@ -403,7 +407,7 @@ func (s *Store) GetMovementByID(id string) *sql.Row {
 	return s.db.QueryRow(`
 		SELECT
 			sm.id,
-			v.id, v.name, v.sku,
+			v.id, v.variant_code, v.name, v.sku,
 			p.id, p.name,
 			sm.movement_type,
 			sm.quantity,
@@ -431,7 +435,7 @@ func (s *Store) GetMovementsByBranch(branchID string, movementType, fromDate, to
 	return s.db.Query(`
 		SELECT
 			sm.id,
-			v.id, v.name,
+			v.id, v.variant_code, v.name,
 			p.id, p.name,
 			sm.movement_type,
 			sm.quantity,

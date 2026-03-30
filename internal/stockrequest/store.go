@@ -128,7 +128,7 @@ func (s *Store) GetByID(id string) (fiber.Map, error) {
 	itemRows, err := s.db.Query(`
 		SELECT
 			sri.id,
-			sri.variant_id, v.name AS variant_name, v.sku,
+			sri.variant_id, v.variant_code, v.name AS variant_name, v.sku,
 			p.id AS product_id, p.name AS product_name,
 			sri.requested_qty, sri.approved_qty,
 			COALESCE(sri.remarks, '') AS remarks
@@ -145,13 +145,15 @@ func (s *Store) GetByID(id string) (fiber.Map, error) {
 	var items []fiber.Map
 	for itemRows.Next() {
 		var itemID, varID, varName, sku, prodID, prodName, remarks string
+		var variantCode int
 		var reqQty, appQty float64
-		if err := itemRows.Scan(&itemID, &varID, &varName, &sku, &prodID, &prodName, &reqQty, &appQty, &remarks); err != nil {
+		if err := itemRows.Scan(&itemID, &varID, &variantCode, &varName, &sku, &prodID, &prodName, &reqQty, &appQty, &remarks); err != nil {
 			return nil, err
 		}
 		items = append(items, fiber.Map{
 			"id":            itemID,
 			"variant_id":    varID,
+			"variant_code":  variantCode,
 			"variant_name":  varName,
 			"sku":           sku,
 			"product_id":    prodID,
