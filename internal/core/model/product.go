@@ -57,9 +57,10 @@ type ProductImage struct {
 // ================== VARIANT ==================
 
 type Variant struct {
-	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	ProductID uuid.UUID `gorm:"type:uuid;not null;index" json:"product_id"`
-	Product   Product   `gorm:"foreignKey:ProductID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	ID          uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	ProductID   uuid.UUID `gorm:"type:uuid;not null;index" json:"product_id"`
+	Product     Product   `gorm:"foreignKey:ProductID;references:ID;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT"`
+	VariantCode int       `gorm:"uniqueIndex;not null" json:"variant_code"`
 
 	Name string `gorm:"size:150;not null" json:"name"`
 	SKU  string `gorm:"size:100;not null;uniqueIndex" json:"sku"`

@@ -392,3 +392,7 @@ CREATE TABLE supplier_payments (
     paid_at TIMESTAMPTZ DEFAULT NOW(),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Run this on your existing database:
+CREATE SEQUENCE IF NOT EXISTS variant_code_seq START 1001;
+ALTER TABLE variants ADD COLUMN variant_code INTEGER UNIQUE DEFAULT nextval('variant_code_seq');
