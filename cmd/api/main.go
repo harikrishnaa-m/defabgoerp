@@ -39,6 +39,7 @@ import (
 	"defab-erp/internal/billing"
 	"defab-erp/internal/coupon"
 	"defab-erp/internal/customer"
+	"defab-erp/internal/dashboard"
 	"defab-erp/internal/goodsreceipt"
 	"defab-erp/internal/purchase"
 	"defab-erp/internal/purchaseinvoice"
@@ -151,6 +152,9 @@ func main() {
 	accountingStore := accounting.NewStore(database)
 	accountingRecorder := accounting.NewRecorder(database, accountingStore)
 	accountingHandler := accounting.NewHandler(accountingStore, accountingRecorder)
+
+	dashboardStore := dashboard.NewStore(database)
+	dashboardHandler := dashboard.NewHandler(dashboardStore)
 
 	// Wire auto-recording into billing & purchase handlers
 	billingHandler.SetRecorder(accountingRecorder)
@@ -455,6 +459,17 @@ func main() {
 			),
 		),
 		accountingHandler,
+	)
+
+	dashboard.RegisterRoutes(
+		protected.Group("/dashboard",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleAccountsManager,
+				model.RoleStoreManager,
+			),
+		),
+		dashboardHandler,
 	)
 
 	protected.Get("/me", func(c *fiber.Ctx) error {
