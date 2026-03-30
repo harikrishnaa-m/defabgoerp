@@ -19,10 +19,10 @@ func NewStore(db *sql.DB) *Store {
 // ================= CREATE =================
 //
 
-func (s *Store) Create(in CreateVariantInput) (string, string, error) {
+func (s *Store) Create(in CreateVariantInput) (string, string, int, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return "", "", err
+		return "", "", 0, err
 	}
 	defer tx.Rollback()
 
@@ -30,7 +30,7 @@ func (s *Store) Create(in CreateVariantInput) (string, string, error) {
 	var brand, productName string
 	err = tx.QueryRow(`SELECT COALESCE(brand,''), name FROM products WHERE id = $1`, in.ProductID).Scan(&brand, &productName)
 	if err != nil {
-		return "", "", fmt.Errorf("product not found: %w", err)
+		return "", "", 0, fmt.Errorf("product not found: %w", err)
 	}
 
 	sku := strings.ToUpper(first3(brand) + " " + first3(productName))
@@ -50,7 +50,7 @@ func (s *Store) Create(in CreateVariantInput) (string, string, error) {
 	for i := 1; ; i++ {
 		err = tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM variants WHERE sku = $1)`, sku).Scan(&exists)
 		if err != nil {
-			return "", "", err
+			return "", "", 0, err
 		}
 		if !exists {
 			break
@@ -59,12 +59,13 @@ func (s *Store) Create(in CreateVariantInput) (string, string, error) {
 	}
 
 	var id string
+	var variantCode int
 
 	err = tx.QueryRow(`
 	INSERT INTO variants
 	(product_id,name,sku,price,cost_price,barcode)
 	VALUES ($1,$2,$3,$4,$5,$6)
-	RETURNING id
+	RETURNING id, variant_code
 	`,
 		in.ProductID,
 		in.Name,
@@ -72,10 +73,10 @@ func (s *Store) Create(in CreateVariantInput) (string, string, error) {
 		in.Price,
 		in.CostPrice,
 		sku,
-	).Scan(&id)
+	).Scan(&id, &variantCode)
 
 	if err != nil {
-		return "", "", err
+		return "", "", 0, err
 	}
 
 	for _, avid := range in.AttributeValueIDs {
@@ -85,7 +86,7 @@ func (s *Store) Create(in CreateVariantInput) (string, string, error) {
 			VALUES ($1,$2)
 		`, id, avid)
 		if err != nil {
-			return "", "", err
+			return "", "", 0, err
 		}
 	}
 
@@ -97,11 +98,14 @@ func (s *Store) Create(in CreateVariantInput) (string, string, error) {
 			VALUES ($1,$2)
 		`, id, imgPath)
 		if err != nil {
-			return "", "", err
+			return "", "", 0, err
 		}
 	}
 
-	return id, sku, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return "", "", 0, err
+	}
+	return id, sku, variantCode, nil
 }
 
 // first3 returns the first 3 letters of a string (uppercase, no spaces)
@@ -119,10 +123,10 @@ func first3(s string) string {
 
 func (s *Store) ListByProduct(pid string) (*sql.Rows, error) {
 	return s.db.Query(`
-	SELECT id,name,sku,price,cost_price,is_active
+	SELECT id,variant_code,name,sku,price,cost_price,is_active
 	FROM variants
 	WHERE product_id=$1
-	ORDER BY name
+	ORDER BY variant_code
 	`, pid)
 }
 
@@ -132,7 +136,7 @@ func (s *Store) ListByProduct(pid string) (*sql.Rows, error) {
 
 func (s *Store) Get(id string) (*sql.Row, error) {
 	return s.db.QueryRow(`
-	SELECT id,product_id,name,sku,price,cost_price,is_active
+	SELECT id,product_id,variant_code,name,sku,price,cost_price,is_active
 	FROM variants WHERE id=$1
 	`, id), nil
 }
@@ -281,7 +285,7 @@ func (s *Store) GenerateWithAttrOrder(productID string, basePrice float64, attrO
 		name := strings.Join(nameParts, " ")
 
 		fmt.Printf("GenerateWithAttrOrder: Creating variant: name=%s, combo=%v\n", name, combo)
-		id, sku, err := s.Create(CreateVariantInput{
+		id, sku, _, err := s.Create(CreateVariantInput{
 			ProductID:         productID,
 			Name:              name,
 			Price:             basePrice,
@@ -295,6 +299,24 @@ func (s *Store) GenerateWithAttrOrder(productID string, basePrice float64, attrO
 		}
 	}
 	return created, nil
+}
+
+//
+//
+// ================= BACKFILL VARIANT CODES =================
+//
+
+func (s *Store) BackfillVariantCodes() (int, error) {
+	res, err := s.db.Exec(`
+		UPDATE variants
+		SET variant_code = nextval('variant_code_seq')
+		WHERE variant_code IS NULL OR variant_code = 0
+	`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 //

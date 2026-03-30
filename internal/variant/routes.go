@@ -16,6 +16,8 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	r.Post("/:id/images", h.AddImages)
 	r.Get("/:id/images", h.ListImages)
 	r.Delete("/images/:imageId", h.DeleteImage)
+
+	r.Post("/backfill-codes", h.BackfillVariantCodes)
 }
 
 //tested

@@ -86,15 +86,16 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		ImagePaths:        imagePaths,
 	}
 
-	id, sku, err := h.store.Create(in)
+	id, sku, variantCode, err := h.store.Create(in)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	return c.Status(201).JSON(fiber.Map{
-		"message": "variant created",
-		"id":      id,
-		"sku":     sku,
+		"message":      "variant created",
+		"id":           id,
+		"sku":          sku,
+		"variant_code": variantCode,
 	})
 }
 
@@ -137,18 +138,20 @@ func (h *Handler) ListByProduct(c *fiber.Ctx) error {
 
 	for rows.Next() {
 		var id, name, sku string
+		var variantCode int
 		var price, cost float64
 		var active bool
 
-		rows.Scan(&id, &name, &sku, &price, &cost, &active)
+		rows.Scan(&id, &variantCode, &name, &sku, &price, &cost, &active)
 
 		out = append(out, fiber.Map{
-			"id":         id,
-			"name":       name,
-			"sku":        sku,
-			"price":      price,
-			"cost_price": cost,
-			"is_active":  active,
+			"id":           id,
+			"variant_code": variantCode,
+			"name":         name,
+			"sku":          sku,
+			"price":        price,
+			"cost_price":   cost,
+			"is_active":    active,
 		})
 	}
 
@@ -160,9 +163,10 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 
 	row, _ := h.store.Get(id)
 	var variantID, productID, name, sku string
+	var variantCode int
 	var price, costPrice float64
 	var isActive bool
-	if err := row.Scan(&variantID, &productID, &name, &sku, &price, &costPrice, &isActive); err != nil {
+	if err := row.Scan(&variantID, &productID, &variantCode, &name, &sku, &price, &costPrice, &isActive); err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "variant not found"})
 	}
 
@@ -186,15 +190,16 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"id":         variantID,
-		"product_id": productID,
-		"name":       name,
-		"sku":        sku,
-		"price":      price,
-		"cost_price": costPrice,
-		"is_active":  isActive,
-		"images":     images,
-		"attributes": attributes,
+		"id":           variantID,
+		"product_id":   productID,
+		"variant_code": variantCode,
+		"name":         name,
+		"sku":          sku,
+		"price":        price,
+		"cost_price":   costPrice,
+		"is_active":    isActive,
+		"images":       images,
+		"attributes":   attributes,
 	})
 }
 
@@ -286,4 +291,15 @@ func (h *Handler) toggle(c *fiber.Ctx, active bool) error {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"message": "status updated"})
+}
+
+func (h *Handler) BackfillVariantCodes(c *fiber.Ctx) error {
+	count, err := h.store.BackfillVariantCodes()
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"message": fmt.Sprintf("assigned variant_code to %d variants", count),
+		"count":   count,
+	})
 }

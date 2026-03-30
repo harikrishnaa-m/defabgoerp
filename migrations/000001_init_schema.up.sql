@@ -99,9 +99,12 @@ CREATE TABLE product_images (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE SEQUENCE variant_code_seq START 1001;
+
 CREATE TABLE variants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     product_id UUID REFERENCES products(id),
+    variant_code INTEGER UNIQUE NOT NULL DEFAULT nextval('variant_code_seq'),
     name VARCHAR(150) NOT NULL,
     sku VARCHAR(100) UNIQUE NOT NULL,
     price DECIMAL(10, 2) NOT NULL,
