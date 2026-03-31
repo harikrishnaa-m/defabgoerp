@@ -50,6 +50,12 @@ import (
 	"defab-erp/internal/stock"
 	"defab-erp/internal/stockrequest"
 	"defab-erp/internal/supplier"
+
+	ecomCart "defab-erp/internal/ecom/cart"
+	ecomCustomer "defab-erp/internal/ecom/customer"
+	ecomMw "defab-erp/internal/ecom/middleware"
+	ecomOrder "defab-erp/internal/ecom/order"
+	ecomProduct "defab-erp/internal/ecom/product"
 )
 
 func main() {
@@ -155,6 +161,19 @@ func main() {
 
 	dashboardStore := dashboard.NewStore(database)
 	dashboardHandler := dashboard.NewHandler(dashboardStore)
+
+	// ── Ecom stores & handlers ──
+	ecomCustomerStore := ecomCustomer.NewStore(database)
+	ecomCustomerHandler := ecomCustomer.NewHandler(ecomCustomerStore)
+
+	ecomProductStore := ecomProduct.NewStore(database)
+	ecomProductHandler := ecomProduct.NewHandler(ecomProductStore)
+
+	ecomCartStore := ecomCart.NewStore(database)
+	ecomCartHandler := ecomCart.NewHandler(ecomCartStore)
+
+	ecomOrderStore := ecomOrder.NewStore(database)
+	ecomOrderHandler := ecomOrder.NewHandler(ecomOrderStore)
 
 	// Wire auto-recording into billing & purchase handlers
 	billingHandler.SetRecorder(accountingRecorder)
@@ -482,6 +501,32 @@ func main() {
 		func(c *fiber.Ctx) error {
 			return c.SendString("Hello SuperAdmin")
 		},
+	)
+
+	// ═══════════════════════════════════════════
+	// E-COMMERCE ROUTES
+	// ═══════════════════════════════════════════
+	ecom := api.Group("/ecom")
+
+	// Public: auth + product catalog
+	ecomCustomer.RegisterPublicRoutes(ecom.Group("/auth"), ecomCustomerHandler)
+	ecomProduct.RegisterRoutes(ecom.Group("/products"), ecomProductHandler)
+
+	// Protected: customer-authenticated routes
+	ecomProtected := ecom.Group("", ecomMw.EcomJWTProtected(database))
+	ecomCustomer.RegisterProtectedRoutes(ecomProtected, ecomCustomerHandler)
+	ecomCart.RegisterRoutes(ecomProtected.Group("/cart"), ecomCartHandler)
+	ecomOrder.RegisterCustomerRoutes(ecomProtected.Group("/orders"), ecomOrderHandler)
+
+	// Admin: ERP staff managing ecom orders
+	ecomOrder.RegisterAdminRoutes(
+		protected.Group("/ecom-orders",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+			),
+		),
+		ecomOrderHandler,
 	)
 
 	// Start server
