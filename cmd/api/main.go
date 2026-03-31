@@ -202,6 +202,13 @@ func main() {
 
 	auth.RegisterRoutes(api, authHandler)
 
+	// ═══════════════════════════════════════════
+	// E-COMMERCE PUBLIC ROUTES (before protected group)
+	// ═══════════════════════════════════════════
+	ecom := api.Group("/ecom")
+	ecomCustomer.RegisterPublicRoutes(ecom.Group("/auth"), ecomCustomerHandler)
+	ecomProduct.RegisterRoutes(ecom.Group("/products"), ecomProductHandler)
+
 	// Quick test route for products
 	api.Get("/products/test", func(c *fiber.Ctx) error {
 		// Just to prove store works
@@ -504,13 +511,8 @@ func main() {
 	)
 
 	// ═══════════════════════════════════════════
-	// E-COMMERCE ROUTES
+	// E-COMMERCE PROTECTED ROUTES
 	// ═══════════════════════════════════════════
-	ecom := api.Group("/ecom")
-
-	// Public: auth + product catalog
-	ecomCustomer.RegisterPublicRoutes(ecom.Group("/auth"), ecomCustomerHandler)
-	ecomProduct.RegisterRoutes(ecom.Group("/products"), ecomProductHandler)
 
 	// Protected: customer-authenticated routes
 	ecomProtected := ecom.Group("", ecomMw.EcomJWTProtected(database))
