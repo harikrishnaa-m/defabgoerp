@@ -209,6 +209,12 @@ func main() {
 	ecomCustomer.RegisterPublicRoutes(ecom.Group("/auth"), ecomCustomerHandler)
 	ecomProduct.RegisterRoutes(ecom.Group("/products"), ecomProductHandler)
 
+	// E-COMMERCE PROTECTED ROUTES (before ERP protected group)
+	ecomProtected := ecom.Group("", ecomMw.EcomJWTProtected(database))
+	ecomCustomer.RegisterProtectedRoutes(ecomProtected, ecomCustomerHandler)
+	ecomCart.RegisterRoutes(ecomProtected.Group("/cart"), ecomCartHandler)
+	ecomOrder.RegisterCustomerRoutes(ecomProtected.Group("/orders"), ecomOrderHandler)
+
 	// Quick test route for products
 	api.Get("/products/test", func(c *fiber.Ctx) error {
 		// Just to prove store works
@@ -511,14 +517,8 @@ func main() {
 	)
 
 	// ═══════════════════════════════════════════
-	// E-COMMERCE PROTECTED ROUTES
+	// E-COMMERCE ADMIN ROUTES (ERP staff managing ecom orders)
 	// ═══════════════════════════════════════════
-
-	// Protected: customer-authenticated routes
-	ecomProtected := ecom.Group("", ecomMw.EcomJWTProtected(database))
-	ecomCustomer.RegisterProtectedRoutes(ecomProtected, ecomCustomerHandler)
-	ecomCart.RegisterRoutes(ecomProtected.Group("/cart"), ecomCartHandler)
-	ecomOrder.RegisterCustomerRoutes(ecomProtected.Group("/orders"), ecomOrderHandler)
 
 	// Admin: ERP staff managing ecom orders
 	ecomOrder.RegisterAdminRoutes(

@@ -23,6 +23,20 @@ type UpdateProfileInput struct {
 	Phone string `json:"phone"`
 }
 
+type ForgotPasswordInput struct {
+	Email string `json:"email"`
+}
+
+type ResetPasswordInput struct {
+	Token       string `json:"token"`
+	NewPassword string `json:"new_password"`
+}
+
+type ChangePasswordInput struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
 type AddressInput struct {
 	Label        string `json:"label"`
 	FullName     string `json:"full_name"`

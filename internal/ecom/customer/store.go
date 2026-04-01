@@ -69,6 +69,53 @@ func (s *Store) LinkGoogleID(customerID, googleID string) error {
 	return err
 }
 
+// SetResetToken stores a password reset token with 1-hour expiry.
+func (s *Store) SetResetToken(email, token string) error {
+	result, err := s.db.Exec(`
+		UPDATE ecom_customers SET reset_token = $2, reset_token_expiry = NOW() + INTERVAL '1 hour', updated_at = NOW()
+		WHERE email = $1 AND is_active = true
+	`, email, token)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// GetByResetToken finds a customer by a valid (non-expired) reset token.
+func (s *Store) GetByResetToken(token string) (id string, err error) {
+	err = s.db.QueryRow(`
+		SELECT id FROM ecom_customers
+		WHERE reset_token = $1 AND reset_token_expiry > NOW() AND is_active = true
+	`, token).Scan(&id)
+	return
+}
+
+// UpdatePassword sets a new password hash and clears the reset token.
+func (s *Store) UpdatePassword(customerID, passwordHash string) error {
+	_, err := s.db.Exec(`
+		UPDATE ecom_customers SET password_hash = $2, reset_token = NULL, reset_token_expiry = NULL, updated_at = NOW()
+		WHERE id = $1
+	`, customerID, passwordHash)
+	return err
+}
+
+// GetPasswordHash returns the current password hash for a customer.
+func (s *Store) GetPasswordHash(customerID string) (string, error) {
+	var hash sql.NullString
+	err := s.db.QueryRow(`SELECT password_hash FROM ecom_customers WHERE id = $1`, customerID).Scan(&hash)
+	if err != nil {
+		return "", err
+	}
+	if !hash.Valid || hash.String == "" {
+		return "", nil
+	}
+	return hash.String, nil
+}
+
 func (s *Store) GetProfile(customerID string) (map[string]interface{}, error) {
 	var name, email string
 	var phone sql.NullString

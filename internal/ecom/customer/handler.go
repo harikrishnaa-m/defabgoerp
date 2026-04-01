@@ -1,7 +1,12 @@
 package customer
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
+	"fmt"
+	"log"
+	"net/smtp"
 	"os"
 	"strings"
 	"time"
@@ -211,6 +216,82 @@ func (h *Handler) GoogleSignIn(c *fiber.Ctx) error {
 	})
 }
 
+// POST /ecom/auth/forgot-password
+func (h *Handler) ForgotPassword(c *fiber.Ctx) error {
+	var in ForgotPasswordInput
+	if err := c.BodyParser(&in); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
+	in.Email = strings.TrimSpace(strings.ToLower(in.Email))
+	if in.Email == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "email is required"})
+	}
+
+	// Generate secure random token
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "internal error"})
+	}
+	token := base64.URLEncoding.EncodeToString(b)
+
+	if err := h.store.SetResetToken(in.Email, token); err != nil {
+		// Don't reveal whether email exists
+		return c.JSON(fiber.Map{"message": "if that email is registered, a reset link has been sent"})
+	}
+
+	if err := sendEcomResetEmail(in.Email, token); err != nil {
+		log.Println("[SMTP ERROR]", err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to send email"})
+	}
+
+	return c.JSON(fiber.Map{"message": "if that email is registered, a reset link has been sent"})
+}
+
+// POST /ecom/auth/reset-password
+func (h *Handler) ResetPassword(c *fiber.Ctx) error {
+	var in ResetPasswordInput
+	if err := c.BodyParser(&in); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
+	if in.Token == "" || in.NewPassword == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "token and new_password are required"})
+	}
+	if len(in.NewPassword) < 6 {
+		return c.Status(400).JSON(fiber.Map{"error": "password must be at least 6 characters"})
+	}
+
+	customerID, err := h.store.GetByResetToken(in.Token)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid or expired reset token"})
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), 12)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "internal error"})
+	}
+
+	if err := h.store.UpdatePassword(customerID, string(hash)); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "failed to update password"})
+	}
+
+	return c.JSON(fiber.Map{"message": "password reset successful"})
+}
+
+func sendEcomResetEmail(toEmail, token string) error {
+	from := os.Getenv("GMAIL_USER")
+	pass := os.Getenv("GMAIL_PASS")
+	frontendURL := os.Getenv("ECOM_RESET_URL_BASE")
+	if frontendURL == "" {
+		frontendURL = os.Getenv("FRONTEND_RESET_URL_BASE")
+	}
+	resetLink := frontendURL + token
+	msg := fmt.Sprintf("Subject: Password Reset Request\r\n\r\nClick the link below to reset your password:\r\n%s", resetLink)
+	smtpHost := "smtp.gmail.com"
+	smtpPort := "587"
+	auth := smtp.PlainAuth("", from, pass, smtpHost)
+	return smtp.SendMail(smtpHost+":"+smtpPort, auth, from, []string{toEmail}, []byte(msg))
+}
+
 // GET /ecom/profile
 func (h *Handler) GetProfile(c *fiber.Ctx) error {
 	cust := c.Locals("ecom_customer").(*ecomMw.EcomCustomer)
@@ -219,6 +300,45 @@ func (h *Handler) GetProfile(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "profile not found"})
 	}
 	return c.JSON(profile)
+}
+
+// POST /ecom/change-password
+func (h *Handler) ChangePassword(c *fiber.Ctx) error {
+	cust := c.Locals("ecom_customer").(*ecomMw.EcomCustomer)
+
+	var in ChangePasswordInput
+	if err := c.BodyParser(&in); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+	}
+	if in.OldPassword == "" || in.NewPassword == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "old_password and new_password are required"})
+	}
+	if len(in.NewPassword) < 6 {
+		return c.Status(400).JSON(fiber.Map{"error": "new password must be at least 6 characters"})
+	}
+
+	currentHash, err := h.store.GetPasswordHash(cust.ID)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "internal error"})
+	}
+	if currentHash == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "account uses Google sign-in, no password set"})
+	}
+
+	if bcrypt.CompareHashAndPassword([]byte(currentHash), []byte(in.OldPassword)) != nil {
+		return c.Status(401).JSON(fiber.Map{"error": "old password is incorrect"})
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), 12)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "internal error"})
+	}
+
+	if err := h.store.UpdatePassword(cust.ID, string(newHash)); err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "failed to update password"})
+	}
+
+	return c.JSON(fiber.Map{"message": "password changed successfully"})
 }
 
 // PATCH /ecom/profile
