@@ -125,3 +125,7 @@ CREATE TABLE sales_payments (
 );
 CREATE INDEX idx_sales_payments_sales_invoice_id ON sales_payments(sales_invoice_id);
 CREATE INDEX idx_sales_payments_payment_method ON sales_payments(payment_method);
+
+-- Add bill_discount to sales_orders and sales_invoices
+ALTER TABLE sales_orders ADD COLUMN bill_discount DECIMAL(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE sales_invoices ADD COLUMN bill_discount DECIMAL(12,2) NOT NULL DEFAULT 0;

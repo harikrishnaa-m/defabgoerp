@@ -56,6 +56,8 @@ import (
 	ecomMw "defab-erp/internal/ecom/middleware"
 	ecomOrder "defab-erp/internal/ecom/order"
 	ecomProduct "defab-erp/internal/ecom/product"
+
+	"defab-erp/internal/migration"
 )
 
 func main() {
@@ -74,9 +76,11 @@ func main() {
 		defer redisClient.Close()
 	}
 
+	log.Println("⏳ Initializing storage...")
 	if err := storage.InitSpaces(); err != nil {
-		log.Fatal("spaces init failed:", err)
+		log.Println("⚠ spaces init failed (continuing without cloud storage):", err)
 	}
+	log.Println("✅ Storage initialized")
 
 	// 2. Stores (Data Layer)
 	authStore := auth.NewStore(database)
@@ -175,14 +179,21 @@ func main() {
 	ecomOrderStore := ecomOrder.NewStore(database)
 	ecomOrderHandler := ecomOrder.NewHandler(ecomOrderStore)
 
+	migrationStore := migration.NewStore(database)
+	migrationHandler := migration.NewHandler(migrationStore)
+
 	// Wire auto-recording into billing & purchase handlers
 	billingHandler.SetRecorder(accountingRecorder)
 	purchaseInvoiceHandler.SetRecorder(accountingRecorder)
 
-	// Warm Redis cache with all variants
-	if err := billingStore.WarmCache(); err != nil {
-		log.Println("⚠ Cache warm-up failed:", err)
-	}
+	// Warm Redis cache with all variants (async — don't block server start)
+	go func() {
+		if err := billingStore.WarmCache(); err != nil {
+			log.Println("⚠ Cache warm-up failed:", err)
+		} else {
+			log.Println("✅ Redis variant cache warmed")
+		}
+	}()
 
 	// 4. Fiber
 	app := fiber.New(fiber.Config{
@@ -519,6 +530,13 @@ func main() {
 	// ═══════════════════════════════════════════
 	// E-COMMERCE ADMIN ROUTES (ERP staff managing ecom orders)
 	// ═══════════════════════════════════════════
+
+	migration.RegisterRoutes(
+		protected.Group("/migration",
+			middleware.RequireRole(model.RoleSuperAdmin),
+		),
+		migrationHandler,
+	)
 
 	// Admin: ERP staff managing ecom orders
 	ecomOrder.RegisterAdminRoutes(
