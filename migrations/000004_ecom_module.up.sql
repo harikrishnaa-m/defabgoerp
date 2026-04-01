@@ -103,3 +103,13 @@ CREATE INDEX idx_ecom_order_items_order ON ecom_order_items(order_id);
 
 -- Sequence for order numbers: ECOM-00001, ECOM-00002 ...
 CREATE SEQUENCE ecom_order_seq START 1;
+
+-- Add Google OAuth support to ecom_customers
+ALTER TABLE ecom_customers
+    ADD COLUMN google_id VARCHAR(255) UNIQUE,
+    ALTER COLUMN password_hash DROP NOT NULL;
+
+-- Add password reset support to ecom_customers
+ALTER TABLE ecom_customers
+    ADD COLUMN reset_token VARCHAR(255),
+    ADD COLUMN reset_token_expiry TIMESTAMPTZ;

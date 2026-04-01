@@ -24,19 +24,28 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	priceStr := c.FormValue("price")
 	costPriceStr := c.FormValue("cost_price")
 
-	price, err := strconv.ParseFloat(priceStr, 64)
-	if err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid price"})
-	}
+	price, _ := strconv.ParseFloat(priceStr, 64)
+	costPrice, _ := strconv.ParseFloat(costPriceStr, 64)
 
-	costPrice, err := strconv.ParseFloat(costPriceStr, 64)
-	if err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid cost price"})
-	}
-
-	form, err := c.MultipartForm()
-	if err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid form"})
+	form, _ := c.MultipartForm()
+	if form == nil {
+		// no multipart form — continue with empty collections
+		in := CreateVariantInput{
+			ProductID: productID,
+			Name:      name,
+			Price:     price,
+			CostPrice: costPrice,
+		}
+		id, sku, variantCode, err := h.store.Create(in)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.Status(201).JSON(fiber.Map{
+			"message":      "variant created",
+			"id":           id,
+			"sku":          sku,
+			"variant_code": variantCode,
+		})
 	}
 
 	attrIDs := form.Value["attribute_value_ids[]"]

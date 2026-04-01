@@ -80,28 +80,21 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	occasion := c.FormValue("occasion")
 	careInstructions := c.FormValue("care_instructions")
 
-	if name == "" || categoryID == "" {
-		return c.Status(400).SendString("name & category required")
-	}
-
-	// ✅ MAIN IMAGE REQUIRED
+	// MAIN IMAGE (optional)
+	var mainURL string
 	mainFile, err := c.FormFile("main_image")
-	if err != nil {
-		return c.Status(400).SendString("main_image is required")
-	}
-
-	data, filename, err := storage.ProcessImage(mainFile)
-	if err != nil {
-		return c.Status(400).SendString(err.Error())
-	}
-
-	mainURL, err := storage.UploadFile(
-		"products/"+filename,
-		data,
-		mainFile.Header.Get("Content-Type"),
-	)
-	if err != nil {
-		return c.Status(500).SendString(err.Error())
+	if err == nil {
+		data, filename, pErr := storage.ProcessImage(mainFile)
+		if pErr == nil {
+			url, uErr := storage.UploadFile(
+				"products/"+filename,
+				data,
+				mainFile.Header.Get("Content-Type"),
+			)
+			if uErr == nil {
+				mainURL = url
+			}
+		}
 	}
 
 	in := CreateProductInput{

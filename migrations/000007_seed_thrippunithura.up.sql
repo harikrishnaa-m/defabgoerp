@@ -46,7 +46,7 @@ INSERT INTO warehouses (id, branch_id, name, type, warehouse_code)
 VALUES (
     'd1000000-0000-0000-0000-000000000001',
     'c1000000-0000-0000-0000-000000000001',
-    'DEFSB Thrippunithura',
+    'DEFAB Thrippunithura',
     'STORE',
     'WH002'
 );
