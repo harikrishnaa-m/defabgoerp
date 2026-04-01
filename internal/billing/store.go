@@ -985,15 +985,7 @@ func (s *Store) SearchVariants(query string, warehouseID string, limit int) ([]m
 		limit = 10
 	}
 
-	// Try Redis first
-	if s.rdb != nil {
-		results, err := s.searchFromRedis(query, warehouseID, limit)
-		if err == nil && len(results) > 0 {
-			return results, nil
-		}
-	}
-
-	// Fallback to DB
+	// Always use DB — it's fast with proper query and avoids scanning all Redis keys
 	return s.searchFromDB(query, warehouseID, limit)
 }
 
@@ -1072,18 +1064,46 @@ func (s *Store) searchFromRedis(query, warehouseID string, limit int) ([]map[str
 }
 
 func (s *Store) searchFromDB(query, warehouseID string, limit int) ([]map[string]interface{}, error) {
-	pattern := "%" + query + "%"
-	rows, err := s.db.Query(`
-		SELECT v.id, v.variant_code, v.sku, COALESCE(v.barcode, ''), v.name, p.name,
-		       v.price, COALESCE(v.cost_price, 0),
-		       COALESCE(st.quantity, 0)
-		FROM variants v
-		JOIN products p ON p.id = v.product_id
-		LEFT JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
-		WHERE v.is_active = true
-		  AND (v.sku ILIKE $2 OR v.barcode ILIKE $2 OR p.name ILIKE $2 OR v.name ILIKE $2 OR v.variant_code::text LIKE $2)
-		LIMIT $3
-	`, warehouseID, pattern, limit)
+	// Check if query is a pure number (variant code search)
+	isNumeric := true
+	for _, c := range query {
+		if c < '0' || c > '9' {
+			isNumeric = false
+			break
+		}
+	}
+
+	var rows *sql.Rows
+	var err error
+
+	if isNumeric {
+		// Exact match on variant_code for numeric queries
+		code, _ := strconv.Atoi(query)
+		rows, err = s.db.Query(`
+			SELECT v.id, v.variant_code, v.sku, COALESCE(v.barcode, ''), v.name, p.name,
+			       v.price, COALESCE(v.cost_price, 0),
+			       COALESCE(st.quantity, 0)
+			FROM variants v
+			JOIN products p ON p.id = v.product_id
+			LEFT JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
+			WHERE v.is_active = true AND v.variant_code = $2
+			LIMIT $3
+		`, warehouseID, code, limit)
+	} else {
+		// Text search on SKU, barcode, product name, variant name
+		pattern := "%" + query + "%"
+		rows, err = s.db.Query(`
+			SELECT v.id, v.variant_code, v.sku, COALESCE(v.barcode, ''), v.name, p.name,
+			       v.price, COALESCE(v.cost_price, 0),
+			       COALESCE(st.quantity, 0)
+			FROM variants v
+			JOIN products p ON p.id = v.product_id
+			LEFT JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
+			WHERE v.is_active = true
+			  AND (v.sku ILIKE $2 OR v.barcode ILIKE $2 OR p.name ILIKE $2 OR v.name ILIKE $2)
+			LIMIT $3
+		`, warehouseID, pattern, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
