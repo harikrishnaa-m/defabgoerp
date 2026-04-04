@@ -2,7 +2,7 @@ package billing
 
 type BillItemInput struct {
 	VariantID    string  `json:"variant_id"`
-	ItemType     string  `json:"item_type"` // "PRODUCT" or "MATERIAL" (defaults to "PRODUCT")
+	ItemType     string  `json:"type"` // "PRODUCT" or "MATERIAL" (defaults to "PRODUCT")
 	Quantity     float64 `json:"quantity"`
 	UnitPrice    float64 `json:"unit_price"`
 	Discount     float64 `json:"discount"`      // discount value (flat amount or percentage based on discount_type)
