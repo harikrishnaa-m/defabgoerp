@@ -37,7 +37,8 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	}
 	defer tx.Rollback()
 
-	now := time.Now()
+	ist, _ := time.LoadLocation("Asia/Kolkata")
+	now := time.Now().In(ist)
 
 	// ──────────────────────────────────────────
 	// 1. Find or create customer
@@ -100,7 +101,24 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			in.Items[i].UnitPrice = price
 			item.UnitPrice = price
 		}
-		lineTotal := float64(item.Quantity) * item.UnitPrice
+		lineTotal := item.Quantity * item.UnitPrice
+
+		// Auto-resolve TaxPercent based on item type:
+		// PRODUCT: threshold on unit price (per-item cost)
+		// MATERIAL: threshold on line total (quantity × unit price)
+		if item.ItemType == "MATERIAL" {
+			if lineTotal > 2500 {
+				in.Items[i].TaxPercent = 18
+			} else {
+				in.Items[i].TaxPercent = 5
+			}
+		} else { // PRODUCT or empty
+			if item.UnitPrice > 2500 {
+				in.Items[i].TaxPercent = 18
+			} else {
+				in.Items[i].TaxPercent = 5
+			}
+		}
 
 		// Resolve item discount: percent → flat
 		itemDisc := item.Discount
@@ -130,7 +148,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 
 	// Proportionally distribute tax across items based on taxable amount
 	for _, item := range in.Items {
-		lineTotal := float64(item.Quantity) * item.UnitPrice
+		lineTotal := item.Quantity * item.UnitPrice
 		// Proportional share of bill discount for this item
 		var itemBillDiscount float64
 		if subtotal > 0 {
@@ -190,7 +208,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	// ──────────────────────────────────────────
 	type itemCalc struct {
 		variantID  string
-		quantity   int
+		quantity   float64
 		unitPrice  float64
 		discount   float64
 		taxPercent float64
@@ -200,7 +218,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	var itemCalcs []itemCalc
 
 	for _, item := range in.Items {
-		lineTotal := float64(item.Quantity) * item.UnitPrice
+		lineTotal := item.Quantity * item.UnitPrice
 		var itemBillDisc float64
 		if subtotal > 0 {
 			itemBillDisc = billDiscount * lineTotal / subtotal
@@ -734,7 +752,8 @@ func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interfa
 	}
 
 	// Insert payment record
-	now := time.Now()
+	ist, _ := time.LoadLocation("Asia/Kolkata")
+	now := time.Now().In(ist)
 	_, err = tx.Exec(`
 		INSERT INTO sales_payments
 			(sales_invoice_id, amount, payment_method, reference, paid_at)

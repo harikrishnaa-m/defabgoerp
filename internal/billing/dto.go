@@ -2,11 +2,12 @@ package billing
 
 type BillItemInput struct {
 	VariantID    string  `json:"variant_id"`
-	Quantity     int     `json:"quantity"`
+	ItemType     string  `json:"item_type"` // "PRODUCT" or "MATERIAL" (defaults to "PRODUCT")
+	Quantity     float64 `json:"quantity"`
 	UnitPrice    float64 `json:"unit_price"`
 	Discount     float64 `json:"discount"`      // discount value (flat amount or percentage based on discount_type)
 	DiscountType string  `json:"discount_type"` // "flat" or "percent" (defaults to "flat")
-	TaxPercent   float64 `json:"tax_percent"`
+	TaxPercent   float64 `json:"tax_percent"`   // auto-calculated; caller value is ignored
 }
 
 type PaymentInput struct {
