@@ -136,7 +136,7 @@ func (s *Store) ListByProduct(pid string) (*sql.Rows, error) {
 
 func (s *Store) Get(id string) (*sql.Row, error) {
 	return s.db.QueryRow(`
-	SELECT id,product_id,variant_code,name,sku,price,cost_price,is_active
+	SELECT id,product_id,variant_code,name,sku,COALESCE(barcode,''),price,cost_price,is_active
 	FROM variants WHERE id=$1
 	`, id), nil
 }
@@ -317,6 +317,59 @@ func (s *Store) BackfillVariantCodes() (int, error) {
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+//
+// ================= SEARCH =================
+//
+
+func (s *Store) Search(query string) ([]map[string]interface{}, error) {
+	q := "%" + strings.ToLower(query) + "%"
+
+	rows, err := s.db.Query(`
+		SELECT v.id, v.variant_code, v.name, v.sku, COALESCE(v.barcode, ''),
+		       v.price, v.cost_price,
+		       v.is_active, p.id AS product_id, p.name AS product_name
+		FROM variants v
+		JOIN products p ON p.id = v.product_id
+		WHERE v.is_active = true
+		  AND (
+		      LOWER(v.sku) LIKE $1
+		   OR LOWER(v.name) LIKE $1
+		   OR LOWER(p.name) LIKE $1
+		   OR CAST(v.variant_code AS TEXT) LIKE $1
+		  )
+		ORDER BY v.variant_code
+		LIMIT 50
+	`, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []map[string]interface{}
+	for rows.Next() {
+		var id, name, sku, barcode, productID, productName string
+		var variantCode int
+		var price, costPrice float64
+		var isActive bool
+		if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode, &price, &costPrice, &isActive, &productID, &productName); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]interface{}{
+			"id":           id,
+			"variant_code": variantCode,
+			"name":         name,
+			"sku":          sku,
+			"barcode":      barcode,
+			"price":        price,
+			"cost_price":   costPrice,
+			"is_active":    isActive,
+			"product_id":   productID,
+			"product_name": productName,
+		})
+	}
+	return out, nil
 }
 
 //

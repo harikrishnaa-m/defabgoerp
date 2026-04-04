@@ -418,7 +418,11 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			"unit_price":   ic.unitPrice,
 			"discount":     ic.discount,
 			"tax_percent":  ic.taxPercent,
+			"cgst_percent": ic.taxPercent / 2,
+			"sgst_percent": ic.taxPercent / 2,
 			"tax_amount":   ic.taxAmount,
+			"cgst_amount":  ic.taxAmount / 2,
+			"sgst_amount":  ic.taxAmount / 2,
 			"total_price":  ic.totalPrice,
 		})
 	}
@@ -458,6 +462,9 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		"item_discount":  discountTotal,
 		"bill_discount":  billDiscount,
 		"total_discount": discountTotal + billDiscount,
+		"cgst":           taxTotal / 2,
+		"sgst":           taxTotal / 2,
+		"total_gst":      taxTotal,
 		"tax_total":      taxTotal,
 		"grand_total":    grandTotal,
 		"paid_amount":    totalPaid,
@@ -549,7 +556,11 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 			"unit_price":   uPrice,
 			"discount":     disc,
 			"tax_percent":  taxPct,
+			"cgst_percent": taxPct / 2,
+			"sgst_percent": taxPct / 2,
 			"tax_amount":   taxAmt,
+			"cgst_amount":  taxAmt / 2,
+			"sgst_amount":  taxAmt / 2,
 			"total_price":  totPrice,
 		})
 	}
@@ -594,6 +605,9 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"sub_amount":       subAmount,
 		"discount_amount":  discountAmount,
 		"bill_discount":    billDiscountAmt,
+		"cgst":             gstAmount / 2,
+		"sgst":             gstAmount / 2,
+		"total_gst":        gstAmount,
 		"gst_amount":       gstAmount,
 		"round_off":        roundOff,
 		"net_amount":       netAmount,

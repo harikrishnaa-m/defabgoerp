@@ -171,11 +171,11 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 	id := c.Params("id")
 
 	row, _ := h.store.Get(id)
-	var variantID, productID, name, sku string
+	var variantID, productID, name, sku, barcode string
 	var variantCode int
 	var price, costPrice float64
 	var isActive bool
-	if err := row.Scan(&variantID, &productID, &variantCode, &name, &sku, &price, &costPrice, &isActive); err != nil {
+	if err := row.Scan(&variantID, &productID, &variantCode, &name, &sku, &barcode, &price, &costPrice, &isActive); err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "variant not found"})
 	}
 
@@ -204,6 +204,7 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 		"variant_code": variantCode,
 		"name":         name,
 		"sku":          sku,
+		"barcode":      barcode,
 		"price":        price,
 		"cost_price":   costPrice,
 		"is_active":    isActive,
@@ -311,4 +312,16 @@ func (h *Handler) BackfillVariantCodes(c *fiber.Ctx) error {
 		"message": fmt.Sprintf("assigned variant_code to %d variants", count),
 		"count":   count,
 	})
+}
+
+func (h *Handler) Search(c *fiber.Ctx) error {
+	q := c.Query("q")
+	if q == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "q query param is required"})
+	}
+	results, err := h.store.Search(q)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(results)
 }
