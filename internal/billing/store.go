@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,10 @@ type Store struct {
 
 func NewStore(db *sql.DB, rdb *redis.Client) *Store {
 	return &Store{db: db, rdb: rdb}
+}
+
+func round2(value float64) float64 {
+	return math.Round(value*100) / 100
 }
 
 // CreateBill handles the entire billing flow in a single transaction:
@@ -128,6 +133,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		if item.DiscountType == "percent" {
 			itemDisc = lineTotal * item.Discount / 100
 		}
+		itemDisc = round2(itemDisc)
 		in.Items[i].Discount = itemDisc // store resolved flat amount
 
 		subtotal += lineTotal
@@ -144,6 +150,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	}
 
 	// Bill discount is applied after item discounts, before tax
+	billDiscount = round2(billDiscount)
 	taxableAmount := subtotal - discountTotal - billDiscount
 	if taxableAmount < 0 {
 		taxableAmount = 0
@@ -157,20 +164,26 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		if subtotal > 0 {
 			itemBillDiscount = billDiscount * lineTotal / subtotal
 		}
+		itemBillDiscount = round2(itemBillDiscount)
 		lineTaxable := lineTotal - item.Discount - itemBillDiscount
 		if lineTaxable < 0 {
 			lineTaxable = 0
 		}
 		lineTax := lineTaxable * item.TaxPercent / 100
+		lineTax = round2(lineTax)
 		taxTotal += lineTax
 	}
 
 	grandTotal = taxableAmount + taxTotal
+	grandTotal = round2(grandTotal)
+	subtotal = round2(subtotal)
+	discountTotal = round2(discountTotal)
+	taxTotal = round2(taxTotal)
 
 	// Determine payment status
 	var totalPaid float64
 	for _, p := range in.Payments {
-		totalPaid += p.Amount
+		totalPaid += round2(p.Amount)
 	}
 	paymentStatus := "UNPAID"
 	if totalPaid >= grandTotal {
@@ -200,7 +213,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		RETURNING id
 	`, soNumber, channel, branchIDParam, customerID, salesPersonParam,
 		in.WarehouseID, userID, now,
-		subtotal, taxTotal, discountTotal, billDiscount, grandTotal,
+		round2(subtotal), round2(taxTotal), round2(discountTotal), round2(billDiscount), round2(grandTotal),
 		paymentStatus, in.Notes).Scan(&salesOrderID)
 	if err != nil {
 		return nil, fmt.Errorf("create sales order: %w", err)
@@ -226,11 +239,13 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		if subtotal > 0 {
 			itemBillDisc = billDiscount * lineTotal / subtotal
 		}
+		itemBillDisc = round2(itemBillDisc)
 		taxAmt := (lineTotal - item.Discount - itemBillDisc) * item.TaxPercent / 100
 		if lineTotal-item.Discount-itemBillDisc < 0 {
 			taxAmt = 0
 		}
-		total := lineTotal - item.Discount + taxAmt
+		taxAmt = round2(taxAmt)
+		total := round2(lineTotal - item.Discount + taxAmt)
 
 		ic := itemCalc{
 			variantID:  item.VariantID,
@@ -241,14 +256,19 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			taxAmount:  taxAmt,
 			totalPrice: total,
 		}
+		ic.taxAmount = round2(ic.taxAmount)
+		ic.totalPrice = round2(ic.totalPrice)
 		itemCalcs = append(itemCalcs, ic)
 
+		itemBillDisc = round2(itemBillDisc)
+		taxAmt = round2(taxAmt)
+		total = round2(total)
 		_, err = tx.Exec(`
 			INSERT INTO sales_order_items
 				(sales_order_id, variant_id, quantity, unit_price, discount, tax_percent, tax_amount, total_price)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		`, salesOrderID, item.VariantID, item.Quantity, item.UnitPrice,
-			item.Discount, item.TaxPercent, taxAmt, total)
+		`, salesOrderID, item.VariantID, item.Quantity, round2(item.UnitPrice),
+			round2(item.Discount), item.TaxPercent, taxAmt, total)
 		if err != nil {
 			return nil, fmt.Errorf("create sales order item: %w", err)
 		}
@@ -278,6 +298,10 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		invoiceStatus = "UNPAID"
 	}
 
+	grandTotal = round2(grandTotal)
+	taxTotal = round2(taxTotal)
+	totalPaid = round2(totalPaid)
+
 	var salesInvoiceID string
 	err = tx.QueryRow(`
 		INSERT INTO sales_invoices
@@ -289,8 +313,8 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		RETURNING id
 	`, salesOrderID, customerID, in.WarehouseID, channel, branchIDParam,
 		invoiceNumber, now,
-		subtotal, discountTotal, billDiscount, gstAmount,
-		netAmount, totalPaid, invoiceStatus, userID).Scan(&salesInvoiceID)
+		round2(subtotal), round2(discountTotal), round2(billDiscount), round2(gstAmount),
+		round2(netAmount), totalPaid, invoiceStatus, userID).Scan(&salesInvoiceID)
 	if err != nil {
 		return nil, fmt.Errorf("create sales invoice: %w", err)
 	}
@@ -303,8 +327,8 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			INSERT INTO sales_invoice_items
 				(sales_invoice_id, variant_id, quantity, unit_price, discount, tax_percent, tax_amount, total_price)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		`, salesInvoiceID, ic.variantID, ic.quantity, ic.unitPrice,
-			ic.discount, ic.taxPercent, ic.taxAmount, ic.totalPrice)
+		`, salesInvoiceID, ic.variantID, ic.quantity, round2(ic.unitPrice),
+			round2(ic.discount), ic.taxPercent, round2(ic.taxAmount), round2(ic.totalPrice))
 		if err != nil {
 			return nil, fmt.Errorf("create sales invoice item: %w", err)
 		}
@@ -314,11 +338,12 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	// 6. Record payments
 	// ──────────────────────────────────────────
 	for _, p := range in.Payments {
+		amount := round2(p.Amount)
 		_, err = tx.Exec(`
 			INSERT INTO sales_payments
 				(sales_invoice_id, amount, payment_method, reference, paid_at)
 			VALUES ($1, $2, $3, $4, $5)
-		`, salesInvoiceID, p.Amount, p.Method, p.Reference, now)
+		`, salesInvoiceID, amount, p.Method, p.Reference, now)
 		if err != nil {
 			return nil, fmt.Errorf("record payment: %w", err)
 		}
@@ -370,7 +395,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		UPDATE customers
 		SET total_purchases = total_purchases + $1, updated_at = NOW()
 		WHERE id = $2
-	`, grandTotal, customerID)
+	`, round2(grandTotal), customerID)
 	if err != nil {
 		return nil, fmt.Errorf("update customer total: %w", err)
 	}
@@ -418,15 +443,15 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			"product_name": productName,
 			"variant_name": variantName,
 			"quantity":     ic.quantity,
-			"unit_price":   ic.unitPrice,
-			"discount":     ic.discount,
+			"unit_price":   round2(ic.unitPrice),
+			"discount":     round2(ic.discount),
 			"tax_percent":  ic.taxPercent,
 			"cgst_percent": ic.taxPercent / 2,
 			"sgst_percent": ic.taxPercent / 2,
-			"tax_amount":   ic.taxAmount,
-			"cgst_amount":  ic.taxAmount / 2,
-			"sgst_amount":  ic.taxAmount / 2,
-			"total_price":  ic.totalPrice,
+			"tax_amount":   round2(ic.taxAmount),
+			"cgst_amount":  round2(ic.taxAmount / 2),
+			"sgst_amount":  round2(ic.taxAmount / 2),
+			"total_price":  round2(ic.totalPrice),
 		})
 	}
 
@@ -435,7 +460,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	for _, p := range in.Payments {
 		responsePayments = append(responsePayments, map[string]interface{}{
 			"method":    p.Method,
-			"amount":    p.Amount,
+			"amount":    round2(p.Amount),
 			"reference": p.Reference,
 		})
 	}
@@ -461,17 +486,17 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		"salesperson_name": salespersonName,
 
 		// Financials
-		"subtotal":       subtotal,
-		"item_discount":  discountTotal,
-		"bill_discount":  billDiscount,
-		"total_discount": discountTotal + billDiscount,
-		"cgst":           taxTotal / 2,
-		"sgst":           taxTotal / 2,
-		"total_gst":      taxTotal,
-		"tax_total":      taxTotal,
-		"grand_total":    grandTotal,
-		"paid_amount":    totalPaid,
-		"balance_due":    grandTotal - totalPaid,
+		"subtotal":       round2(subtotal),
+		"item_discount":  round2(discountTotal),
+		"bill_discount":  round2(billDiscount),
+		"total_discount": round2(discountTotal + billDiscount),
+		"cgst":           round2(taxTotal / 2),
+		"sgst":           round2(taxTotal / 2),
+		"total_gst":      round2(taxTotal),
+		"tax_total":      round2(taxTotal),
+		"grand_total":    round2(grandTotal),
+		"paid_amount":    round2(totalPaid),
+		"balance_due":    round2(grandTotal - totalPaid),
 		"payment_status": paymentStatus,
 
 		// Line items & payments
@@ -556,15 +581,15 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 			"sku":          sku,
 			"product_name": productName,
 			"quantity":     qty,
-			"unit_price":   uPrice,
-			"discount":     disc,
+			"unit_price":   round2(uPrice),
+			"discount":     round2(disc),
 			"tax_percent":  taxPct,
 			"cgst_percent": taxPct / 2,
 			"sgst_percent": taxPct / 2,
-			"tax_amount":   taxAmt,
-			"cgst_amount":  taxAmt / 2,
-			"sgst_amount":  taxAmt / 2,
-			"total_price":  totPrice,
+			"tax_amount":   round2(taxAmt),
+			"cgst_amount":  round2(taxAmt / 2),
+			"sgst_amount":  round2(taxAmt / 2),
+			"total_price":  round2(totPrice),
 		})
 	}
 
@@ -588,7 +613,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		}
 		payments = append(payments, map[string]interface{}{
 			"id":             payID,
-			"amount":         amount,
+			"amount":         round2(amount),
 			"payment_method": method,
 			"reference":      ref,
 			"paid_at":        paidAt,
@@ -605,17 +630,17 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"warehouse_id":     warehouseID,
 		"warehouse_name":   warehouseName,
 		"channel":          channel,
-		"sub_amount":       subAmount,
-		"discount_amount":  discountAmount,
-		"bill_discount":    billDiscountAmt,
-		"cgst":             gstAmount / 2,
-		"sgst":             gstAmount / 2,
-		"total_gst":        gstAmount,
-		"gst_amount":       gstAmount,
-		"round_off":        roundOff,
-		"net_amount":       netAmount,
-		"paid_amount":      paidAmount,
-		"balance_due":      netAmount - paidAmount,
+		"sub_amount":       round2(subAmount),
+		"discount_amount":  round2(discountAmount),
+		"bill_discount":    round2(billDiscountAmt),
+		"cgst":             round2(gstAmount / 2),
+		"sgst":             round2(gstAmount / 2),
+		"total_gst":        round2(gstAmount),
+		"gst_amount":       round2(gstAmount),
+		"round_off":        round2(roundOff),
+		"net_amount":       round2(netAmount),
+		"paid_amount":      round2(paidAmount),
+		"balance_due":      round2(netAmount - paidAmount),
 		"status":           status,
 		"created_at":       createdAt,
 		"salesperson_name": salespersonName.String,
@@ -677,9 +702,9 @@ func (s *Store) List(branchID *string, limit, offset int) ([]map[string]interfac
 			"customer_name":    custName,
 			"customer_phone":   custPhone,
 			"channel":          channel,
-			"net_amount":       netAmount,
-			"paid_amount":      paidAmount,
-			"balance_due":      netAmount - paidAmount,
+			"net_amount":       round2(netAmount),
+			"paid_amount":      round2(paidAmount),
+			"balance_due":      round2(netAmount - paidAmount),
 			"salesperson_name": spName,
 			"status":           status,
 			"created_at":       createdAt,
@@ -728,7 +753,7 @@ func (s *Store) GetCustomerByPhone(phone string) (map[string]interface{}, error)
 		"name":            name,
 		"phone":           ph.String,
 		"email":           email,
-		"total_purchases": totalPurchases,
+		"total_purchases": round2(totalPurchases),
 		"created_at":      createdAt,
 	}, nil
 }
@@ -756,11 +781,12 @@ func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interfa
 	if balanceDue <= 0 {
 		return nil, fmt.Errorf("invoice is already fully paid")
 	}
-	if p.Amount > balanceDue {
-		return nil, fmt.Errorf("payment amount %.2f exceeds balance due %.2f", p.Amount, balanceDue)
+	pAmount := round2(p.Amount)
+	if pAmount > balanceDue {
+		return nil, fmt.Errorf("payment amount %.2f exceeds balance due %.2f", pAmount, balanceDue)
 	}
 
-	newPaid := paidAmount + p.Amount
+	newPaid := round2(paidAmount + pAmount)
 
 	// Determine new status
 	status := "PARTIAL"
@@ -778,7 +804,7 @@ func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interfa
 		INSERT INTO sales_payments
 			(sales_invoice_id, amount, payment_method, reference, paid_at)
 		VALUES ($1, $2, $3, $4, $5)
-	`, invoiceID, p.Amount, p.Method, p.Reference, now)
+	`, invoiceID, pAmount, p.Method, p.Reference, now)
 	if err != nil {
 		return nil, fmt.Errorf("record payment: %w", err)
 	}
@@ -809,9 +835,9 @@ func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interfa
 
 	return map[string]interface{}{
 		"invoice_id":     invoiceID,
-		"payment_amount": p.Amount,
-		"paid_amount":    newPaid,
-		"net_amount":     netAmount,
+		"payment_amount": round2(p.Amount),
+		"paid_amount":    round2(newPaid),
+		"net_amount":     round2(netAmount),
 		"payment_status": status,
 	}, nil
 }
