@@ -37,7 +37,10 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	}
 	defer tx.Rollback()
 
-	ist, _ := time.LoadLocation("Asia/Kolkata")
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		ist = time.FixedZone("IST", 5*60*60+30*60) // fallback
+	}
 	now := time.Now().In(ist)
 
 	// ──────────────────────────────────────────
@@ -766,7 +769,10 @@ func (s *Store) AddPayment(invoiceID string, p PaymentInput) (map[string]interfa
 	}
 
 	// Insert payment record
-	ist, _ := time.LoadLocation("Asia/Kolkata")
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		ist = time.FixedZone("IST", 5*60*60+30*60) // fallback
+	}
 	now := time.Now().In(ist)
 	_, err = tx.Exec(`
 		INSERT INTO sales_payments

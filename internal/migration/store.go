@@ -406,7 +406,14 @@ func parseXlsx(path, catKey string) ([]XlsxRow, error) {
 
 			item := safeCol(row, colMap.itemIdx)
 			codeStr := safeCol(row, colMap.codeIdx)
-			mrpStr := safeCol(row, colMap.mrpIdx)
+			// Prefer MRP excluding GST column over plain MRP
+			var mrpStr string
+			if colMap.mrpExclGstIdx >= 0 {
+				mrpStr = safeCol(row, colMap.mrpExclGstIdx)
+			}
+			if mrpStr == "" {
+				mrpStr = safeCol(row, colMap.mrpIdx)
+			}
 			qtyStr := safeCol(row, colMap.qtyIdx)
 
 			if codeStr == "" {
@@ -440,18 +447,19 @@ func parseXlsx(path, catKey string) ([]XlsxRow, error) {
 
 // colLayout stores detected column indices for a sheet.
 type colLayout struct {
-	headerRow int
-	itemIdx   int
-	codeIdx   int
-	mrpIdx    int
-	qtyIdx    int
+	headerRow     int
+	itemIdx       int
+	codeIdx       int
+	mrpIdx        int
+	mrpExclGstIdx int
+	qtyIdx        int
 }
 
 func detectColumns(allRows [][]string) *colLayout {
 	// Look in first 3 rows for a header-like row
 	for i := 0; i < len(allRows) && i < 3; i++ {
 		row := allRows[i]
-		layout := &colLayout{headerRow: i, itemIdx: -1, codeIdx: -1, mrpIdx: -1, qtyIdx: -1}
+		layout := &colLayout{headerRow: i, itemIdx: -1, codeIdx: -1, mrpIdx: -1, mrpExclGstIdx: -1, qtyIdx: -1}
 
 		for j, cell := range row {
 			upper := strings.ToUpper(strings.TrimSpace(cell))
@@ -460,15 +468,21 @@ func detectColumns(allRows [][]string) *colLayout {
 				layout.itemIdx = j
 			case upper == "CODE":
 				layout.codeIdx = j
-			case strings.HasPrefix(upper, "MRP"):
+			// "MRP EXCLUDING GST", "NEW MRP EXCLUDING GST", "MRP EXCLUSING GST" (typo)
+			case strings.Contains(upper, "MRP") && strings.Contains(upper, "EXCL"):
+				layout.mrpExclGstIdx = j
+			case strings.HasPrefix(upper, "MRP") && !strings.Contains(upper, "EXCL"):
+				layout.mrpIdx = j
+			case strings.Contains(upper, "MRP") && !strings.Contains(upper, "EXCL") && !strings.HasPrefix(upper, "MRP"):
+				// e.g. "Mrp" not starting with MRP after uppercasing — already covered above
 				layout.mrpIdx = j
 			case upper == "QTY":
 				layout.qtyIdx = j
 			}
 		}
 
-		// Need at least code + mrp
-		if layout.codeIdx >= 0 && layout.mrpIdx >= 0 {
+		// Need at least code + (mrp or mrpExclGst)
+		if layout.codeIdx >= 0 && (layout.mrpIdx >= 0 || layout.mrpExclGstIdx >= 0) {
 			// If item col not found, guess it's next to code (DYBL MTRL pattern: SL, Code, Items, Qty, Mrp)
 			if layout.itemIdx < 0 {
 				// Try column 2 for items in DYBL MTRL layout

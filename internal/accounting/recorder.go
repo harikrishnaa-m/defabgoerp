@@ -3,6 +3,7 @@ package accounting
 import (
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // Recorder reads from existing ERP tables (sales_invoices, purchase_invoices, etc.)
@@ -121,6 +122,88 @@ func (r *Recorder) RecordSalesInvoice(salesInvoiceID, userID string) error {
 		Narration:   "Sales Invoice " + inv.InvoiceNumber,
 		RefType:     RefSalesInvoice,
 		RefID:       salesInvoiceID,
+		BranchID:    branchID,
+		CreatedBy:   userID,
+		Lines:       lines,
+	})
+}
+
+func (r *Recorder) RecordSalesReturn(returnOrderID, userID string) error {
+	exists, err := r.store.VoucherExistsForRef(RefSalesReturn, returnOrderID)
+	if err != nil {
+		return fmt.Errorf("check existing voucher: %w", err)
+	}
+	if exists {
+		return nil
+	}
+
+	var ret struct {
+		ID             string
+		ReturnNumber   string
+		SalesInvoiceID string
+		BranchID       sql.NullString
+		TotalAmount    float64
+		GSTAmount      float64
+		RefundType     sql.NullString
+		RefundMethod   sql.NullString
+	}
+	err = r.db.QueryRow(`
+		SELECT id, return_number, sales_invoice_id, branch_id,
+		       total_amount, gst_amount, refund_type, refund_method
+		FROM return_orders WHERE id = $1
+	`, returnOrderID).Scan(&ret.ID, &ret.ReturnNumber, &ret.SalesInvoiceID,
+		&ret.BranchID, &ret.TotalAmount, &ret.GSTAmount, &ret.RefundType, &ret.RefundMethod)
+	if err != nil {
+		return fmt.Errorf("read return order: %w", err)
+	}
+
+	revenueReversal := ret.TotalAmount - ret.GSTAmount
+	if revenueReversal < 0 {
+		revenueReversal = 0
+	}
+
+	lines := []VoucherLine{
+		{LedgerAccountID: LedgerSalesRevenue, Debit: revenueReversal, Narration: "Sales return revenue reversal"},
+	}
+	if ret.GSTAmount > 0 {
+		lines = append(lines, VoucherLine{LedgerAccountID: LedgerGSTPayable, Debit: ret.GSTAmount, Narration: "Sales return GST reversal"})
+	}
+
+	refundType := "CASH"
+	if ret.RefundType.Valid && ret.RefundType.String == "CREDIT" {
+		refundType = "CREDIT"
+	}
+
+	switch refundType {
+	case "CREDIT":
+		lines = append(lines, VoucherLine{
+			LedgerAccountID: LedgerAccountsReceiv,
+			Credit:          ret.TotalAmount,
+			Narration:       "Customer credit for sales return",
+		})
+	default:
+		paymentLedger := LedgerCash
+		if ret.RefundMethod.Valid {
+			paymentLedger = PaymentLedgerMap(ret.RefundMethod.String)
+		}
+		lines = append(lines, VoucherLine{
+			LedgerAccountID: paymentLedger,
+			Credit:          ret.TotalAmount,
+			Narration:       "Cash refund for sales return",
+		})
+	}
+
+	branchID := ""
+	if ret.BranchID.Valid {
+		branchID = ret.BranchID.String
+	}
+
+	return r.store.CreateVoucher(Voucher{
+		VoucherType: VoucherTypeSalesReturn,
+		VoucherDate: time.Now().Format("2006-01-02"),
+		Narration:   "Sales Return " + ret.ReturnNumber,
+		RefType:     RefSalesReturn,
+		RefID:       returnOrderID,
 		BranchID:    branchID,
 		CreatedBy:   userID,
 		Lines:       lines,

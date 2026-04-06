@@ -178,6 +178,8 @@ func (s *Store) nextVoucherNumber(voucherType string) (string, error) {
 		prefix = "PMV"
 	case VoucherTypeContra:
 		prefix = "CV"
+	case VoucherTypeSalesReturn:
+		prefix = "SRV"
 	}
 
 	var count int

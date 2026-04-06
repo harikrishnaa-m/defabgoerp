@@ -14,12 +14,34 @@ func NewStore(db *sql.DB) *Store {
 }
 
 func (s *Store) Create(name, address, managerID, branchCode, city, state, phoneNumber string) error {
-	_, err := s.db.Exec(
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var branchID string
+	err = tx.QueryRow(
 		`INSERT INTO branches (name, address, manager_id, branch_code, city, state, phone_number)
-		 VALUES ($1,$2, NULLIF($3,'')::uuid, $4, $5, $6, $7)`,
+		 VALUES ($1,$2, NULLIF($3,'')::uuid, $4, $5, $6, $7) RETURNING id`,
 		name, address, managerID, branchCode, city, state, phoneNumber,
-	)
-	return err
+	).Scan(&branchID)
+	if err != nil {
+		return err
+	}
+
+	// Sync branch_id onto the assigned manager
+	if managerID != "" {
+		_, err = tx.Exec(
+			`UPDATE users SET branch_id = $1::uuid WHERE id = $2::uuid`,
+			branchID, managerID,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 // Generate next branch code (BRxxx)
@@ -51,7 +73,24 @@ func (s *Store) List() (*sql.Rows, error) {
 }
 
 func (s *Store) Update(id string, in UpdateBranchInput) error {
-	_, err := s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// If manager is being changed, clear branch_id from the old manager first
+	if in.ManagerID != nil && *in.ManagerID != "" {
+		_, err = tx.Exec(
+			`UPDATE users SET branch_id = NULL WHERE branch_id = $1::uuid`,
+			id,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = tx.Exec(`
 		UPDATE branches
 		SET
 		  name = COALESCE($1, name),
@@ -70,7 +109,22 @@ func (s *Store) Update(id string, in UpdateBranchInput) error {
 		in.State,
 		id,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Set branch_id on the new manager
+	if in.ManagerID != nil && *in.ManagerID != "" {
+		_, err = tx.Exec(
+			`UPDATE users SET branch_id = $1::uuid WHERE id = $2::uuid`,
+			id, *in.ManagerID,
+		)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func (s *Store) GetByID(id string) *sql.Row {

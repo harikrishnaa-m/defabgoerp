@@ -44,6 +44,7 @@ import (
 	"defab-erp/internal/purchase"
 	"defab-erp/internal/purchaseinvoice"
 	"defab-erp/internal/rawmaterial"
+	"defab-erp/internal/returns"
 	"defab-erp/internal/salesinvoice"
 	"defab-erp/internal/salesorder"
 	"defab-erp/internal/salesperson"
@@ -162,6 +163,9 @@ func main() {
 	accountingStore := accounting.NewStore(database)
 	accountingRecorder := accounting.NewRecorder(database, accountingStore)
 	accountingHandler := accounting.NewHandler(accountingStore, accountingRecorder)
+
+	returnStore := returns.NewStore(database)
+	returnHandler := returns.NewHandler(returnStore, accountingRecorder)
 
 	dashboardStore := dashboard.NewStore(database)
 	dashboardHandler := dashboard.NewHandler(dashboardStore)
@@ -393,6 +397,18 @@ func main() {
 			),
 		),
 		billingHandler,
+	)
+
+	returns.RegisterRoutes(
+		protected.Group("/returns",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleSalesPerson,
+				model.RoleAccountsManager,
+			),
+		),
+		returnHandler,
 	)
 
 	purchase.RegisterRoutes(

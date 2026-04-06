@@ -22,12 +22,13 @@ const (
 
 // Voucher types (Tally vocabulary)
 const (
-	VoucherTypeSales    = "SALES"
-	VoucherTypePurchase = "PURCHASE"
-	VoucherTypeReceipt  = "RECEIPT"
-	VoucherTypePayment  = "PAYMENT"
-	VoucherTypeJournal  = "JOURNAL"
-	VoucherTypeContra   = "CONTRA"
+	VoucherTypeSales       = "SALES"
+	VoucherTypePurchase    = "PURCHASE"
+	VoucherTypeReceipt     = "RECEIPT"
+	VoucherTypePayment     = "PAYMENT"
+	VoucherTypeJournal     = "JOURNAL"
+	VoucherTypeContra      = "CONTRA"
+	VoucherTypeSalesReturn = "SALES_RETURN"
 )
 
 // Ref types — link vouchers back to source records
@@ -36,6 +37,7 @@ const (
 	RefSalesPayment    = "sales_payment"
 	RefPurchaseInvoice = "purchase_invoice"
 	RefSupplierPayment = "supplier_payment"
+	RefSalesReturn     = "sales_return"
 )
 
 // AccountGroup represents a node in the chart-of-accounts tree.
