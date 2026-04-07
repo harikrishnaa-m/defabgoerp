@@ -222,7 +222,8 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var items []map[string]interface{}
 	for itemRows.Next() {
 		var itemID, sku, variantName, barcode, productName string
-		var variantCode, quantity int
+		var variantCode int
+		var quantity float64
 		var unitPrice, discount, taxPercent, taxAmount, totalPrice float64
 
 		if err := itemRows.Scan(
@@ -285,4 +286,13 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	invoice["payments"] = payments
 
 	return invoice, nil
+}
+
+func (s *Store) GetByInvoiceNumber(invoiceNumber string) (map[string]interface{}, error) {
+	var id string
+	err := s.db.QueryRow(`SELECT id FROM sales_invoices WHERE invoice_number = $1`, invoiceNumber).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetByID(id)
 }

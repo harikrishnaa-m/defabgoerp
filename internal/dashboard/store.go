@@ -639,7 +639,7 @@ type CategorySales struct {
 	CategoryID   string  `json:"category_id"`
 	CategoryName string  `json:"category_name"`
 	Amount       float64 `json:"amount"`
-	Quantity     int     `json:"quantity"`
+	Quantity     float64 `json:"quantity"`
 }
 
 func (s *Store) CategoryWiseSales(from, to string) ([]CategorySales, error) {

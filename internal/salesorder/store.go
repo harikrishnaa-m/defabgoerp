@@ -227,7 +227,8 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var items []map[string]interface{}
 	for itemRows.Next() {
 		var itemID, sku, variantName, barcode, productName string
-		var variantCode, quantity int
+		var variantCode int
+		var quantity float64
 		var unitPrice, discount, taxPercent, taxAmount, totalPrice float64
 
 		if err := itemRows.Scan(

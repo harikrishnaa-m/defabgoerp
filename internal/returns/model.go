@@ -29,7 +29,7 @@ type ReturnItem struct {
 	ReturnOrderID      string  `json:"return_order_id"`
 	SalesInvoiceItemID string  `json:"sales_invoice_item_id"`
 	VariantID          string  `json:"variant_id"`
-	Quantity           int     `json:"quantity"`
+	Quantity           float64 `json:"quantity"`
 	UnitPrice          float64 `json:"unit_price"`
 	Discount           float64 `json:"discount"`
 	BillDiscountShare  float64 `json:"bill_discount_share"`

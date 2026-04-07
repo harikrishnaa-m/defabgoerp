@@ -76,29 +76,9 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 	return c.JSON(ret)
 }
 
-func (h *Handler) Complete(c *fiber.Ctx) error {
-	id := c.Params("id")
-	var in CompleteReturnInput
-	if err := c.BodyParser(&in); err != nil {
-		return httperr.BadRequest(c, "Invalid JSON body")
-	}
-	if in.RefundType == "" {
-		in.RefundType = RefundTypeCash
-	}
-	user := c.Locals("user").(*model.User)
-	ret, err := h.store.CompleteReturnOrder(id, in, user.ID.String())
-	if err != nil {
-		log.Println("complete return order error:", err)
-		return httperr.Internal(c)
-	}
-	if err := h.recorder.RecordSalesReturn(id, user.ID.String()); err != nil {
-		log.Println("record return voucher error:", err)
-	}
-	return c.JSON(ret)
-}
-
 func (h *Handler) Cancel(c *fiber.Ctx) error {
 	id := c.Params("id")
+	user := c.Locals("user").(*model.User)
 	if err := h.store.CancelReturnOrder(id); err != nil {
 		if err == sql.ErrNoRows {
 			return httperr.NotFound(c, "Return order not found")
@@ -106,5 +86,9 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 		log.Println("cancel return order error:", err)
 		return httperr.Internal(c)
 	}
+	if err := h.recorder.CancelVoucherByRef("sales_return", id); err != nil {
+		log.Println("cancel return voucher error:", err)
+	}
+	_ = user // used for audit context
 	return c.JSON(fiber.Map{"message": "Return order cancelled"})
 }

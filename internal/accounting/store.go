@@ -474,3 +474,12 @@ func (s *Store) CancelVoucher(id string) error {
 	}
 	return nil
 }
+
+// CancelVoucherByRef cancels all vouchers linked to the given ref_type + ref_id.
+func (s *Store) CancelVoucherByRef(refType, refID string) error {
+	_, err := s.db.Exec(`
+		UPDATE vouchers SET is_cancelled = TRUE, updated_at = NOW()
+		WHERE ref_type = $1 AND ref_id = $2 AND is_cancelled = FALSE
+	`, refType, refID)
+	return err
+}
