@@ -26,6 +26,7 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	r.Post("/record/purchase-invoice/:id", h.RecordPurchaseInvoice)
 	r.Post("/record/sales-payment/:id", h.RecordSalesPayment)
 	r.Post("/record/supplier-payment/:id", h.RecordSupplierPayment)
+	r.Post("/record/sales-return/:id", h.RecordSalesReturn)
 	r.Post("/backfill", h.Backfill)
 
 	// ── Reports ──

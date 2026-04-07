@@ -1,6 +1,8 @@
 package salesinvoice
 
 import (
+	"log"
+
 	"defab-erp/internal/core/model"
 
 	"github.com/gofiber/fiber/v2"
@@ -56,6 +58,19 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 
 	invoice, err := h.store.GetByID(id)
 	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "sales invoice not found"})
+	}
+
+	return c.JSON(invoice)
+}
+
+func (h *Handler) GetByInvoiceNumber(c *fiber.Ctx) error {
+	num := c.Params("invoiceNumber")
+	log.Println("GetByInvoiceNumber called with:", num)
+
+	invoice, err := h.store.GetByInvoiceNumber(num)
+	if err != nil {
+		log.Println("GetByInvoiceNumber error:", err)
 		return c.Status(404).JSON(fiber.Map{"error": "sales invoice not found"})
 	}
 

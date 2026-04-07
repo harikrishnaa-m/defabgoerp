@@ -1,9 +1,9 @@
 package returns
 
 type CreateReturnItemInput struct {
-	SalesInvoiceItemID string `json:"sales_invoice_item_id"`
-	Quantity           int    `json:"quantity"`
-	Reason             string `json:"reason"`
+	SalesInvoiceItemID string  `json:"sales_invoice_item_id"`
+	Quantity           float64 `json:"quantity"`
+	Reason             string  `json:"reason"`
 }
 
 type CreateReturnOrderInput struct {
@@ -13,12 +13,6 @@ type CreateReturnOrderInput struct {
 	RefundType      string                  `json:"refund_type"`   // CASH or CREDIT
 	RefundMethod    string                  `json:"refund_method"` // CASH, BANK_TRANSFER, UPI, CARD
 	RefundReference string                  `json:"refund_reference"`
-}
-
-type CompleteReturnInput struct {
-	RefundType      string `json:"refund_type"`   // CASH or CREDIT
-	RefundMethod    string `json:"refund_method"` // CASH, BANK_TRANSFER, UPI, CARD
-	RefundReference string `json:"refund_reference"`
 }
 
 type ReturnListFilter struct {

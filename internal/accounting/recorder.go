@@ -474,6 +474,12 @@ func (r *Recorder) BackfillAll(userID string) (map[string]int, error) {
 		return result, err
 	}
 
+	n, err = r.BackfillSalesReturns(userID)
+	result["sales_returns"] = n
+	if err != nil {
+		return result, err
+	}
+
 	patched, err := r.PatchPurchaseBranchIDs()
 	result["purchase_branch_patched"] = patched
 	if err != nil {
@@ -481,6 +487,32 @@ func (r *Recorder) BackfillAll(userID string) (map[string]int, error) {
 	}
 
 	return result, nil
+}
+
+func (r *Recorder) BackfillSalesReturns(userID string) (int, error) {
+	rows, err := r.db.Query(`SELECT id FROM return_orders WHERE status != 'CANCELLED' ORDER BY created_at`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		if err := r.RecordSalesReturn(id, userID); err != nil {
+			return count, fmt.Errorf("sales return %s: %w", id, err)
+		}
+		count++
+	}
+	return count, nil
+}
+
+// CancelVoucherByRef cancels the voucher linked to a specific ref_type + ref_id.
+func (r *Recorder) CancelVoucherByRef(refType, refID string) error {
+	return r.store.CancelVoucherByRef(refType, refID)
 }
 
 // PatchPurchaseBranchIDs back-fills branch_id on existing purchase vouchers

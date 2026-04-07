@@ -1,0 +1,1 @@
+ALTER TABLE return_items ALTER COLUMN quantity TYPE DECIMAL(10,2);

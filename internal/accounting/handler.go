@@ -270,6 +270,16 @@ func (h *Handler) RecordSupplierPayment(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Supplier payment recorded in accounting"})
 }
 
+func (h *Handler) RecordSalesReturn(c *fiber.Ctx) error {
+	id := c.Params("id")
+	user := c.Locals("user").(*model.User)
+	if err := h.recorder.RecordSalesReturn(id, user.ID.String()); err != nil {
+		log.Println("record sales return error:", err)
+		return httperr.Internal(c)
+	}
+	return c.JSON(fiber.Map{"message": "Sales return recorded in accounting"})
+}
+
 func (h *Handler) Backfill(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 	result, err := h.recorder.BackfillAll(user.ID.String())
