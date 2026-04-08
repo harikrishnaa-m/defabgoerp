@@ -20,15 +20,18 @@ func (h *Handler) ListAll(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
 	offset, _ := strconv.Atoi(c.Query("offset", "0"))
+	hsnCode := c.Query("hsn_code")
+	search := c.Query("search")
 
 	var rows []RawMaterialStockRow
+	var total int
 	var err error
 
 	// StoreManager sees only their branch
 	if user.Role.Name != model.RoleSuperAdmin && user.BranchID != nil {
-		rows, err = h.store.ListByBranch(*user.BranchID, limit, offset)
+		rows, total, err = h.store.ListByBranch(*user.BranchID, hsnCode, search, limit, offset)
 	} else {
-		rows, err = h.store.ListAll(limit, offset)
+		rows, total, err = h.store.ListAll(hsnCode, search, limit, offset)
 	}
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
@@ -38,7 +41,7 @@ func (h *Handler) ListAll(c *fiber.Ctx) error {
 	for _, r := range rows {
 		result = append(result, stockRowToMap(r))
 	}
-	return c.JSON(fiber.Map{"data": result})
+	return c.JSON(fiber.Map{"data": result, "total": total, "limit": limit, "offset": offset})
 }
 
 func (h *Handler) ListByWarehouse(c *fiber.Ctx) error {
@@ -147,7 +150,7 @@ func (h *Handler) StocksByBranch(c *fiber.Ctx) error {
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
 	offset, _ := strconv.Atoi(c.Query("offset", "0"))
 
-	rows, err := h.store.ListByBranch(branchID, limit, offset)
+	rows, total, err := h.store.ListByBranch(branchID, "", "", limit, offset)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -156,7 +159,7 @@ func (h *Handler) StocksByBranch(c *fiber.Ctx) error {
 	for _, r := range rows {
 		result = append(result, stockRowToMap(r))
 	}
-	return c.JSON(fiber.Map{"data": result})
+	return c.JSON(fiber.Map{"data": result, "total": total, "limit": limit, "offset": offset})
 }
 
 func movementRowsToMaps(rows []RawMaterialMovementRow) []fiber.Map {

@@ -46,18 +46,49 @@ func (s *Store) ListByWarehouse(warehouseID string, limit, offset int) ([]RawMat
 }
 
 // ListAll returns all raw material stock across all warehouses.
-func (s *Store) ListAll(limit, offset int) ([]RawMaterialStockRow, error) {
-	rows, err := s.db.Query(`
+func (s *Store) ListAll(hsnCode, search string, limit, offset int) ([]RawMaterialStockRow, int, error) {
+	where := ""
+	args := []interface{}{}
+	n := 0
+	clauses := []string{}
+	if hsnCode != "" {
+		n++
+		clauses = append(clauses, fmt.Sprintf("rms.hsn_code = $%d", n))
+		args = append(args, hsnCode)
+	}
+	if search != "" {
+		n++
+		clauses = append(clauses, fmt.Sprintf("rms.item_name ILIKE $%d", n))
+		args = append(args, "%"+search+"%")
+	}
+	if len(clauses) > 0 {
+		where = " WHERE " + clauses[0]
+		for _, c := range clauses[1:] {
+			where += " AND " + c
+		}
+	}
+
+	var total int
+	countQ := fmt.Sprintf(`SELECT COUNT(*) FROM raw_material_stocks rms JOIN warehouses w ON w.id = rms.warehouse_id%s`, where)
+	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	n++
+	q := fmt.Sprintf(`
 		SELECT rms.id, rms.item_name, rms.hsn_code, rms.unit,
 		       rms.warehouse_id, w.name AS warehouse_name,
 		       rms.quantity, rms.updated_at::text
 		FROM raw_material_stocks rms
-		JOIN warehouses w ON w.id = rms.warehouse_id
+		JOIN warehouses w ON w.id = rms.warehouse_id%s
 		ORDER BY rms.item_name, w.name
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
+		LIMIT $%d OFFSET $%d
+	`, where, n, n+1)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -69,27 +100,50 @@ func (s *Store) ListAll(limit, offset int) ([]RawMaterialStockRow, error) {
 			&r.WarehouseID, &r.WarehouseName,
 			&r.Quantity, &r.UpdatedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		list = append(list, r)
 	}
-	return list, nil
+	return list, total, nil
 }
 
 // ListByBranch returns raw material stock for warehouses belonging to a branch.
-func (s *Store) ListByBranch(branchID string, limit, offset int) ([]RawMaterialStockRow, error) {
-	rows, err := s.db.Query(`
+func (s *Store) ListByBranch(branchID, hsnCode, search string, limit, offset int) ([]RawMaterialStockRow, int, error) {
+	args := []interface{}{branchID}
+	n := 1
+	where := " WHERE w.branch_id = $1"
+	if hsnCode != "" {
+		n++
+		where += fmt.Sprintf(" AND rms.hsn_code = $%d", n)
+		args = append(args, hsnCode)
+	}
+	if search != "" {
+		n++
+		where += fmt.Sprintf(" AND rms.item_name ILIKE $%d", n)
+		args = append(args, "%"+search+"%")
+	}
+
+	var total int
+	countQ := fmt.Sprintf(`SELECT COUNT(*) FROM raw_material_stocks rms JOIN warehouses w ON w.id = rms.warehouse_id%s`, where)
+	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	n++
+	q := fmt.Sprintf(`
 		SELECT rms.id, rms.item_name, rms.hsn_code, rms.unit,
 		       rms.warehouse_id, w.name AS warehouse_name,
 		       rms.quantity, rms.updated_at::text
 		FROM raw_material_stocks rms
-		JOIN warehouses w ON w.id = rms.warehouse_id
-		WHERE w.branch_id = $1
+		JOIN warehouses w ON w.id = rms.warehouse_id%s
 		ORDER BY rms.item_name
-		LIMIT $2 OFFSET $3
-	`, branchID, limit, offset)
+		LIMIT $%d OFFSET $%d
+	`, where, n, n+1)
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 
@@ -101,11 +155,11 @@ func (s *Store) ListByBranch(branchID string, limit, offset int) ([]RawMaterialS
 			&r.WarehouseID, &r.WarehouseName,
 			&r.Quantity, &r.UpdatedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		list = append(list, r)
 	}
-	return list, nil
+	return list, total, nil
 }
 
 // ListMovementsByBranch returns raw material movements for warehouses in a branch.

@@ -41,6 +41,8 @@ import (
 	"defab-erp/internal/customer"
 	"defab-erp/internal/dashboard"
 	"defab-erp/internal/goodsreceipt"
+	"defab-erp/internal/joborder"
+	"defab-erp/internal/production"
 	"defab-erp/internal/purchase"
 	"defab-erp/internal/purchaseinvoice"
 	"defab-erp/internal/rawmaterial"
@@ -169,6 +171,12 @@ func main() {
 
 	dashboardStore := dashboard.NewStore(database)
 	dashboardHandler := dashboard.NewHandler(dashboardStore)
+
+	jobOrderStore := joborder.NewStore(database)
+	jobOrderHandler := joborder.NewHandler(jobOrderStore)
+
+	productionStore := production.NewStore(database)
+	productionHandler := production.NewHandler(productionStore)
 
 	// ── Ecom stores & handlers ──
 	ecomCustomerStore := ecomCustomer.NewStore(database)
@@ -529,6 +537,28 @@ func main() {
 			),
 		),
 		dashboardHandler,
+	)
+
+	joborder.RegisterRoutes(
+		protected.Group("/job-orders",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		jobOrderHandler,
+	)
+
+	production.RegisterRoutes(
+		protected.Group("/production-orders",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		productionHandler,
 	)
 
 	protected.Get("/me", func(c *fiber.Ctx) error {
