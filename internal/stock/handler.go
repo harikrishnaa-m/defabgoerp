@@ -308,26 +308,27 @@ func (h *Handler) All(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
+	variantCode := c.Query("variant_code")
 
 	var total int
 	var rows *sql.Rows
 	var err error
 
 	if user.Role.Name == model.RoleSuperAdmin {
-		total, err = h.store.CountAll()
+		total, err = h.store.CountAll(variantCode)
 		if err != nil {
 			return httperr.Internal(c)
 		}
-		rows, err = h.store.GetAll(limit, offset)
+		rows, err = h.store.GetAll(variantCode, limit, offset)
 	} else {
 		if user.BranchID == nil {
 			return c.JSON(fiber.Map{"page": page, "limit": limit, "total": 0, "total_pages": 0, "data": []fiber.Map{}})
 		}
-		total, err = h.store.CountAllByBranch(*user.BranchID)
+		total, err = h.store.CountAllByBranch(*user.BranchID, variantCode)
 		if err != nil {
 			return httperr.Internal(c)
 		}
-		rows, err = h.store.GetAllByBranch(*user.BranchID, limit, offset)
+		rows, err = h.store.GetAllByBranch(*user.BranchID, variantCode, limit, offset)
 	}
 	if err != nil {
 		return httperr.Internal(c)

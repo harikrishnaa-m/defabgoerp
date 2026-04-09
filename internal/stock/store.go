@@ -219,7 +219,24 @@ func (s *Store) LowStockByBranch(threshold int, branchID string) (*sql.Rows, err
 	`, threshold, branchID)
 }
 
-func (s *Store) GetAll(limit, offset int) (*sql.Rows, error) {
+func (s *Store) GetAll(variantCode string, limit, offset int) (*sql.Rows, error) {
+	if variantCode != "" {
+		return s.db.Query(`
+			SELECT
+				s.id,
+				p.id, p.name,
+				v.id, v.variant_code, v.name, v.sku,
+				w.id, w.name,
+				s.quantity
+			FROM stocks s
+			JOIN variants v   ON v.id = s.variant_id
+			JOIN products p   ON p.id = v.product_id
+			JOIN warehouses w ON w.id = s.warehouse_id
+			WHERE v.variant_code::text = $1
+			ORDER BY p.name, v.name
+			LIMIT $2 OFFSET $3
+		`, variantCode, limit, offset)
+	}
 	return s.db.Query(`
 		SELECT
 			s.id,
@@ -236,7 +253,24 @@ func (s *Store) GetAll(limit, offset int) (*sql.Rows, error) {
 	`, limit, offset)
 }
 
-func (s *Store) GetAllByBranch(branchID string, limit, offset int) (*sql.Rows, error) {
+func (s *Store) GetAllByBranch(branchID, variantCode string, limit, offset int) (*sql.Rows, error) {
+	if variantCode != "" {
+		return s.db.Query(`
+			SELECT
+				s.id,
+				p.id, p.name,
+				v.id, v.variant_code, v.name, v.sku,
+				w.id, w.name,
+				s.quantity
+			FROM stocks s
+			JOIN variants v   ON v.id = s.variant_id
+			JOIN products p   ON p.id = v.product_id
+			JOIN warehouses w ON w.id = s.warehouse_id
+			WHERE w.branch_id = $1 AND v.variant_code::text = $2
+			ORDER BY p.name, v.name
+			LIMIT $3 OFFSET $4
+		`, branchID, variantCode, limit, offset)
+	}
 	return s.db.Query(`
 		SELECT
 			s.id,
@@ -254,8 +288,17 @@ func (s *Store) GetAllByBranch(branchID string, limit, offset int) (*sql.Rows, e
 	`, branchID, limit, offset)
 }
 
-func (s *Store) CountAllByBranch(branchID string) (int, error) {
+func (s *Store) CountAllByBranch(branchID, variantCode string) (int, error) {
 	var total int
+	if variantCode != "" {
+		err := s.db.QueryRow(`
+			SELECT COUNT(*) FROM stocks s
+			JOIN variants v ON v.id = s.variant_id
+			JOIN warehouses w ON w.id = s.warehouse_id
+			WHERE w.branch_id = $1 AND v.variant_code::text = $2
+		`, branchID, variantCode).Scan(&total)
+		return total, err
+	}
 	err := s.db.QueryRow(`
 		SELECT COUNT(*) FROM stocks s
 		JOIN warehouses w ON w.id = s.warehouse_id
@@ -396,8 +439,16 @@ func (s *Store) CountMovements(variantID, warehouseID, movementType, fromDate, t
 }
 
 // CountAll returns total stock records.
-func (s *Store) CountAll() (int, error) {
+func (s *Store) CountAll(variantCode string) (int, error) {
 	var total int
+	if variantCode != "" {
+		err := s.db.QueryRow(`
+			SELECT COUNT(*) FROM stocks s
+			JOIN variants v ON v.id = s.variant_id
+			WHERE v.variant_code::text = $1
+		`, variantCode).Scan(&total)
+		return total, err
+	}
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM stocks`).Scan(&total)
 	return total, err
 }
