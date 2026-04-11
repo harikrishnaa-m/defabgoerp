@@ -41,7 +41,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	// Resolve warehouse from branch
 	warehouseID := ""
 	if branchID != "" {
-		_ = h.store.db.QueryRow(`SELECT warehouse_id FROM branches WHERE id = $1`, branchID).Scan(&warehouseID)
+		_ = h.store.db.QueryRow(`SELECT id FROM warehouses WHERE branch_id = $1 LIMIT 1`, branchID).Scan(&warehouseID)
 	}
 
 	id, err := h.store.CreateJobOrder(in, user.ID.String(), branchID, warehouseID)

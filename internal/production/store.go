@@ -3,6 +3,7 @@ package production
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 type Store struct {
@@ -24,6 +25,87 @@ func (s *Store) CreateProductionOrder(in CreateProductionOrderInput, userID, bra
 	}
 	defer tx.Rollback()
 
+	// ── Resolve output_variant_id based on scenario ──
+
+	variantID := in.OutputVariantID
+	productID := in.OutputProductID
+
+	// Scenario 3: New product + new variant
+	if in.NewProduct != nil && in.NewVariant != nil {
+		uom := in.NewProduct.UOM
+		if uom == "" {
+			uom = "Unit"
+		}
+		err = tx.QueryRow(`
+			INSERT INTO products (name, category_id, brand, description, fabric_composition, pattern, occasion, care_instructions, uom)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+			RETURNING id
+		`, in.NewProduct.Name, nilIfEmpty(in.NewProduct.CategoryID), in.NewProduct.Brand,
+			in.NewProduct.Description, in.NewProduct.FabricComposition, in.NewProduct.Pattern,
+			in.NewProduct.Occasion, in.NewProduct.CareInstructions, uom).Scan(&productID)
+		if err != nil {
+			return "", fmt.Errorf("create product: %w", err)
+		}
+
+		// Increment category product count
+		if in.NewProduct.CategoryID != "" {
+			_, err = tx.Exec(`UPDATE categories SET products_count = products_count + 1 WHERE id = $1`, in.NewProduct.CategoryID)
+			if err != nil {
+				return "", fmt.Errorf("update category count: %w", err)
+			}
+		}
+	}
+
+	// Scenario 2 or 3: Create new variant under existing or newly created product
+	if in.NewVariant != nil && productID != "" {
+		// Auto-generate SKU
+		var brand, productName string
+		err = tx.QueryRow(`SELECT COALESCE(brand,''), name FROM products WHERE id = $1`, productID).Scan(&brand, &productName)
+		if err != nil {
+			return "", fmt.Errorf("product lookup for SKU: %w", err)
+		}
+
+		sku := strings.ToUpper(first3(brand) + " " + first3(productName))
+		for _, avid := range in.NewVariant.AttributeValueIDs {
+			var val string
+			if tx.QueryRow(`SELECT value FROM attribute_values WHERE id = $1`, avid).Scan(&val) == nil {
+				sku += " " + strings.ToUpper(first3(val))
+			}
+		}
+		baseSku := sku
+		var exists bool
+		for i := 1; ; i++ {
+			tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM variants WHERE sku = $1)`, sku).Scan(&exists)
+			if !exists {
+				break
+			}
+			sku = fmt.Sprintf("%s %d", baseSku, i)
+		}
+
+		err = tx.QueryRow(`
+			INSERT INTO variants (product_id, name, sku, price, cost_price, barcode)
+			VALUES ($1,$2,$3,$4,$5,$6)
+			RETURNING id
+		`, productID, in.NewVariant.Name, sku, in.NewVariant.Price, in.NewVariant.CostPrice, sku).Scan(&variantID)
+		if err != nil {
+			return "", fmt.Errorf("create variant: %w", err)
+		}
+
+		// Attribute mappings
+		for _, avid := range in.NewVariant.AttributeValueIDs {
+			_, err = tx.Exec(`INSERT INTO variant_attribute_mapping (variant_id, attribute_value_id) VALUES ($1,$2)`, variantID, avid)
+			if err != nil {
+				return "", fmt.Errorf("map attribute: %w", err)
+			}
+		}
+	}
+
+	if variantID == "" {
+		return "", fmt.Errorf("could not resolve output variant")
+	}
+
+	// ── Create the production order ──
+
 	prodNum := s.nextProdNumber(tx)
 
 	var branchParam interface{}
@@ -38,7 +120,7 @@ func (s *Store) CreateProductionOrder(in CreateProductionOrderInput, userID, bra
 			 status, notes, created_by)
 		VALUES ($1,$2,$3,$4,$5,'PLANNED',$6,$7)
 		RETURNING id
-	`, prodNum, branchParam, warehouseID, in.OutputVariantID, in.OutputQuantity,
+	`, prodNum, branchParam, warehouseID, variantID, in.OutputQuantity,
 		in.Notes, userID).Scan(&prodID)
 	if err != nil {
 		return "", fmt.Errorf("create production order: %w", err)
@@ -494,4 +576,19 @@ func (s *Store) nextProdNumber(tx *sql.Tx) string {
 		next++
 	}
 	return fmt.Sprintf("PROD%05d", next)
+}
+
+func first3(s string) string {
+	s = strings.ReplaceAll(s, " ", "")
+	if len(s) >= 3 {
+		return s[:3]
+	}
+	return s
+}
+
+func nilIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }

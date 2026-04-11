@@ -24,8 +24,26 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&in); err != nil {
 		return httperr.BadRequest(c, "Invalid JSON body")
 	}
-	if in.OutputVariantID == "" || in.OutputQuantity <= 0 {
-		return httperr.BadRequest(c, "output_variant_id and output_quantity are required")
+	if in.OutputQuantity <= 0 {
+		return httperr.BadRequest(c, "output_quantity is required")
+	}
+
+	// Validate: one of the 3 scenarios must be satisfied
+	hasVariant := in.OutputVariantID != ""
+	hasProductWithNewVariant := in.OutputProductID != "" && in.NewVariant != nil
+	hasNewProductWithNewVariant := in.NewProduct != nil && in.NewVariant != nil
+
+	if !hasVariant && !hasProductWithNewVariant && !hasNewProductWithNewVariant {
+		return httperr.BadRequest(c, "provide output_variant_id, or output_product_id + new_variant, or new_product + new_variant")
+	}
+	if in.NewVariant != nil && in.NewVariant.Name == "" {
+		return httperr.BadRequest(c, "new_variant.name is required")
+	}
+	if in.NewVariant != nil && in.NewVariant.Price <= 0 {
+		return httperr.BadRequest(c, "new_variant.price is required")
+	}
+	if in.NewProduct != nil && in.NewProduct.Name == "" {
+		return httperr.BadRequest(c, "new_product.name is required")
 	}
 
 	user := c.Locals("user").(*model.User)
@@ -35,13 +53,13 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	}
 	warehouseID := ""
 	if branchID != "" {
-		_ = h.store.db.QueryRow(`SELECT warehouse_id FROM branches WHERE id = $1`, branchID).Scan(&warehouseID)
+		_ = h.store.db.QueryRow(`SELECT id FROM warehouses WHERE branch_id = $1 LIMIT 1`, branchID).Scan(&warehouseID)
 	}
 
 	id, err := h.store.CreateProductionOrder(in, user.ID.String(), branchID, warehouseID)
 	if err != nil {
 		log.Println("create production order error:", err)
-		return httperr.Internal(c)
+		return c.Status(500).JSON(fiber.Map{"error": "INTERNAL_ERROR", "message": err.Error()})
 	}
 	return c.Status(http.StatusCreated).JSON(fiber.Map{"production_order_id": id})
 }
@@ -51,8 +69,14 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	offset := c.QueryInt("offset", 0)
 	status := c.Query("status")
 	search := c.Query("search")
+
+	user := c.Locals("user").(*model.User)
 	var branchID *string
-	if bid := c.Query("branch_id"); bid != "" {
+	if user.Role.Name == model.RoleStoreManager || user.Role.Name == model.RoleSalesPerson {
+		if user.BranchID != nil {
+			branchID = user.BranchID
+		}
+	} else if bid := c.Query("branch_id"); bid != "" {
 		branchID = &bid
 	}
 
