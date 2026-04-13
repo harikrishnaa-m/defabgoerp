@@ -41,6 +41,7 @@ import (
 	"defab-erp/internal/customer"
 	"defab-erp/internal/dashboard"
 	"defab-erp/internal/goodsreceipt"
+	"defab-erp/internal/jobinvoice"
 	"defab-erp/internal/joborder"
 	"defab-erp/internal/production"
 	"defab-erp/internal/purchase"
@@ -174,6 +175,9 @@ func main() {
 
 	jobOrderStore := joborder.NewStore(database)
 	jobOrderHandler := joborder.NewHandler(jobOrderStore)
+
+	jobInvoiceStore := jobinvoice.NewStore(database)
+	jobInvoiceHandler := jobinvoice.NewHandler(jobInvoiceStore)
 
 	productionStore := production.NewStore(database)
 	productionHandler := production.NewHandler(productionStore)
@@ -559,6 +563,17 @@ func main() {
 			),
 		),
 		productionHandler,
+	)
+
+	jobinvoice.RegisterRoutes(
+		protected.Group("/job-invoices",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		jobInvoiceHandler,
 	)
 
 	protected.Get("/me", func(c *fiber.Ctx) error {

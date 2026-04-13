@@ -192,6 +192,19 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 		return "", fmt.Errorf("update customer total_purchases: %w", err)
 	}
 
+	// Auto-create job invoice
+	invNum := s.nextInvoiceNumber(tx)
+	_, err = tx.Exec(`
+		INSERT INTO job_invoices
+			(invoice_number, job_order_id, branch_id, customer_id,
+			 sub_amount, discount_amount, gst_amount, net_amount, payment_status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+	`, invNum, jobID, branchParam, in.CustomerID,
+		round2(in.SubAmount), round2(in.DiscountAmount), round2(in.GSTAmount), round2(in.NetAmount), ps)
+	if err != nil {
+		return "", fmt.Errorf("create job invoice: %w", err)
+	}
+
 	return jobID, tx.Commit()
 }
 
@@ -827,6 +840,12 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		result["balance_due"] = round2(netAmt - tp)
 	}
 
+	// Job invoice number
+	var invoiceNum sql.NullString
+	if err := s.db.QueryRow(`SELECT invoice_number FROM job_invoices WHERE job_order_id = $1`, id).Scan(&invoiceNum); err == nil && invoiceNum.Valid {
+		result["invoice_number"] = invoiceNum.String
+	}
+
 	return result, nil
 }
 
@@ -946,4 +965,15 @@ func (s *Store) nextJobNumber(tx *sql.Tx) string {
 		next++
 	}
 	return fmt.Sprintf("JOB%05d", next)
+}
+
+func (s *Store) nextInvoiceNumber(tx *sql.Tx) string {
+	var max sql.NullString
+	tx.QueryRow(`SELECT MAX(invoice_number) FROM job_invoices WHERE invoice_number LIKE 'JINV%'`).Scan(&max)
+	next := 1
+	if max.Valid && len(max.String) > 4 {
+		fmt.Sscanf(max.String[4:], "%d", &next)
+		next++
+	}
+	return fmt.Sprintf("JINV%05d", next)
 }
