@@ -289,6 +289,12 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	gstAmount := taxTotal
 	netAmount := grandTotal
 
+	// Round net_amount to whole number; store the adjustment in round_off
+	exactNet := round2(netAmount)
+	roundedNet := math.Round(exactNet)
+	roundOff := round2(roundedNet - exactNet)
+	netAmount = roundedNet
+
 	invoiceStatus := paymentStatus
 	if invoiceStatus == "PAID" {
 		invoiceStatus = "PAID"
@@ -309,11 +315,11 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			 invoice_number, invoice_date,
 			 sub_amount, discount_amount, bill_discount, gst_amount, round_off,
 			 net_amount, paid_amount, status, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, $13, $14, $15)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		RETURNING id
 	`, salesOrderID, customerID, in.WarehouseID, channel, branchIDParam,
 		invoiceNumber, now,
-		round2(subtotal), round2(discountTotal), round2(billDiscount), round2(gstAmount),
+		round2(subtotal), round2(discountTotal), round2(billDiscount), round2(gstAmount), roundOff,
 		round2(netAmount), totalPaid, invoiceStatus, userID).Scan(&salesInvoiceID)
 	if err != nil {
 		return nil, fmt.Errorf("create sales invoice: %w", err)
