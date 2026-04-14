@@ -5,6 +5,7 @@ const (
 	RoleStoreManager    = "StoreManager"
 	RoleSalesPerson     = "SalesPerson"
 	RoleAccountsManager = "AccountsManager"
+	RoleEmployee        = "Employee"
 )
 
 var ValidRoles = map[string]bool{
@@ -12,4 +13,5 @@ var ValidRoles = map[string]bool{
 	RoleStoreManager:    true,
 	RoleSalesPerson:     true,
 	RoleAccountsManager: true,
+	RoleEmployee:        true,
 }

@@ -150,7 +150,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"id":            spID,
 		"employee_code": code,
 		"name":          name,
@@ -161,6 +161,122 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"branch_id":     nullStr(brID),
 		"branch_name":   branchName,
 		"created_at":    createdAt,
+	}
+
+	// ── Attendance details (if salesperson has a linked user) ──
+	if userID.Valid {
+		attendance, err := s.getAttendanceDetails(userID.String)
+		if err == nil {
+			result["attendance"] = attendance
+		}
+	}
+
+	// ── Sales report ──
+	salesReport, err := s.getSalesReport(id)
+	if err == nil {
+		result["sales_report"] = salesReport
+	}
+
+	return result, nil
+}
+
+func (s *Store) getAttendanceDetails(uid string) (map[string]interface{}, error) {
+	// Last 30 attendance records
+	rows, err := s.db.Query(`
+		SELECT a.date::text, a.punch_in::text, COALESCE(a.punch_out::text,'') AS punch_out,
+		       a.total_hours, a.notes
+		FROM attendance a
+		WHERE a.user_id = $1
+		ORDER BY a.date DESC
+		LIMIT 30
+	`, uid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var records []map[string]interface{}
+	for rows.Next() {
+		var date, punchIn, punchOut, notes string
+		var totalHours float64
+		if err := rows.Scan(&date, &punchIn, &punchOut, &totalHours, &notes); err != nil {
+			continue
+		}
+		rec := map[string]interface{}{
+			"date":        date,
+			"punch_in":    punchIn,
+			"total_hours": totalHours,
+			"notes":       notes,
+		}
+		if punchOut != "" {
+			rec["punch_out"] = punchOut
+		} else {
+			rec["punch_out"] = nil
+		}
+		records = append(records, rec)
+	}
+	if records == nil {
+		records = []map[string]interface{}{}
+	}
+
+	// Summary
+	var totalHours float64
+	var daysPresent int
+	s.db.QueryRow(`
+		SELECT COALESCE(SUM(total_hours),0), COUNT(*)
+		FROM attendance WHERE user_id = $1
+	`, uid).Scan(&totalHours, &daysPresent)
+
+	return map[string]interface{}{
+		"recent_records": records,
+		"total_hours":    totalHours,
+		"days_present":   daysPresent,
+	}, nil
+}
+
+func (s *Store) getSalesReport(salespersonID string) (map[string]interface{}, error) {
+	// Overall sales summary from sales_orders
+	var totalOrders int
+	var totalAmount float64
+	err := s.db.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(si.net_amount),0)
+		FROM sales_orders so
+		JOIN sales_invoices si ON si.sales_order_id = so.id
+		WHERE so.salesperson_id = $1
+	`, salespersonID).Scan(&totalOrders, &totalAmount)
+	if err != nil {
+		return nil, err
+	}
+
+	// This month
+	var monthOrders int
+	var monthAmount float64
+	s.db.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(si.net_amount),0)
+		FROM sales_orders so
+		JOIN sales_invoices si ON si.sales_order_id = so.id
+		WHERE so.salesperson_id = $1
+		  AND so.created_at >= date_trunc('month', CURRENT_DATE)
+	`, salespersonID).Scan(&monthOrders, &monthAmount)
+
+	// Today
+	var todayOrders int
+	var todayAmount float64
+	s.db.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(si.net_amount),0)
+		FROM sales_orders so
+		JOIN sales_invoices si ON si.sales_order_id = so.id
+		WHERE so.salesperson_id = $1
+		  AND so.created_at::date = CURRENT_DATE
+	`, salespersonID).Scan(&todayOrders, &todayAmount)
+
+	return map[string]interface{}{
+		"total_orders":      totalOrders,
+		"total_amount":      totalAmount,
+		"this_month_orders": monthOrders,
+		"this_month_amount": monthAmount,
+		"today_orders":      todayOrders,
+		"today_amount":      todayAmount,
 	}, nil
 }
 

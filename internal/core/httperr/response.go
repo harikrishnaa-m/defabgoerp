@@ -16,6 +16,13 @@ func NotFound(c *fiber.Ctx, msg string) error {
 	})
 }
 
+func Forbidden(c *fiber.Ctx, msg string) error {
+	return c.Status(403).JSON(fiber.Map{
+		"error":   "FORBIDDEN",
+		"message": msg,
+	})
+}
+
 func Conflict(c *fiber.Ctx, msg string) error {
 	return c.Status(409).JSON(fiber.Map{
 		"error":   "CONFLICT",
