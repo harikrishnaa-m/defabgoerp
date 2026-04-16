@@ -18,17 +18,16 @@ func NewHandler(s *Store) *Handler {
 	return &Handler{store: s}
 }
 
-type PunchInput struct {
-	Notes string `json:"notes"`
-}
-
 func (h *Handler) PunchIn(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 	var in PunchInput
 	c.BodyParser(&in)
 
+	// Branch from request body, else user's default branch
 	branchID := ""
-	if user.BranchID != nil {
+	if in.BranchID != nil && *in.BranchID != "" {
+		branchID = *in.BranchID
+	} else if user.BranchID != nil {
 		branchID = *user.BranchID
 	}
 
@@ -51,7 +50,7 @@ func (h *Handler) PunchOut(c *fiber.Ctx) error {
 	result, err := h.store.PunchOut(user.ID.String(), in.Notes)
 	if err != nil {
 		msg := err.Error()
-		if msg == "no punch-in found for today" || msg == "already punched out today" {
+		if msg == "no punch-in found for today" {
 			return httperr.BadRequest(c, msg)
 		}
 		log.Println("punch out error:", err)
@@ -127,5 +126,54 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 		log.Println("get attendance by id error:", err)
 		return httperr.Internal(c)
 	}
+	return c.JSON(result)
+}
+
+// UploadExcel handles branch-manager Excel attendance uploads.
+// POST /attendance/upload  (multipart: file + optional branch_id)
+func (h *Handler) UploadExcel(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+
+	// Only StoreManager and SuperAdmin may upload
+	if user.Role.Name != model.RoleSuperAdmin && user.Role.Name != model.RoleStoreManager {
+		return httperr.Forbidden(c, "only store managers and admins can upload attendance")
+	}
+
+	// Determine target branch
+	var branchID string
+	if user.Role.Name == model.RoleStoreManager {
+		if user.BranchID == nil {
+			return httperr.BadRequest(c, "your account has no branch assigned")
+		}
+		branchID = *user.BranchID
+	} else {
+		branchID = c.FormValue("branch_id")
+		if branchID == "" {
+			return httperr.BadRequest(c, "branch_id is required")
+		}
+	}
+
+	// Read uploaded file
+	fh, err := c.FormFile("file")
+	if err != nil {
+		return httperr.BadRequest(c, "file is required")
+	}
+
+	// Parse the biometric attendance Excel
+	records, err := parseAttendanceExcel(fh)
+	if err != nil {
+		return httperr.BadRequest(c, err.Error())
+	}
+	if len(records) == 0 {
+		return httperr.BadRequest(c, "no attendance records found in the file")
+	}
+
+	// Bulk-create attendance rows (and auto-create missing employees)
+	result, err := h.store.BulkCreateFromUpload(records, branchID)
+	if err != nil {
+		log.Println("upload attendance error:", err)
+		return httperr.Internal(c)
+	}
+
 	return c.JSON(result)
 }
