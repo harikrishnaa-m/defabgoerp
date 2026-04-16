@@ -175,7 +175,9 @@ func (s *Store) List(userID *string, branchID *string, search string, limit, off
 		       COALESCE(att.sessions, 0),
 		       att.first_in, att.last_out,
 		       COALESCE(att.total_hours, 0),
-		       COALESCE(att.has_open, false)
+		       COALESCE(att.has_open, false),
+		       COALESCE(att.shift, ''),
+		       COALESCE(att.department, '')
 		FROM users u
 		LEFT JOIN branches b ON b.id = u.branch_id
 		LEFT JOIN roles r ON r.id = u.role_id
@@ -184,7 +186,9 @@ func (s *Store) List(userID *string, branchID *string, search string, limit, off
 		           MIN(a.punch_in)              AS first_in,
 		           MAX(a.punch_out)             AS last_out,
 		           SUM(COALESCE(a.total_hours,0)) AS total_hours,
-		           BOOL_OR(a.punch_out IS NULL) AS has_open
+		           BOOL_OR(a.punch_out IS NULL) AS has_open,
+		           (ARRAY_AGG(a.shift ORDER BY a.session_seq))[1] AS shift,
+		           (ARRAY_AGG(a.department ORDER BY a.session_seq))[1] AS department
 		    FROM attendance a
 		    WHERE a.user_id = u.id AND a.date = $%d
 		) att ON true
@@ -210,9 +214,11 @@ func (s *Store) List(userID *string, branchID *string, search string, limit, off
 			lastOut      sql.NullTime
 			totalHours   float64
 			hasOpen      bool
+			shift        string
+			department   string
 		)
 		if err := rows.Scan(&uid, &uname, &brID, &brName, &roleName,
-			&sessions, &firstIn, &lastOut, &totalHours, &hasOpen); err != nil {
+			&sessions, &firstIn, &lastOut, &totalHours, &hasOpen, &shift, &department); err != nil {
 			return nil, 0, err
 		}
 
@@ -236,6 +242,8 @@ func (s *Store) List(userID *string, branchID *string, search string, limit, off
 			"total_hours": totalHours,
 			"sessions":    sessions,
 			"status":      status,
+			"shift":       shift,
+			"department":  department,
 		}
 		if firstIn.Valid {
 			row["punch_in"] = firstIn.Time
@@ -283,7 +291,8 @@ func (s *Store) GetByID(targetUserID string, dateFrom, dateTo string) (map[strin
 	// Fetch all attendance records (sessions) in range
 	rows, err := s.db.Query(`
 		SELECT a.date::text, a.punch_in, a.punch_out, a.total_hours, a.notes,
-		       a.session_seq, COALESCE(br.name, '') AS punch_branch
+		       a.session_seq, COALESCE(br.name, '') AS punch_branch,
+		       COALESCE(a.shift, '') AS shift, COALESCE(a.department, '') AS department
 		FROM attendance a
 		LEFT JOIN branches br ON br.id = a.branch_id
 		WHERE a.user_id = $1 AND a.date >= $2 AND a.date <= $3
@@ -302,17 +311,19 @@ func (s *Store) GetByID(targetUserID string, dateFrom, dateTo string) (map[strin
 		Notes      string      `json:"notes"`
 		SessionSeq int         `json:"session_seq"`
 		BranchName string      `json:"branch_name"`
+		Shift      string      `json:"shift"`
+		Department string      `json:"department"`
 	}
 	dateSessionsMap := map[string][]session{}
 	dateHoursMap := map[string]float64{}
 
 	for rows.Next() {
-		var date, notes, branchName string
+		var date, notes, branchName, shift, department string
 		var punchIn time.Time
 		var punchOut sql.NullTime
 		var totalHours float64
 		var sessionSeq int
-		if err := rows.Scan(&date, &punchIn, &punchOut, &totalHours, &notes, &sessionSeq, &branchName); err != nil {
+		if err := rows.Scan(&date, &punchIn, &punchOut, &totalHours, &notes, &sessionSeq, &branchName, &shift, &department); err != nil {
 			continue
 		}
 		sess := session{
@@ -321,6 +332,8 @@ func (s *Store) GetByID(targetUserID string, dateFrom, dateTo string) (map[strin
 			Notes:      notes,
 			SessionSeq: sessionSeq,
 			BranchName: branchName,
+			Shift:      shift,
+			Department: department,
 		}
 		if punchOut.Valid {
 			sess.PunchOut = punchOut.Time
@@ -455,12 +468,10 @@ func (s *Store) BulkCreateFromUpload(records []ExcelPunchRecord, branchID string
 				totalHours = math.Round(p.Out.Sub(*p.In).Hours()*100) / 100
 			}
 
-			notesText := fmt.Sprintf("Dept: %s, Shift: %s", rec.Department, rec.Shift)
-
 			_, err := s.db.Exec(`
-				INSERT INTO attendance (user_id, branch_id, date, punch_in, punch_out, total_hours, notes, session_seq, source)
-				VALUES ($1, $2::uuid, $3, $4, $5, $6, $7, $8, 'upload')
-			`, userID, branchID, date, *p.In, punchOut, totalHours, notesText, sessionSeq)
+				INSERT INTO attendance (user_id, branch_id, date, punch_in, punch_out, total_hours, notes, session_seq, source, shift, department)
+				VALUES ($1, $2::uuid, $3, $4, $5, $6, '', $7, 'upload', $8, $9)
+			`, userID, branchID, date, *p.In, punchOut, totalHours, sessionSeq, rec.Shift, rec.Department)
 			if err != nil {
 				detail.Message += fmt.Sprintf("; session %d error: %s", sessionSeq, err.Error())
 				continue

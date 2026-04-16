@@ -8,6 +8,10 @@ ALTER TABLE attendance ADD COLUMN IF NOT EXISTS session_seq SMALLINT NOT NULL DE
 -- Track whether attendance was recorded via self-punch or excel upload
 ALTER TABLE attendance ADD COLUMN IF NOT EXISTS source VARCHAR(20) NOT NULL DEFAULT 'self';
 
+-- Shift and department from biometric system
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS shift VARCHAR(20) DEFAULT '';
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS department VARCHAR(100) DEFAULT '';
+
 -- Add employee_code to users for biometric system mapping
 ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_code VARCHAR(50);
 
