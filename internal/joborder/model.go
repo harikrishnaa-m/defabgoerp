@@ -3,26 +3,29 @@ package joborder
 import "time"
 
 type JobOrder struct {
-	ID                   string     `json:"id"`
-	JobNumber            string     `json:"job_number"`
-	CustomerID           string     `json:"customer_id"`
-	BranchID             *string    `json:"branch_id"`
-	WarehouseID          *string    `json:"warehouse_id"`
-	JobType              string     `json:"job_type"`
-	MaterialSource       string     `json:"material_source"`
-	Status               string     `json:"status"`
-	PaymentStatus        string     `json:"payment_status"`
-	ReceivedDate         time.Time  `json:"received_date"`
-	ExpectedDeliveryDate *string    `json:"expected_delivery_date"`
-	ActualDeliveryDate   *time.Time `json:"actual_delivery_date"`
-	SubAmount            float64    `json:"sub_amount"`
-	DiscountAmount       float64    `json:"discount_amount"`
-	GSTAmount            float64    `json:"gst_amount"`
-	NetAmount            float64    `json:"net_amount"`
-	Notes                string     `json:"notes"`
-	CreatedBy            string     `json:"created_by"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	ID                    string     `json:"id"`
+	JobNumber             string     `json:"job_number"`
+	CustomerID            string     `json:"customer_id"`
+	BranchID              *string    `json:"branch_id"`
+	WarehouseID           *string    `json:"warehouse_id"`
+	JobType               string     `json:"job_type"`
+	MaterialSource        string     `json:"material_source"`
+	Status                string     `json:"status"`
+	PaymentStatus         string     `json:"payment_status"`
+	ReceivedDate          time.Time  `json:"received_date"`
+	ExpectedDeliveryDate  *string    `json:"expected_delivery_date"`
+	ActualDeliveryDate    *time.Time `json:"actual_delivery_date"`
+	SubAmount             float64    `json:"sub_amount"`
+	DiscountAmount        float64    `json:"discount_amount"`
+	GSTAmount             float64    `json:"gst_amount"`
+	NetAmount             float64    `json:"net_amount"`
+	Notes                 string     `json:"notes"`
+	SampleProvided        bool       `json:"sample_provided"`
+	SampleDescription     string     `json:"sample_description"`
+	MeasurementBillNumber string     `json:"measurement_bill_number"`
+	CreatedBy             string     `json:"created_by"`
+	CreatedAt             time.Time  `json:"created_at"`
+	UpdatedAt             time.Time  `json:"updated_at"`
 }
 
 type JobOrderItem struct {
