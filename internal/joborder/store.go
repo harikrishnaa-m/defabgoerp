@@ -75,13 +75,15 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 			(job_number, customer_id, branch_id, warehouse_id, job_type, material_source,
 			 status, payment_status, expected_delivery_date,
 			 sub_amount, discount_amount, gst_amount, net_amount,
-			 notes, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,'RECEIVED','UNPAID',$7,$8,$9,$10,$11,$12,$13)
+			 notes, sample_provided, sample_description, measurement_bill_number,
+			 created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,'RECEIVED','UNPAID',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 		RETURNING id
 	`, jobNumber, in.CustomerID, branchParam, whParam, in.JobType, in.MaterialSource,
 		in.ExpectedDeliveryDate,
 		round2(in.SubAmount), round2(in.DiscountAmount), round2(in.GSTAmount), round2(in.NetAmount),
-		in.Notes, userID).Scan(&jobID)
+		in.Notes, in.SampleProvided, in.SampleDescription, in.MeasurementBillNumber,
+		userID).Scan(&jobID)
 	if err != nil {
 		return "", fmt.Errorf("create job order: %w", err)
 	}
@@ -274,6 +276,21 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 		n++
 		q += fmt.Sprintf(", notes = $%d", n)
 		args = append(args, *in.Notes)
+	}
+	if in.SampleProvided != nil {
+		n++
+		q += fmt.Sprintf(", sample_provided = $%d", n)
+		args = append(args, *in.SampleProvided)
+	}
+	if in.SampleDescription != nil {
+		n++
+		q += fmt.Sprintf(", sample_description = $%d", n)
+		args = append(args, *in.SampleDescription)
+	}
+	if in.MeasurementBillNumber != nil {
+		n++
+		q += fmt.Sprintf(", measurement_bill_number = $%d", n)
+		args = append(args, *in.MeasurementBillNumber)
 	}
 	if in.SubAmount != nil {
 		n++
@@ -587,7 +604,8 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 		       jo.job_type, jo.material_source, jo.status, jo.payment_status,
 		       jo.received_date, jo.expected_delivery_date, jo.actual_delivery_date,
 		       jo.sub_amount, jo.discount_amount, jo.gst_amount, jo.net_amount,
-		       jo.notes, jo.created_by, jo.created_at,
+		       jo.notes, jo.sample_provided, jo.sample_description, jo.measurement_bill_number,
+		       jo.created_by, jo.created_at,
 		       c.name AS customer_name, c.phone AS customer_phone,
 		       COALESCE(b.name, '') AS branch_name,
 		       COALESCE(u.name, '') AS created_by_name
@@ -611,7 +629,9 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 		var (
 			id, jobNum, custID, jobTyp, matSrc, st, paySt string
 			subAmt, discAmt, gstAmt, netAmt               float64
-			notes, createdBy, custName, custPhone         string
+			notes, sampleDesc, measBillNum                string
+			sampleProvided                                bool
+			createdBy, custName, custPhone                string
 			branchName, createdByName                     string
 			branchIDVal, whIDVal                          sql.NullString
 			expectedDate                                  sql.NullString
@@ -622,34 +642,38 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			&jobTyp, &matSrc, &st, &paySt,
 			&receivedDate, &expectedDate, &actualDate,
 			&subAmt, &discAmt, &gstAmt, &netAmt,
-			&notes, &createdBy, &createdAt,
+			&notes, &sampleProvided, &sampleDesc, &measBillNum,
+			&createdBy, &createdAt,
 			&custName, &custPhone, &branchName, &createdByName); err != nil {
 			return nil, 0, err
 		}
 		item := map[string]interface{}{
-			"id":                     id,
-			"job_number":             jobNum,
-			"customer_id":            custID,
-			"customer_name":          custName,
-			"customer_phone":         custPhone,
-			"branch_id":              branchIDVal.String,
-			"branch_name":            branchName,
-			"warehouse_id":           whIDVal.String,
-			"job_type":               jobTyp,
-			"material_source":        matSrc,
-			"status":                 st,
-			"payment_status":         paySt,
-			"received_date":          receivedDate.Time,
-			"expected_delivery_date": expectedDate.String,
-			"actual_delivery_date":   nil,
-			"sub_amount":             subAmt,
-			"discount_amount":        discAmt,
-			"gst_amount":             gstAmt,
-			"net_amount":             netAmt,
-			"notes":                  notes,
-			"created_by":             createdBy,
-			"created_by_name":        createdByName,
-			"created_at":             createdAt.Time,
+			"id":                      id,
+			"job_number":              jobNum,
+			"customer_id":             custID,
+			"customer_name":           custName,
+			"customer_phone":          custPhone,
+			"branch_id":               branchIDVal.String,
+			"branch_name":             branchName,
+			"warehouse_id":            whIDVal.String,
+			"job_type":                jobTyp,
+			"material_source":         matSrc,
+			"status":                  st,
+			"payment_status":          paySt,
+			"received_date":           receivedDate.Time,
+			"expected_delivery_date":  expectedDate.String,
+			"actual_delivery_date":    nil,
+			"sub_amount":              subAmt,
+			"discount_amount":         discAmt,
+			"gst_amount":              gstAmt,
+			"net_amount":              netAmt,
+			"notes":                   notes,
+			"sample_provided":         sampleProvided,
+			"sample_description":      sampleDesc,
+			"measurement_bill_number": measBillNum,
+			"created_by":              createdBy,
+			"created_by_name":         createdByName,
+			"created_at":              createdAt.Time,
 		}
 		if actualDate.Valid {
 			item["actual_delivery_date"] = actualDate.Time
@@ -670,7 +694,9 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var (
 		jobID, jobNum, custID, jobTyp, matSrc, st, paySt string
 		subAmt, discAmt, gstAmt, netAmt                  float64
-		notes, createdBy                                 string
+		notes, sampleDesc, measBillNum                   string
+		sampleProvided                                   bool
+		createdBy                                        string
 		branchIDVal, whIDVal                             sql.NullString
 		expectedDate                                     sql.NullString
 		actualDate                                       sql.NullTime
@@ -681,38 +707,43 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		       job_type, material_source, status, payment_status,
 		       received_date, expected_delivery_date, actual_delivery_date,
 		       sub_amount, discount_amount, gst_amount, net_amount,
-		       notes, created_by, created_at, updated_at
+		       notes, sample_provided, sample_description, measurement_bill_number,
+		       created_by, created_at, updated_at
 		FROM job_orders WHERE id = $1
 	`, id).Scan(&jobID, &jobNum, &custID, &branchIDVal, &whIDVal,
 		&jobTyp, &matSrc, &st, &paySt,
 		&receivedDate, &expectedDate, &actualDate,
 		&subAmt, &discAmt, &gstAmt, &netAmt,
-		&notes, &createdBy, &createdAt, &updatedAt)
+		&notes, &sampleProvided, &sampleDesc, &measBillNum,
+		&createdBy, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 
 	result := map[string]interface{}{
-		"id":                     jobID,
-		"job_number":             jobNum,
-		"customer_id":            custID,
-		"branch_id":              branchIDVal.String,
-		"warehouse_id":           whIDVal.String,
-		"job_type":               jobTyp,
-		"material_source":        matSrc,
-		"status":                 st,
-		"payment_status":         paySt,
-		"received_date":          receivedDate.Time,
-		"expected_delivery_date": expectedDate.String,
-		"actual_delivery_date":   nil,
-		"sub_amount":             subAmt,
-		"discount_amount":        discAmt,
-		"gst_amount":             gstAmt,
-		"net_amount":             netAmt,
-		"notes":                  notes,
-		"created_by":             createdBy,
-		"created_at":             createdAt.Time,
-		"updated_at":             updatedAt.Time,
+		"id":                      jobID,
+		"job_number":              jobNum,
+		"customer_id":             custID,
+		"branch_id":               branchIDVal.String,
+		"warehouse_id":            whIDVal.String,
+		"job_type":                jobTyp,
+		"material_source":         matSrc,
+		"status":                  st,
+		"payment_status":          paySt,
+		"received_date":           receivedDate.Time,
+		"expected_delivery_date":  expectedDate.String,
+		"actual_delivery_date":    nil,
+		"sub_amount":              subAmt,
+		"discount_amount":         discAmt,
+		"gst_amount":              gstAmt,
+		"net_amount":              netAmt,
+		"notes":                   notes,
+		"sample_provided":         sampleProvided,
+		"sample_description":      sampleDesc,
+		"measurement_bill_number": measBillNum,
+		"created_by":              createdBy,
+		"created_at":              createdAt.Time,
+		"updated_at":              updatedAt.Time,
 	}
 	if actualDate.Valid {
 		result["actual_delivery_date"] = actualDate.Time

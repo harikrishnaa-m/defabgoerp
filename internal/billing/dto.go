@@ -21,6 +21,7 @@ type CreateBillInput struct {
 	CustomerPhone string `json:"customer_phone"`
 	CustomerName  string `json:"customer_name"`
 	CustomerEmail string `json:"customer_email"`
+	GSTNumber     string `json:"gst_number"` // optional; saved to customer record
 
 	// Sale context
 	Channel       string `json:"channel"`        // STORE or ONLINE (defaults to STORE)

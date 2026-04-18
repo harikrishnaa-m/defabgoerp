@@ -17,38 +17,44 @@ type CreateJobOrderMaterialInput struct {
 }
 
 type CreateJobOrderInput struct {
-	CustomerID           string                        `json:"customer_id"`
-	CustomerPhone        string                        `json:"customer_phone"`
-	CustomerName         string                        `json:"customer_name"`
-	CustomerEmail        string                        `json:"customer_email"`
-	JobType              string                        `json:"job_type"`
-	MaterialSource       string                        `json:"material_source"` // CUSTOMER or STORE
-	ExpectedDeliveryDate *string                       `json:"expected_delivery_date"`
-	Notes                string                        `json:"notes"`
-	SubAmount            float64                       `json:"sub_amount"`
-	DiscountAmount       float64                       `json:"discount_amount"`
-	GSTAmount            float64                       `json:"gst_amount"`
-	NetAmount            float64                       `json:"net_amount"`
-	Items                []CreateJobOrderItemInput     `json:"items"`
-	Materials            []CreateJobOrderMaterialInput `json:"materials"`
-	Payments             []PaymentInput                `json:"payments"`
+	CustomerID            string                        `json:"customer_id"`
+	CustomerPhone         string                        `json:"customer_phone"`
+	CustomerName          string                        `json:"customer_name"`
+	CustomerEmail         string                        `json:"customer_email"`
+	JobType               string                        `json:"job_type"`
+	MaterialSource        string                        `json:"material_source"` // CUSTOMER or STORE
+	ExpectedDeliveryDate  *string                       `json:"expected_delivery_date"`
+	Notes                 string                        `json:"notes"`
+	SampleProvided        bool                          `json:"sample_provided"`
+	SampleDescription     string                        `json:"sample_description"`
+	MeasurementBillNumber string                        `json:"measurement_bill_number"`
+	SubAmount             float64                       `json:"sub_amount"`
+	DiscountAmount        float64                       `json:"discount_amount"`
+	GSTAmount             float64                       `json:"gst_amount"`
+	NetAmount             float64                       `json:"net_amount"`
+	Items                 []CreateJobOrderItemInput     `json:"items"`
+	Materials             []CreateJobOrderMaterialInput `json:"materials"`
+	Payments              []PaymentInput                `json:"payments"`
 }
 
 type UpdateJobOrderInput struct {
-	CustomerID           *string                       `json:"customer_id"`
-	CustomerPhone        string                        `json:"customer_phone"`
-	CustomerName         string                        `json:"customer_name"`
-	CustomerEmail        string                        `json:"customer_email"`
-	JobType              *string                       `json:"job_type"`
-	MaterialSource       *string                       `json:"material_source"`
-	ExpectedDeliveryDate *string                       `json:"expected_delivery_date"`
-	Notes                *string                       `json:"notes"`
-	SubAmount            *float64                      `json:"sub_amount"`
-	DiscountAmount       *float64                      `json:"discount_amount"`
-	GSTAmount            *float64                      `json:"gst_amount"`
-	NetAmount            *float64                      `json:"net_amount"`
-	Items                []CreateJobOrderItemInput     `json:"items"`
-	Materials            []CreateJobOrderMaterialInput `json:"materials"`
+	CustomerID            *string                       `json:"customer_id"`
+	CustomerPhone         string                        `json:"customer_phone"`
+	CustomerName          string                        `json:"customer_name"`
+	CustomerEmail         string                        `json:"customer_email"`
+	JobType               *string                       `json:"job_type"`
+	MaterialSource        *string                       `json:"material_source"`
+	ExpectedDeliveryDate  *string                       `json:"expected_delivery_date"`
+	Notes                 *string                       `json:"notes"`
+	SampleProvided        *bool                         `json:"sample_provided"`
+	SampleDescription     *string                       `json:"sample_description"`
+	MeasurementBillNumber *string                       `json:"measurement_bill_number"`
+	SubAmount             *float64                      `json:"sub_amount"`
+	DiscountAmount        *float64                      `json:"discount_amount"`
+	GSTAmount             *float64                      `json:"gst_amount"`
+	NetAmount             *float64                      `json:"net_amount"`
+	Items                 []CreateJobOrderItemInput     `json:"items"`
+	Materials             []CreateJobOrderMaterialInput `json:"materials"`
 }
 
 type StatusUpdateInput struct {

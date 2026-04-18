@@ -52,9 +52,10 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	// 1. Find or create customer
 	// ──────────────────────────────────────────
 	var customerID string
+	var customerGST string
 	err = tx.QueryRow(
-		`SELECT id FROM customers WHERE phone = $1`, in.CustomerPhone,
-	).Scan(&customerID)
+		`SELECT id, COALESCE(gst_number, '') FROM customers WHERE phone = $1`, in.CustomerPhone,
+	).Scan(&customerID, &customerGST)
 
 	if err == sql.ErrNoRows {
 		// Auto-generate customer code
@@ -68,15 +69,23 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		code := fmt.Sprintf("CUS%04d", next)
 
 		err = tx.QueryRow(`
-			INSERT INTO customers (customer_code, name, phone, email)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO customers (customer_code, name, phone, email, gst_number)
+			VALUES ($1, $2, $3, $4, $5)
 			RETURNING id
-		`, code, in.CustomerName, in.CustomerPhone, in.CustomerEmail).Scan(&customerID)
+		`, code, in.CustomerName, in.CustomerPhone, in.CustomerEmail, in.GSTNumber).Scan(&customerID)
 		if err != nil {
 			return nil, fmt.Errorf("create customer: %w", err)
 		}
+		customerGST = in.GSTNumber
 	} else if err != nil {
 		return nil, fmt.Errorf("find customer: %w", err)
+	} else if in.GSTNumber != "" {
+		// Update GST number on existing customer if provided
+		_, err = tx.Exec(`UPDATE customers SET gst_number = $1, updated_at = NOW() WHERE id = $2`, in.GSTNumber, customerID)
+		if err != nil {
+			return nil, fmt.Errorf("update customer gst: %w", err)
+		}
+		customerGST = in.GSTNumber
 	}
 
 	// ──────────────────────────────────────────
@@ -480,10 +489,11 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		"invoice_date":     now.Format("2006-01-02 15:04:05"),
 
 		// Customer
-		"customer_id":    customerID,
-		"customer_name":  in.CustomerName,
-		"customer_phone": in.CustomerPhone,
-		"customer_email": in.CustomerEmail,
+		"customer_id":         customerID,
+		"customer_name":       in.CustomerName,
+		"customer_phone":      in.CustomerPhone,
+		"customer_email":      in.CustomerEmail,
+		"customer_gst_number": customerGST,
 
 		// Context
 		"channel":          channel,
@@ -518,6 +528,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 // GetByID returns a bill (sales invoice) with full details.
 func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var invoiceID, invoiceNumber, soID, soNumber, customerID, customerName string
+	var customerGST string
 	var warehouseID, warehouseName, channel, status, createdAt string
 	var branchID, branchName, salespersonName sql.NullString
 	var subAmount, discountAmount, billDiscountAmt, gstAmount, roundOff, netAmount, paidAmount float64
@@ -525,6 +536,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	err := s.db.QueryRow(`
 		SELECT si.id, si.invoice_number, si.sales_order_id, so.so_number,
 		       si.customer_id, c.name AS customer_name,
+		       COALESCE(c.gst_number, '') AS customer_gst_number,
 		       si.warehouse_id, w.name AS warehouse_name,
 		       si.channel, si.branch_id, COALESCE(b.name, ''),
 		       si.sub_amount, si.discount_amount, si.bill_discount, si.gst_amount,
@@ -540,7 +552,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		WHERE si.id = $1
 	`, id).Scan(
 		&invoiceID, &invoiceNumber, &soID, &soNumber,
-		&customerID, &customerName,
+		&customerID, &customerName, &customerGST,
 		&warehouseID, &warehouseName,
 		&channel, &branchID, &branchName,
 		&subAmount, &discountAmount, &billDiscountAmt, &gstAmount,
@@ -627,31 +639,32 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	}
 
 	result := map[string]interface{}{
-		"id":               invoiceID,
-		"invoice_number":   invoiceNumber,
-		"sales_order_id":   soID,
-		"so_number":        soNumber,
-		"customer_id":      customerID,
-		"customer_name":    customerName,
-		"warehouse_id":     warehouseID,
-		"warehouse_name":   warehouseName,
-		"channel":          channel,
-		"sub_amount":       round2(subAmount),
-		"discount_amount":  round2(discountAmount),
-		"bill_discount":    round2(billDiscountAmt),
-		"cgst":             round2(gstAmount / 2),
-		"sgst":             round2(gstAmount / 2),
-		"total_gst":        round2(gstAmount),
-		"gst_amount":       round2(gstAmount),
-		"round_off":        round2(roundOff),
-		"net_amount":       round2(netAmount),
-		"paid_amount":      round2(paidAmount),
-		"balance_due":      round2(netAmount - paidAmount),
-		"status":           status,
-		"created_at":       createdAt,
-		"salesperson_name": salespersonName.String,
-		"items":            items,
-		"payments":         payments,
+		"id":                  invoiceID,
+		"invoice_number":      invoiceNumber,
+		"sales_order_id":      soID,
+		"so_number":           soNumber,
+		"customer_id":         customerID,
+		"customer_name":       customerName,
+		"customer_gst_number": customerGST,
+		"warehouse_id":        warehouseID,
+		"warehouse_name":      warehouseName,
+		"channel":             channel,
+		"sub_amount":          round2(subAmount),
+		"discount_amount":     round2(discountAmount),
+		"bill_discount":       round2(billDiscountAmt),
+		"cgst":                round2(gstAmount / 2),
+		"sgst":                round2(gstAmount / 2),
+		"total_gst":           round2(gstAmount),
+		"gst_amount":          round2(gstAmount),
+		"round_off":           round2(roundOff),
+		"net_amount":          round2(netAmount),
+		"paid_amount":         round2(paidAmount),
+		"balance_due":         round2(netAmount - paidAmount),
+		"status":              status,
+		"created_at":          createdAt,
+		"salesperson_name":    salespersonName.String,
+		"items":               items,
+		"payments":            payments,
 	}
 
 	if branchID.Valid {
@@ -739,16 +752,16 @@ func (s *Store) GetSalespersonByUserID(userID string) (string, error) {
 
 // GetCustomerByPhone returns customer details by phone number.
 func (s *Store) GetCustomerByPhone(phone string) (map[string]interface{}, error) {
-	var id, code, name, email string
+	var id, code, name, email, gstNumber string
 	var ph sql.NullString
 	var totalPurchases float64
 	var createdAt string
 
 	err := s.db.QueryRow(`
 		SELECT id, customer_code, name, COALESCE(phone, ''), COALESCE(email, ''),
-		       total_purchases, created_at::text
+		       COALESCE(gst_number, ''), total_purchases, created_at::text
 		FROM customers WHERE phone = $1 AND is_active = true
-	`, phone).Scan(&id, &code, &name, &ph, &email, &totalPurchases, &createdAt)
+	`, phone).Scan(&id, &code, &name, &ph, &email, &gstNumber, &totalPurchases, &createdAt)
 	if err != nil {
 		return nil, err
 	}
@@ -759,6 +772,7 @@ func (s *Store) GetCustomerByPhone(phone string) (map[string]interface{}, error)
 		"name":            name,
 		"phone":           ph.String,
 		"email":           email,
+		"gst_number":      gstNumber,
 		"total_purchases": round2(totalPurchases),
 		"created_at":      createdAt,
 	}, nil

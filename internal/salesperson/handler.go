@@ -114,7 +114,11 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 		}
 	}
 
-	result, err := h.store.GetByID(id)
+	result, err := h.store.GetByID(id, SalesFilter{
+		From:       c.Query("from"),
+		To:         c.Query("to"),
+		CategoryID: c.Query("category_id"),
+	})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return httperr.NotFound(c, "Salesperson not found")
@@ -161,7 +165,7 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		return httperr.Internal(c)
 	}
 
-	result, err := h.store.GetByID(id)
+	result, err := h.store.GetByID(id, SalesFilter{})
 	if err != nil {
 		log.Println("fetch salesperson after update error:", err)
 		return httperr.Internal(c)

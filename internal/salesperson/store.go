@@ -3,6 +3,7 @@ package salesperson
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	"defab-erp/internal/auth"
 )
@@ -131,7 +132,7 @@ func (s *Store) List(branchID *string, limit, offset int) ([]map[string]interfac
 	return results, nil
 }
 
-func (s *Store) GetByID(id string) (map[string]interface{}, error) {
+func (s *Store) GetByID(id string, f SalesFilter) (map[string]interface{}, error) {
 	var spID, code, name, createdAt string
 	var phone, email, userID, brID sql.NullString
 	var branchName string
@@ -172,8 +173,10 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	}
 
 	// ── Sales report ──
-	salesReport, err := s.getSalesReport(id)
-	if err == nil {
+	salesReport, err := s.getSalesReport(id, f)
+	if err != nil {
+		log.Println("getSalesReport error:", err)
+	} else {
 		result["sales_report"] = salesReport
 	}
 
@@ -234,21 +237,60 @@ func (s *Store) getAttendanceDetails(uid string) (map[string]interface{}, error)
 	}, nil
 }
 
-func (s *Store) getSalesReport(salespersonID string) (map[string]interface{}, error) {
-	// Overall sales summary from sales_orders
+func (s *Store) getSalesReport(salespersonID string, f SalesFilter) (map[string]interface{}, error) {
+	// ── Build dynamic WHERE for date & category filters ──
+	baseJoin := `FROM sales_orders so
+		JOIN sales_invoices si ON si.sales_order_id = so.id`
+	where := ` WHERE so.salesperson_id = $1`
+	args := []interface{}{salespersonID}
+	n := 1
+
+	if f.CategoryID != "" {
+		baseJoin += `
+		JOIN sales_order_items soi ON soi.sales_order_id = so.id
+		JOIN variants v ON v.id = soi.variant_id
+		JOIN products p ON p.id = v.product_id`
+		n++
+		where += fmt.Sprintf(` AND p.category_id = $%d`, n)
+		args = append(args, f.CategoryID)
+	}
+	if f.From != "" {
+		n++
+		where += fmt.Sprintf(` AND so.created_at >= $%d::date`, n)
+		args = append(args, f.From)
+	}
+	if f.To != "" {
+		n++
+		where += fmt.Sprintf(` AND so.created_at < ($%d::date + INTERVAL '1 day')`, n)
+		args = append(args, f.To)
+	}
+
+	// Use DISTINCT when category join may duplicate rows
+	countExpr := "COUNT(*)"
+	if f.CategoryID != "" {
+		countExpr = "COUNT(DISTINCT so.id)"
+	}
+
+	// ── Summary (filtered) ──
 	var totalOrders int
 	var totalAmount float64
-	err := s.db.QueryRow(`
-		SELECT COUNT(*), COALESCE(SUM(si.net_amount),0)
-		FROM sales_orders so
-		JOIN sales_invoices si ON si.sales_order_id = so.id
-		WHERE so.salesperson_id = $1
-	`, salespersonID).Scan(&totalOrders, &totalAmount)
+	filteredQ := fmt.Sprintf(`SELECT %s, COALESCE(SUM(si.net_amount),0) %s %s`, countExpr, baseJoin, where)
+	err := s.db.QueryRow(filteredQ, args...).Scan(&totalOrders, &totalAmount)
 	if err != nil {
 		return nil, err
 	}
 
-	// This month
+	// ── Overall summary (always unfiltered) ──
+	var allOrders int
+	var allAmount float64
+	s.db.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(si.net_amount),0)
+		FROM sales_orders so
+		JOIN sales_invoices si ON si.sales_order_id = so.id
+		WHERE so.salesperson_id = $1
+	`, salespersonID).Scan(&allOrders, &allAmount)
+
+	// ── This month (unfiltered) ──
 	var monthOrders int
 	var monthAmount float64
 	s.db.QueryRow(`
@@ -259,7 +301,7 @@ func (s *Store) getSalesReport(salespersonID string) (map[string]interface{}, er
 		  AND so.created_at >= date_trunc('month', CURRENT_DATE)
 	`, salespersonID).Scan(&monthOrders, &monthAmount)
 
-	// Today
+	// ── Today (unfiltered) ──
 	var todayOrders int
 	var todayAmount float64
 	s.db.QueryRow(`
@@ -270,14 +312,136 @@ func (s *Store) getSalesReport(salespersonID string) (map[string]interface{}, er
 		  AND so.created_at::date = CURRENT_DATE
 	`, salespersonID).Scan(&todayOrders, &todayAmount)
 
-	return map[string]interface{}{
-		"total_orders":      totalOrders,
-		"total_amount":      totalAmount,
-		"this_month_orders": monthOrders,
-		"this_month_amount": monthAmount,
-		"today_orders":      todayOrders,
-		"today_amount":      todayAmount,
-	}, nil
+	// ── Category-wise breakdown (respects date filter only) ──
+	catWhere := ` WHERE so.salesperson_id = $1`
+	catArgs := []interface{}{salespersonID}
+	cn := 1
+	if f.From != "" {
+		cn++
+		catWhere += fmt.Sprintf(` AND so.created_at >= $%d::date`, cn)
+		catArgs = append(catArgs, f.From)
+	}
+	if f.To != "" {
+		cn++
+		catWhere += fmt.Sprintf(` AND so.created_at < ($%d::date + INTERVAL '1 day')`, cn)
+		catArgs = append(catArgs, f.To)
+	}
+
+	catRows, err := s.db.Query(fmt.Sprintf(`
+		SELECT COALESCE(cat.id::text, '') AS category_id,
+		       COALESCE(cat.name, 'Uncategorized') AS category_name,
+		       COUNT(DISTINCT so.id) AS order_count,
+		       COALESCE(SUM(soi.total_price), 0) AS total_amount
+		FROM sales_orders so
+		JOIN sales_order_items soi ON soi.sales_order_id = so.id
+		JOIN variants v ON v.id = soi.variant_id
+		JOIN products p ON p.id = v.product_id
+		LEFT JOIN categories cat ON cat.id = p.category_id
+		%s
+		GROUP BY cat.id, cat.name
+		ORDER BY total_amount DESC
+	`, catWhere), catArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer catRows.Close()
+
+	var categories []map[string]interface{}
+	for catRows.Next() {
+		var catID, catName string
+		var orderCount int
+		var catAmount float64
+		if err := catRows.Scan(&catID, &catName, &orderCount, &catAmount); err != nil {
+			continue
+		}
+		categories = append(categories, map[string]interface{}{
+			"category_id":   catID,
+			"category_name": catName,
+			"order_count":   orderCount,
+			"total_amount":  catAmount,
+		})
+	}
+	if categories == nil {
+		categories = []map[string]interface{}{}
+	}
+
+	// ── Recent sales (respects all filters) ──
+	recentArgs := make([]interface{}, len(args))
+	copy(recentArgs, args)
+	rn := n
+	rn++
+	recentArgs = append(recentArgs, 50) // limit
+
+	selectCols := `so.id, si.invoice_number, so.so_number, so.created_at, so.created_at::text AS created_at_text,
+		       c.name AS customer_name, c.phone AS customer_phone,
+		       si.net_amount, si.paid_amount, so.status, so.payment_status`
+	recentJoin := `FROM sales_orders so
+		JOIN sales_invoices si ON si.sales_order_id = so.id
+		JOIN customers c ON c.id = so.customer_id`
+	if f.CategoryID != "" {
+		recentJoin += `
+		JOIN sales_order_items soi ON soi.sales_order_id = so.id
+		JOIN variants v ON v.id = soi.variant_id
+		JOIN products p ON p.id = v.product_id`
+	}
+
+	recentQ := fmt.Sprintf(`SELECT DISTINCT %s %s %s ORDER BY so.created_at DESC LIMIT $%d`,
+		selectCols, recentJoin, where, rn)
+
+	salesRows, err := s.db.Query(recentQ, recentArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer salesRows.Close()
+
+	var sales []map[string]interface{}
+	for salesRows.Next() {
+		var soID, invNum, soNum, soDate, custName, custPhone, st, paySt string
+		var netAmt, paidAmt float64
+		var createdAtRaw interface{}
+		if err := salesRows.Scan(&soID, &invNum, &soNum, &createdAtRaw, &soDate, &custName, &custPhone, &netAmt, &paidAmt, &st, &paySt); err != nil {
+			continue
+		}
+		sales = append(sales, map[string]interface{}{
+			"sales_order_id": soID,
+			"invoice_number": invNum,
+			"so_number":      soNum,
+			"date":           soDate,
+			"customer_name":  custName,
+			"customer_phone": custPhone,
+			"net_amount":     netAmt,
+			"paid_amount":    paidAmt,
+			"balance_due":    netAmt - paidAmt,
+			"status":         st,
+			"payment_status": paySt,
+		})
+	}
+	if sales == nil {
+		sales = []map[string]interface{}{}
+	}
+
+	report := map[string]interface{}{
+		"all_time_orders":    allOrders,
+		"all_time_amount":    allAmount,
+		"this_month_orders":  monthOrders,
+		"this_month_amount":  monthAmount,
+		"today_orders":       todayOrders,
+		"today_amount":       todayAmount,
+		"filtered_orders":    totalOrders,
+		"filtered_amount":    totalAmount,
+		"category_breakdown": categories,
+		"recent_sales":       sales,
+	}
+
+	if f.From != "" || f.To != "" || f.CategoryID != "" {
+		report["filters_applied"] = map[string]interface{}{
+			"from":        f.From,
+			"to":          f.To,
+			"category_id": f.CategoryID,
+		}
+	}
+
+	return report, nil
 }
 
 func (s *Store) Update(id string, in UpdateSalesPersonInput) error {
