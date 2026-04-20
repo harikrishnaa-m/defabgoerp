@@ -368,9 +368,6 @@ func (s *Store) getSalesReport(salespersonID string, f SalesFilter) (map[string]
 	// ── Recent sales (respects all filters) ──
 	recentArgs := make([]interface{}, len(args))
 	copy(recentArgs, args)
-	rn := n
-	rn++
-	recentArgs = append(recentArgs, 50) // limit
 
 	selectCols := `so.id, si.invoice_number, so.so_number, so.created_at, so.created_at::text AS created_at_text,
 		       c.name AS customer_name, c.phone AS customer_phone,
@@ -385,8 +382,8 @@ func (s *Store) getSalesReport(salespersonID string, f SalesFilter) (map[string]
 		JOIN products p ON p.id = v.product_id`
 	}
 
-	recentQ := fmt.Sprintf(`SELECT DISTINCT %s %s %s ORDER BY so.created_at DESC LIMIT $%d`,
-		selectCols, recentJoin, where, rn)
+	recentQ := fmt.Sprintf(`SELECT DISTINCT %s %s %s ORDER BY so.created_at DESC`,
+		selectCols, recentJoin, where)
 
 	salesRows, err := s.db.Query(recentQ, recentArgs...)
 	if err != nil {
