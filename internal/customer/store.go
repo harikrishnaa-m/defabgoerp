@@ -34,7 +34,9 @@ func (s *Store) List(limit, offset int, search string) ([]map[string]interface{}
 	// List
 	query := fmt.Sprintf(`
 		SELECT
-			c.id, c.customer_code, c.name, c.phone, c.email,
+			c.id, c.customer_code, c.name,
+			COALESCE(c.phone, '') AS phone,
+			COALESCE(c.email, '') AS email,
 			COALESCE(c.gst_number, '') AS gst_number,
 			c.total_purchases, c.is_active, c.created_at, c.updated_at,
 			COUNT(DISTINCT so.id) AS order_count
@@ -92,7 +94,8 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var createdAt, updatedAt interface{}
 
 	err := s.db.QueryRow(`
-		SELECT id, customer_code, name, phone, email,
+		SELECT id, customer_code, name,
+		       COALESCE(phone, ''), COALESCE(email, ''),
 		       COALESCE(gst_number, ''), total_purchases, is_active, created_at, updated_at
 		FROM customers WHERE id = $1
 	`, id).Scan(&custID, &code, &name, &phone, &email, &gstNumber, &totalPurchases, &isActive, &createdAt, &updatedAt)
