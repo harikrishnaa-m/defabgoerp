@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"defab-erp/internal/core/model"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -130,5 +133,31 @@ func (h *Handler) DryRun(c *fiber.Ctx) error {
 		"files":      summaries,
 		"total_rows": totalRows,
 		"file_count": len(files),
+	})
+}
+
+// ImportSales handles POST /api/migration/import-sales?branch=<branch name>
+// Looks up the branch by name, finds its warehouse, then migrates sales invoices.
+func (h *Handler) ImportSales(c *fiber.Ctx) error {
+	branchName := strings.TrimSpace(c.Query("branch"))
+	if branchName == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "query param required: branch",
+		})
+	}
+
+	user := c.Locals("user").(*model.User)
+
+	result, err := h.store.ImportSales(user.ID.String(), branchName)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{
+			"error":   "sales migration failed",
+			"details": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "sales migration completed",
+		"result":  result,
 	})
 }
