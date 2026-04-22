@@ -566,15 +566,16 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 
 	// Fetch items
 	rows, err := s.db.Query(`
-		SELECT sii.id, sii.variant_id,
+		SELECT sii.id, COALESCE(sii.variant_id::text, ''),
 		       COALESCE(v.sku, '') AS sku,
 		       COALESCE(p.name, '') AS product_name,
-		       v.variant_code,
+		       COALESCE(v.variant_code, 0),
+		       COALESCE(sii.item_description, ''),
 		       sii.quantity, sii.unit_price, sii.discount,
 		       sii.tax_percent, sii.tax_amount, sii.total_price
 		FROM sales_invoice_items sii
-		JOIN variants v ON v.id = sii.variant_id
-		JOIN products p ON p.id = v.product_id
+		LEFT JOIN variants v ON v.id = sii.variant_id
+		LEFT JOIN products p ON p.id = v.product_id
 		WHERE sii.sales_invoice_id = $1
 	`, id)
 	if err != nil {
@@ -584,30 +585,31 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 
 	var items []map[string]interface{}
 	for rows.Next() {
-		var itemID, variantID, sku, productName string
+		var itemID, variantID, sku, productName, itemDescription string
 		var variantCode int
 		var qty int
 		var uPrice, disc, taxPct, taxAmt, totPrice float64
 		if err := rows.Scan(&itemID, &variantID, &sku, &productName, &variantCode,
-			&qty, &uPrice, &disc, &taxPct, &taxAmt, &totPrice); err != nil {
+			&itemDescription, &qty, &uPrice, &disc, &taxPct, &taxAmt, &totPrice); err != nil {
 			return nil, err
 		}
 		items = append(items, map[string]interface{}{
-			"id":           itemID,
-			"variant_id":   variantID,
-			"variant_code": variantCode,
-			"sku":          sku,
-			"product_name": productName,
-			"quantity":     qty,
-			"unit_price":   round2(uPrice),
-			"discount":     round2(disc),
-			"tax_percent":  taxPct,
-			"cgst_percent": taxPct / 2,
-			"sgst_percent": taxPct / 2,
-			"tax_amount":   round2(taxAmt),
-			"cgst_amount":  round2(taxAmt / 2),
-			"sgst_amount":  round2(taxAmt / 2),
-			"total_price":  round2(totPrice),
+			"id":               itemID,
+			"variant_id":       variantID,
+			"variant_code":     variantCode,
+			"sku":              sku,
+			"product_name":     productName,
+			"item_description": itemDescription,
+			"quantity":         qty,
+			"unit_price":       round2(uPrice),
+			"discount":         round2(disc),
+			"tax_percent":      taxPct,
+			"cgst_percent":     taxPct / 2,
+			"sgst_percent":     taxPct / 2,
+			"tax_amount":       round2(taxAmt),
+			"cgst_amount":      round2(taxAmt / 2),
+			"sgst_amount":      round2(taxAmt / 2),
+			"total_price":      round2(totPrice),
 		})
 	}
 

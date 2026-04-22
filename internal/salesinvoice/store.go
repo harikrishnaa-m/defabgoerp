@@ -206,11 +206,14 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		SELECT
 			sii.id, sii.quantity, sii.unit_price, sii.discount,
 			sii.tax_percent, sii.tax_amount, sii.total_price,
-			v.variant_code, v.sku, v.name AS variant_name, COALESCE(v.barcode, '') AS barcode,
-			p.name AS product_name
+			COALESCE(sii.item_description, ''),
+			COALESCE(v.variant_code, 0), COALESCE(v.sku, ''),
+			COALESCE(v.name, '') AS variant_name,
+			COALESCE(v.barcode, '') AS barcode,
+			COALESCE(p.name, '') AS product_name
 		FROM sales_invoice_items sii
-		JOIN variants v ON v.id = sii.variant_id
-		JOIN products p ON p.id = v.product_id
+		LEFT JOIN variants v ON v.id = sii.variant_id
+		LEFT JOIN products p ON p.id = v.product_id
 		WHERE sii.sales_invoice_id = $1
 		ORDER BY sii.id
 	`, id)
@@ -221,7 +224,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 
 	var items []map[string]interface{}
 	for itemRows.Next() {
-		var itemID, sku, variantName, barcode, productName string
+		var itemID, sku, variantName, barcode, productName, itemDescription string
 		var variantCode int
 		var quantity float64
 		var unitPrice, discount, taxPercent, taxAmount, totalPrice float64
@@ -229,28 +232,30 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		if err := itemRows.Scan(
 			&itemID, &quantity, &unitPrice, &discount,
 			&taxPercent, &taxAmount, &totalPrice,
+			&itemDescription,
 			&variantCode, &sku, &variantName, &barcode, &productName,
 		); err != nil {
 			return nil, err
 		}
 
 		items = append(items, map[string]interface{}{
-			"id":           itemID,
-			"product_name": productName,
-			"variant_name": variantName,
-			"variant_code": variantCode,
-			"sku":          sku,
-			"barcode":      barcode,
-			"quantity":     quantity,
-			"unit_price":   unitPrice,
-			"discount":     discount,
-			"tax_percent":  taxPercent,
-			"cgst_percent": taxPercent / 2,
-			"sgst_percent": taxPercent / 2,
-			"tax_amount":   taxAmount,
-			"cgst_amount":  taxAmount / 2,
-			"sgst_amount":  taxAmount / 2,
-			"total_price":  totalPrice,
+			"id":               itemID,
+			"item_description": itemDescription,
+			"product_name":     productName,
+			"variant_name":     variantName,
+			"variant_code":     variantCode,
+			"sku":              sku,
+			"barcode":          barcode,
+			"quantity":         quantity,
+			"unit_price":       unitPrice,
+			"discount":         discount,
+			"tax_percent":      taxPercent,
+			"cgst_percent":     taxPercent / 2,
+			"sgst_percent":     taxPercent / 2,
+			"tax_amount":       taxAmount,
+			"cgst_amount":      taxAmount / 2,
+			"sgst_amount":      taxAmount / 2,
+			"total_price":      totalPrice,
 		})
 	}
 	invoice["items"] = items

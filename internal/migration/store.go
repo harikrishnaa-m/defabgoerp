@@ -6,6 +6,7 @@ import (
 	"math"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
@@ -809,4 +810,381 @@ func upsertStockTx(tx *sql.Tx, variantID, warehouseID uuid.UUID, qty float64) er
 		variantID, warehouseID, qty,
 	)
 	return err
+}
+
+// ── Sales Invoice Migration ───────────────────────────────────
+
+const salesMigXLSXPath = "internal/migration/SalesMigration/Sales Report List.xlsx"
+
+// SalesMigrationResult is returned after running the sales import.
+type SalesMigrationResult struct {
+	TotalGroups int      `json:"total_groups"`
+	Created     int      `json:"created"`
+	Skipped     int      `json:"skipped"`
+	Errored     int      `json:"errored"`
+	Errors      []string `json:"errors,omitempty"`
+}
+
+// salesInvGroup holds one logical invoice (one or more item rows + one payment row).
+type salesInvGroup struct {
+	InvoiceNumber     string
+	CustomerName      string
+	DateStr           string
+	Items             []salesMigItem
+	RoundOff          float64
+	SalesReturnAdjust float64
+	AdvAdjust         float64
+	Cheque            float64
+	Online            float64
+	Cash              float64
+	DebitCard         float64
+	CreditCard        float64
+}
+
+// salesMigItem is one line item from the Excel.
+type salesMigItem struct {
+	Description string
+	Rate        float64
+	Qty         float64
+	Taxable     float64
+	TaxRate     float64
+	CGST        float64
+	SGST        float64
+	IGST        float64
+	InvVal      float64
+}
+
+// ImportSales parses the sales migration Excel and inserts invoice records.
+// branchName must match an existing branch in the DB; its first warehouse is used.
+// userID (from JWT) becomes created_by on all inserted rows.
+func (s *Store) ImportSales(userID, branchName string) (*SalesMigrationResult, error) {
+	// Resolve branch
+	var branchID string
+	if err := s.db.QueryRow(
+		`SELECT id FROM branches WHERE LOWER(TRIM(name)) = LOWER($1) LIMIT 1`, branchName,
+	).Scan(&branchID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("branch %q not found", branchName)
+		}
+		return nil, fmt.Errorf("lookup branch: %w", err)
+	}
+
+	// Resolve warehouse
+	var warehouseID string
+	if err := s.db.QueryRow(
+		`SELECT id FROM warehouses WHERE branch_id = $1 ORDER BY created_at LIMIT 1`, branchID,
+	).Scan(&warehouseID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("no warehouse found for branch %q", branchName)
+		}
+		return nil, fmt.Errorf("lookup warehouse: %w", err)
+	}
+
+	groups, err := parseSalesXLSX(salesMigXLSXPath)
+	if err != nil {
+		return nil, fmt.Errorf("parse xlsx: %w", err)
+	}
+
+	result := &SalesMigrationResult{TotalGroups: len(groups)}
+	for _, g := range groups {
+		imported, err := s.importOneInvoice(g, userID, branchID, warehouseID)
+		if err != nil {
+			result.Errored++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", g.InvoiceNumber, err))
+		} else if imported {
+			result.Created++
+		} else {
+			result.Skipped++
+		}
+	}
+	return result, nil
+}
+
+func (s *Store) importOneInvoice(g salesInvGroup, userID, branchID, warehouseID string) (created bool, err error) {
+	// Idempotency check
+	var exists bool
+	if err := s.db.QueryRow(
+		`SELECT EXISTS(SELECT 1 FROM sales_invoices WHERE invoice_number = $1)`,
+		g.InvoiceNumber,
+	).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check exists: %w", err)
+	}
+	if exists {
+		return false, nil
+	}
+
+	invoiceDate, err := parseSalesDate(g.DateStr)
+	if err != nil {
+		return false, fmt.Errorf("parse date %q: %w", g.DateStr, err)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// 1. Find or create customer by name
+	customerName := strings.TrimSpace(g.CustomerName)
+	if customerName == "" {
+		customerName = "Walk-in Customer"
+	}
+	var customerID string
+	err = tx.QueryRow(
+		`SELECT id FROM customers WHERE LOWER(TRIM(name)) = LOWER($1) LIMIT 1`,
+		customerName,
+	).Scan(&customerID)
+	if err == sql.ErrNoRows {
+		var maxCode sql.NullString
+		tx.QueryRow(`SELECT MAX(customer_code) FROM customers WHERE customer_code LIKE 'CUS%'`).Scan(&maxCode)
+		next := 1
+		if maxCode.Valid && len(maxCode.String) > 3 {
+			fmt.Sscanf(maxCode.String[3:], "%d", &next)
+			next++
+		}
+		code := fmt.Sprintf("CUS%04d", next)
+		if err = tx.QueryRow(
+			`INSERT INTO customers (customer_code, name, phone, email)
+			 VALUES ($1, $2, NULL, NULL) RETURNING id`,
+			code, customerName,
+		).Scan(&customerID); err != nil {
+			return false, fmt.Errorf("create customer: %w", err)
+		}
+	} else if err != nil {
+		return false, fmt.Errorf("find customer: %w", err)
+	}
+
+	// 2. Compute totals
+	var subTotal, gstTotal, netTotal float64
+	for _, item := range g.Items {
+		subTotal += item.Taxable
+		if item.IGST > 0 {
+			gstTotal += item.IGST
+		} else {
+			gstTotal += item.CGST + item.SGST
+		}
+		netTotal += item.InvVal
+	}
+	subTotal = salesRound2(subTotal)
+	gstTotal = salesRound2(gstTotal)
+	netTotal = salesRound2(netTotal)
+	roundOff := g.RoundOff
+	netAmount := salesRound2(netTotal + roundOff)
+
+	// paid = all cash receipts + return / advance adjustments
+	paidAmount := salesRound2(g.Cheque + g.Online + g.Cash + g.DebitCard + g.CreditCard +
+		g.SalesReturnAdjust + g.AdvAdjust)
+	paymentStatus := "UNPAID"
+	if paidAmount >= netAmount {
+		paymentStatus = "PAID"
+	} else if paidAmount > 0 {
+		paymentStatus = "PARTIAL"
+	}
+
+	// 3. Create sales_order
+	soNumber := "MIG-" + g.InvoiceNumber
+	var salesOrderID string
+	if err = tx.QueryRow(`
+		INSERT INTO sales_orders
+			(so_number, channel, branch_id, customer_id, salesperson_id,
+			 warehouse_id, created_by, order_date,
+			 subtotal, tax_total, discount_total, bill_discount, grand_total,
+			 status, payment_status, notes)
+		VALUES ($1,'STORE',$2,$3,NULL,$4,$5,$6,$7,$8,0,0,$9,'CONFIRMED',$10,'Migrated from POS')
+		RETURNING id`,
+		soNumber, branchID, customerID, warehouseID,
+		userID, invoiceDate,
+		subTotal, gstTotal, netAmount, paymentStatus,
+	).Scan(&salesOrderID); err != nil {
+		return false, fmt.Errorf("create sales order: %w", err)
+	}
+
+	// 4. Create sales_invoice
+	var salesInvoiceID string
+	if err = tx.QueryRow(`
+		INSERT INTO sales_invoices
+			(sales_order_id, customer_id, warehouse_id, channel, branch_id,
+			 invoice_number, invoice_date,
+			 sub_amount, discount_amount, bill_discount, gst_amount, round_off,
+			 net_amount, paid_amount, status, created_by)
+		VALUES ($1,$2,$3,'STORE',$4,$5,$6,$7,0,0,$8,$9,$10,$11,$12,$13)
+		RETURNING id`,
+		salesOrderID, customerID, warehouseID, branchID,
+		g.InvoiceNumber, invoiceDate,
+		subTotal, gstTotal, roundOff,
+		netAmount, paidAmount, paymentStatus, userID,
+	).Scan(&salesInvoiceID); err != nil {
+		return false, fmt.Errorf("create sales invoice: %w", err)
+	}
+
+	// 5. Create sales_order_items + sales_invoice_items (no variant — migrated data)
+	for _, item := range g.Items {
+		taxAmt := item.CGST + item.SGST
+		if item.IGST > 0 {
+			taxAmt = item.IGST
+		}
+		if _, err = tx.Exec(`
+			INSERT INTO sales_order_items
+				(sales_order_id, variant_id, item_description,
+				 quantity, unit_price, discount, tax_percent, tax_amount, total_price)
+			VALUES ($1, NULL, $2, $3, $4, 0, $5, $6, $7)`,
+			salesOrderID, item.Description, item.Qty, item.Rate,
+			item.TaxRate, salesRound2(taxAmt), salesRound2(item.InvVal),
+		); err != nil {
+			return false, fmt.Errorf("create order item: %w", err)
+		}
+		if _, err = tx.Exec(`
+			INSERT INTO sales_invoice_items
+				(sales_invoice_id, variant_id, item_description,
+				 quantity, unit_price, discount, tax_percent, tax_amount, total_price)
+			VALUES ($1, NULL, $2, $3, $4, 0, $5, $6, $7)`,
+			salesInvoiceID, item.Description, item.Qty, item.Rate,
+			item.TaxRate, salesRound2(taxAmt), salesRound2(item.InvVal),
+		); err != nil {
+			return false, fmt.Errorf("create invoice item: %w", err)
+		}
+	}
+
+	// 6. Create sales_payments
+	type pmEntry struct {
+		method string
+		amount float64
+	}
+	pmList := []pmEntry{
+		{"CASH", g.Cash},
+		{"ONLINE", g.Online},
+		{"CHEQUE", g.Cheque},
+		{"DEBITCARD", g.DebitCard},
+		{"CREDITCARD", g.CreditCard},
+		{"RETURN_ADJUST", g.SalesReturnAdjust},
+		{"ADV_ADJUST", g.AdvAdjust},
+	}
+	for _, p := range pmList {
+		if p.amount <= 0 {
+			continue
+		}
+		if _, err = tx.Exec(`
+			INSERT INTO sales_payments (sales_invoice_id, amount, payment_method, reference, paid_at)
+			VALUES ($1, $2, $3, 'Migrated', $4)`,
+			salesInvoiceID, salesRound2(p.amount), p.method, invoiceDate,
+		); err != nil {
+			return false, fmt.Errorf("create payment %s: %w", p.method, err)
+		}
+	}
+
+	// 7. Update customer total_purchases
+	if _, err = tx.Exec(
+		`UPDATE customers SET total_purchases = total_purchases + $1, updated_at = NOW() WHERE id = $2`,
+		netAmount, customerID,
+	); err != nil {
+		return false, fmt.Errorf("update customer purchases: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
+	}
+	return true, nil
+}
+
+// parseSalesXLSX reads the Sales Report List.xlsx and groups rows into invoices.
+//
+// Column layout (0-based indices in each row slice):
+//
+//	0=SlNo, 1=CUSTOMER, 2=INVNO, 3=Date, 4=Item, 5=HSN,
+//	6=Rate, 7=Qty, 8=Taxable, 9=Tax Rate, 10=CGST, 11=SGST,
+//	12=IGST, 13=TOTAL GST, 14=INV VAL, 15=RoundOff,
+//	16=SALESRETURN ADJUST, 17=ADV ADJUST,
+//	18=Cheque, 19=Online, 20=Cash, 21=Debitcard, 22=CreditCard
+func parseSalesXLSX(path string) ([]salesInvGroup, error) {
+	f, err := excelize.OpenFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, fmt.Errorf("no sheets found in workbook")
+	}
+
+	allRows, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, err
+	}
+	if len(allRows) < 2 {
+		return nil, fmt.Errorf("no data rows found")
+	}
+
+	var groups []salesInvGroup
+	var current *salesInvGroup
+
+	for i := 1; i < len(allRows); i++ { // skip header at index 0
+		row := allRows[i]
+		invNo := strings.TrimSpace(safeCol(row, 2))
+
+		if invNo != "" {
+			// Invoice item row
+			if current == nil || current.InvoiceNumber != invNo {
+				// New invoice starts; carry forward any unfinished group
+				if current != nil && len(current.Items) > 0 {
+					// Missing payment row — store what we have
+					groups = append(groups, *current)
+				}
+				current = &salesInvGroup{
+					InvoiceNumber: invNo,
+					CustomerName:  strings.TrimSpace(safeCol(row, 1)),
+					DateStr:       strings.TrimSpace(safeCol(row, 3)),
+				}
+			}
+			current.Items = append(current.Items, salesMigItem{
+				Description: strings.TrimSpace(safeCol(row, 4)),
+				Rate:        parseFloat(safeCol(row, 6)),
+				Qty:         parseFloat(safeCol(row, 7)),
+				Taxable:     parseFloat(safeCol(row, 8)),
+				TaxRate:     parseFloat(safeCol(row, 9)),
+				CGST:        parseFloat(safeCol(row, 10)),
+				SGST:        parseFloat(safeCol(row, 11)),
+				IGST:        parseFloat(safeCol(row, 12)),
+				InvVal:      parseFloat(safeCol(row, 14)),
+			})
+		} else {
+			// Payment row (INVNO is empty)
+			if current != nil && len(current.Items) > 0 {
+				current.RoundOff = parseFloat(safeCol(row, 15))
+				current.SalesReturnAdjust = parseFloat(safeCol(row, 16))
+				current.AdvAdjust = parseFloat(safeCol(row, 17))
+				current.Cheque = parseFloat(safeCol(row, 18))
+				current.Online = parseFloat(safeCol(row, 19))
+				current.Cash = parseFloat(safeCol(row, 20))
+				current.DebitCard = parseFloat(safeCol(row, 21))
+				current.CreditCard = parseFloat(safeCol(row, 22))
+				groups = append(groups, *current)
+				current = nil
+			}
+			// else: orphan row (e.g. the totals summary at the end) — skip
+		}
+	}
+
+	return groups, nil
+}
+
+// parseSalesDate tries several common date layouts.
+func parseSalesDate(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	for _, layout := range []string{"02/01/2006", "2/1/2006", "2006-01-02", "01/02/2006"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		}
+	}
+	// Last-resort: Excel date serial number (days since 1899-12-30)
+	if n := parseFloat(s); n > 100 {
+		t := time.Date(1899, 12, 30, 0, 0, 0, 0, time.UTC).Add(
+			time.Duration(int(n)) * 24 * time.Hour)
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("unrecognised date %q", s)
+}
+
+func salesRound2(v float64) float64 {
+	return math.Round(v*100) / 100
 }
