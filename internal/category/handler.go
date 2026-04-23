@@ -25,7 +25,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return c.Status(400).SendString("name required")
 	}
 
-	if err := h.store.Create(in.Name); err != nil {
+	if err := h.store.Create(in); err != nil {
 		return c.Status(500).SendString(err.Error())
 	}
 
@@ -58,17 +58,18 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	var out []fiber.Map
 
 	for rows.Next() {
-		var id, name string
+		var id, name, imageURL string
 		var active bool
 		var productsCount int
 
-		rows.Scan(&id, &name, &active, &productsCount)
+		rows.Scan(&id, &name, &active, &productsCount, &imageURL)
 
 		out = append(out, fiber.Map{
 			"id":             id,
 			"name":           name,
 			"is_active":      active,
 			"products_count": productsCount,
+			"image_url":      imageURL,
 		})
 	}
 
@@ -89,7 +90,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 func (h *Handler) Get(c *fiber.Ctx) error {
 	id := c.Params("id")
 
-	cid, name, active, productsCount, err := h.store.Get(id)
+	cid, name, active, productsCount, imageURL, err := h.store.Get(id)
 	if err != nil {
 		return c.Status(404).SendString("not found")
 	}
@@ -99,6 +100,7 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		"name":           name,
 		"is_active":      active,
 		"products_count": productsCount,
+		"image_url":      imageURL,
 	})
 }
 

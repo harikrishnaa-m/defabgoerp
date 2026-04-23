@@ -14,10 +14,10 @@ func NewStore(db *sql.DB) *Store {
 // CREATE
 //
 
-func (s *Store) Create(name string) error {
+func (s *Store) Create(in CreateCategoryInput) error {
 	_, err := s.db.Exec(
-		`INSERT INTO categories (name) VALUES ($1)`,
-		name,
+		`INSERT INTO categories (name, image_url) VALUES ($1, $2)`,
+		in.Name, in.ImageURL,
 	)
 	return err
 }
@@ -28,7 +28,7 @@ func (s *Store) Create(name string) error {
 
 func (s *Store) ListActive(limit, offset int) (*sql.Rows, error) {
 	return s.db.Query(`
-		SELECT id, name, is_active, products_count
+		SELECT id, name, is_active, products_count, COALESCE(image_url, '')
 		FROM categories
 		ORDER BY name
 		LIMIT $1 OFFSET $2
@@ -47,17 +47,17 @@ func (s *Store) CountActive() (int, error) {
 // GET BY ID (admin can see inactive too)
 //
 
-func (s *Store) Get(id string) (string, string, bool, int, error) {
-	var cid, name string
+func (s *Store) Get(id string) (string, string, bool, int, string, error) {
+	var cid, name, imageURL string
 	var active bool
 	var productsCount int
 
 	err := s.db.QueryRow(
-		`SELECT id, name, is_active, products_count FROM categories WHERE id=$1`,
+		`SELECT id, name, is_active, products_count, COALESCE(image_url, '') FROM categories WHERE id=$1`,
 		id,
-	).Scan(&cid, &name, &active, &productsCount)
+	).Scan(&cid, &name, &active, &productsCount, &imageURL)
 
-	return cid, name, active, productsCount, err
+	return cid, name, active, productsCount, imageURL, err
 }
 
 //
@@ -67,9 +67,10 @@ func (s *Store) Get(id string) (string, string, bool, int, error) {
 func (s *Store) Update(id string, in UpdateCategoryInput) error {
 	_, err := s.db.Exec(`
 		UPDATE categories
-		SET name = COALESCE($1, name)
-		WHERE id = $2
-	`, in.Name, id)
+		SET name = COALESCE($1, name),
+		    image_url = COALESCE($2, image_url)
+		WHERE id = $3
+	`, in.Name, in.ImageURL, id)
 
 	return err
 }
