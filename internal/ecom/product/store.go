@@ -227,7 +227,7 @@ func (s *Store) GetProductDetail(productID string) (map[string]interface{}, erro
 // ListCategories returns active categories.
 func (s *Store) ListCategories() ([]map[string]interface{}, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, products_count FROM categories WHERE is_active = true ORDER BY name
+		SELECT id, name, products_count, COALESCE(image_url, '') FROM categories WHERE is_active = true ORDER BY name
 	`)
 	if err != nil {
 		return nil, err
@@ -236,13 +236,14 @@ func (s *Store) ListCategories() ([]map[string]interface{}, error) {
 
 	var cats []map[string]interface{}
 	for rows.Next() {
-		var id, name string
+		var id, name, imageURL string
 		var count int
-		rows.Scan(&id, &name, &count)
+		rows.Scan(&id, &name, &count, &imageURL)
 		cats = append(cats, map[string]interface{}{
 			"id":             id,
 			"name":           name,
 			"products_count": count,
+			"image_url":      imageURL,
 		})
 	}
 	return cats, nil
