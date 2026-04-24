@@ -1,6 +1,8 @@
 package cart
 
 import (
+	"strings"
+
 	ecomMw "defab-erp/internal/ecom/middleware"
 
 	"github.com/gofiber/fiber/v2"
@@ -51,10 +53,18 @@ func (h *Handler) AddItem(c *fiber.Ctx) error {
 	}
 
 	if err := h.store.AddItem(cust.ID, in.VariantID, in.Quantity); err != nil {
-		if err.Error() == "variant not found or inactive" {
-			return c.Status(404).JSON(fiber.Map{"error": err.Error()})
+		msg := err.Error()
+		switch msg {
+		case "variant not found or inactive":
+			return c.Status(404).JSON(fiber.Map{"error": msg})
+		case "variant not available online":
+			return c.Status(400).JSON(fiber.Map{"error": msg})
+		default:
+			if strings.HasPrefix(msg, "insufficient online stock") {
+				return c.Status(400).JSON(fiber.Map{"error": msg})
+			}
+			return c.Status(500).JSON(fiber.Map{"error": "failed to add item"})
 		}
-		return c.Status(500).JSON(fiber.Map{"error": "failed to add item"})
 	}
 
 	return c.Status(201).JSON(fiber.Map{"message": "item added to cart"})

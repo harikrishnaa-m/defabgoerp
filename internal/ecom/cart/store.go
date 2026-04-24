@@ -42,23 +42,6 @@ func (s *Store) AddItem(customerID, variantID string, quantity int) error {
 		return fmt.Errorf("variant not found or inactive")
 	}
 
-	// Check online stock is reserved and sufficient
-	var onlineQty int
-	err = s.db.QueryRow(`SELECT COALESCE(quantity, 0) FROM online_stocks WHERE variant_id = $1`, variantID).Scan(&onlineQty)
-	if err != nil || onlineQty == 0 {
-		return fmt.Errorf("variant not available online")
-	}
-
-	// Check that current cart qty + new quantity won't exceed online stock
-	var currentQty int
-	s.db.QueryRow(`
-		SELECT COALESCE(quantity, 0) FROM ecom_cart_items
-		WHERE cart_id = $1 AND variant_id = $2
-	`, cartID, variantID).Scan(&currentQty)
-	if currentQty+quantity > onlineQty {
-		return fmt.Errorf("insufficient online stock (available: %d)", onlineQty)
-	}
-
 	_, err = s.db.Exec(`
 		INSERT INTO ecom_cart_items (cart_id, variant_id, quantity)
 		VALUES ($1, $2, $3)
