@@ -63,6 +63,7 @@ import (
 	ecomOnlineStock "defab-erp/internal/ecom/onlinestock"
 	ecomOrder "defab-erp/internal/ecom/order"
 	ecomProduct "defab-erp/internal/ecom/product"
+	ecomWishlist "defab-erp/internal/ecom/wishlist"
 
 	"defab-erp/internal/migration"
 )
@@ -201,6 +202,9 @@ func main() {
 	ecomCartStore := ecomCart.NewStore(database)
 	ecomCartHandler := ecomCart.NewHandler(ecomCartStore)
 
+	ecomWishlistStore := ecomWishlist.NewStore(database)
+	ecomWishlistHandler := ecomWishlist.NewHandler(ecomWishlistStore)
+
 	ecomOrderStore := ecomOrder.NewStore(database)
 	ecomOrderHandler := ecomOrder.NewHandler(ecomOrderStore)
 
@@ -252,6 +256,7 @@ func main() {
 	ecomProtected := ecom.Group("", ecomMw.EcomJWTProtected(database))
 	ecomCustomer.RegisterProtectedRoutes(ecomProtected, ecomCustomerHandler)
 	ecomCart.RegisterRoutes(ecomProtected.Group("/cart"), ecomCartHandler)
+	ecomWishlist.RegisterRoutes(ecomProtected.Group("/wishlist"), ecomWishlistHandler)
 	ecomOrder.RegisterCustomerRoutes(ecomProtected.Group("/orders"), ecomOrderHandler)
 
 	// Quick test route for products
