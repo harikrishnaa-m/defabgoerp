@@ -60,6 +60,7 @@ import (
 	ecomCart "defab-erp/internal/ecom/cart"
 	ecomCustomer "defab-erp/internal/ecom/customer"
 	ecomMw "defab-erp/internal/ecom/middleware"
+	ecomOnlineStock "defab-erp/internal/ecom/onlinestock"
 	ecomOrder "defab-erp/internal/ecom/order"
 	ecomProduct "defab-erp/internal/ecom/product"
 
@@ -202,6 +203,9 @@ func main() {
 
 	ecomOrderStore := ecomOrder.NewStore(database)
 	ecomOrderHandler := ecomOrder.NewHandler(ecomOrderStore)
+
+	ecomOnlineStockStore := ecomOnlineStock.NewStore(database)
+	ecomOnlineStockHandler := ecomOnlineStock.NewHandler(ecomOnlineStockStore)
 
 	migrationStore := migration.NewStore(database)
 	migrationHandler := migration.NewHandler(migrationStore)
@@ -639,6 +643,17 @@ func main() {
 			),
 		),
 		ecomOrderHandler,
+	)
+
+	// Admin: ERP staff managing online reserved stock
+	ecomOnlineStock.RegisterRoutes(
+		protected.Group("/admin/online-stocks",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+			),
+		),
+		ecomOnlineStockHandler,
 	)
 
 	// Start server

@@ -131,7 +131,23 @@ func (s *Store) Checkout(customerID string, in CheckoutInput) (map[string]interf
 		}
 	}
 
-	// 7. Clear the cart
+	// 7. Check and decrement online_stocks (row-level lock to prevent oversell)
+	for _, it := range items {
+		var onlineQty int
+		err = tx.QueryRow(`SELECT quantity FROM online_stocks WHERE variant_id = $1 FOR UPDATE`, it.VariantID).Scan(&onlineQty)
+		if err != nil {
+			return nil, fmt.Errorf("online stock not available for '%s'", it.VariantName)
+		}
+		if onlineQty < it.Quantity {
+			return nil, fmt.Errorf("insufficient online stock for '%s' (available: %d, requested: %d)", it.VariantName, onlineQty, it.Quantity)
+		}
+		_, err = tx.Exec(`UPDATE online_stocks SET quantity = quantity - $1, updated_at = NOW() WHERE variant_id = $2`, it.Quantity, it.VariantID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrement online stock: %w", err)
+		}
+	}
+
+	// 8. Clear the cart
 	tx.Exec(`
 		DELETE FROM ecom_cart_items
 		WHERE cart_id = (SELECT id FROM ecom_carts WHERE customer_id = $1)
