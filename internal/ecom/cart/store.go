@@ -42,6 +42,23 @@ func (s *Store) AddItem(customerID, variantID string, quantity int) error {
 		return fmt.Errorf("variant not found or inactive")
 	}
 
+	// Check online stock is reserved and sufficient
+	var onlineQty int
+	err = s.db.QueryRow(`SELECT COALESCE(quantity, 0) FROM online_stocks WHERE variant_id = $1`, variantID).Scan(&onlineQty)
+	if err != nil || onlineQty == 0 {
+		return fmt.Errorf("variant not available online")
+	}
+
+	// Check that current cart qty + new quantity won't exceed online stock
+	var currentQty int
+	s.db.QueryRow(`
+		SELECT COALESCE(quantity, 0) FROM ecom_cart_items
+		WHERE cart_id = $1 AND variant_id = $2
+	`, cartID, variantID).Scan(&currentQty)
+	if currentQty+quantity > onlineQty {
+		return fmt.Errorf("insufficient online stock (available: %d)", onlineQty)
+	}
+
 	_, err = s.db.Exec(`
 		INSERT INTO ecom_cart_items (cart_id, variant_id, quantity)
 		VALUES ($1, $2, $3)
@@ -103,15 +120,13 @@ func (s *Store) GetCart(customerID string) ([]map[string]interface{}, error) {
 		       COALESCE(v.barcode, ''), p.id AS product_id, p.name AS product_name,
 		       COALESCE(p.main_image_url, '') AS product_image,
 		       ci.quantity,
-		       COALESCE(SUM(st.quantity), 0) AS available_stock
+		       COALESCE(os.quantity, 0) AS available_stock
 		FROM ecom_cart_items ci
 		JOIN ecom_carts c ON c.id = ci.cart_id
 		JOIN variants v ON v.id = ci.variant_id
 		JOIN products p ON p.id = v.product_id
-		LEFT JOIN stocks st ON st.variant_id = v.id
+		LEFT JOIN online_stocks os ON os.variant_id = v.id
 		WHERE c.customer_id = $1
-		GROUP BY ci.id, ci.variant_id, v.variant_code, v.name, v.sku, v.price, v.barcode,
-		         p.id, p.name, p.main_image_url, ci.quantity
 		ORDER BY ci.created_at
 	`, customerID)
 	if err != nil {
