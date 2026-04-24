@@ -3,6 +3,7 @@ package wishlist
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -45,8 +46,9 @@ func (s *Store) Remove(customerID, productID string) error {
 	return nil
 }
 
-// List returns the customer's wishlist with product details and stock availability.
+// List returns the customer's wishlist with product details, stock availability, and all variants.
 func (s *Store) List(customerID string) ([]map[string]interface{}, error) {
+	// 1. Fetch wishlist products
 	rows, err := s.db.Query(`
 		SELECT w.product_id, p.name AS product_name,
 		       COALESCE(p.main_image_url, ''),
@@ -69,6 +71,8 @@ func (s *Store) List(customerID string) ([]map[string]interface{}, error) {
 	defer rows.Close()
 
 	var items []map[string]interface{}
+	var productIDs []string
+
 	for rows.Next() {
 		var productID, productName, image, category string
 		var inStock bool
@@ -83,7 +87,67 @@ func (s *Store) List(customerID string) ([]map[string]interface{}, error) {
 			"category":     category,
 			"in_stock":     inStock,
 			"added_at":     createdAt,
+			"variants":     []map[string]interface{}{},
+		})
+		productIDs = append(productIDs, productID)
+	}
+	rows.Close()
+
+	if len(productIDs) == 0 {
+		return items, nil
+	}
+
+	// 2. Fetch all active variants for those products with online stock
+	placeholders := make([]string, len(productIDs))
+	args := make([]interface{}, len(productIDs))
+	for i, pid := range productIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = pid
+	}
+
+	vRows, err := s.db.Query(`
+		SELECT v.id, v.product_id, v.variant_code, v.name AS variant_name,
+		       v.sku, v.price, COALESCE(v.barcode, ''),
+		       COALESCE(os.quantity, 0) AS online_stock
+		FROM variants v
+		LEFT JOIN online_stocks os ON os.variant_id = v.id
+		WHERE v.product_id IN (`+strings.Join(placeholders, ",")+`) AND v.is_active = true
+		ORDER BY v.variant_code
+	`, args...)
+	if err != nil {
+		return items, nil
+	}
+	defer vRows.Close()
+
+	// Build map of productID -> variants
+	variantMap := map[string][]map[string]interface{}{}
+	for vRows.Next() {
+		var variantID, productID, variantName, sku, barcode string
+		var variantCode, onlineStock int
+		var price float64
+
+		vRows.Scan(&variantID, &productID, &variantCode, &variantName,
+			&sku, &price, &barcode, &onlineStock)
+
+		variantMap[productID] = append(variantMap[productID], map[string]interface{}{
+			"variant_id":   variantID,
+			"variant_code": variantCode,
+			"variant_name": variantName,
+			"sku":          sku,
+			"price":        price,
+			"barcode":      barcode,
+			"online_stock": onlineStock,
+			"in_stock":     onlineStock > 0,
 		})
 	}
+
+	// 3. Attach variants to each wishlist item
+	for i, item := range items {
+		pid := item["product_id"].(string)
+		if variants, ok := variantMap[pid]; ok {
+			items[i]["variants"] = variants
+		}
+	}
+
 	return items, nil
 }
