@@ -31,6 +31,9 @@ func (h *Handler) Checkout(c *fiber.Ctx) error {
 		in.PaymentMethod = "COD"
 	}
 	in.PaymentMethod = strings.ToUpper(in.PaymentMethod)
+	if in.PaymentMethod != "COD" && in.PaymentMethod != "ONLINE" {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid payment_method, must be COD or ONLINE"})
+	}
 
 	result, err := h.store.Checkout(cust.ID, in)
 	if err != nil {
@@ -97,8 +100,11 @@ func (h *Handler) AdminListOrders(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
 	status := strings.ToUpper(c.Query("status"))
+	search := c.Query("q")
+	dateFrom := c.Query("date_from")
+	dateTo := c.Query("date_to")
 
-	orders, total, err := h.store.AdminListOrders(status, page, limit)
+	orders, total, err := h.store.AdminListOrders(status, search, dateFrom, dateTo, page, limit)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch orders"})
 	}
