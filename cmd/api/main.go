@@ -641,7 +641,7 @@ func main() {
 
 	// Admin: ERP staff managing ecom orders
 	ecomOrder.RegisterAdminRoutes(
-		protected.Group("/ecom-orders",
+		protected.Group("/admin/ecom-orders",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,

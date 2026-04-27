@@ -38,7 +38,7 @@ func (h *Handler) Checkout(c *fiber.Ctx) error {
 		if msg == "cart is empty" || msg == "address not found" {
 			return c.Status(400).JSON(fiber.Map{"error": msg})
 		}
-		return c.Status(500).JSON(fiber.Map{"error": "checkout failed"})
+		return c.Status(500).JSON(fiber.Map{"error": msg})
 	}
 
 	return c.Status(201).JSON(result)
