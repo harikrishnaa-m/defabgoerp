@@ -62,6 +62,7 @@ import (
 	ecomMw "defab-erp/internal/ecom/middleware"
 	ecomOnlineStock "defab-erp/internal/ecom/onlinestock"
 	ecomOrder "defab-erp/internal/ecom/order"
+	ecomPayment "defab-erp/internal/ecom/payment"
 	ecomProduct "defab-erp/internal/ecom/product"
 	ecomWishlist "defab-erp/internal/ecom/wishlist"
 
@@ -211,6 +212,9 @@ func main() {
 	ecomOnlineStockStore := ecomOnlineStock.NewStore(database)
 	ecomOnlineStockHandler := ecomOnlineStock.NewHandler(ecomOnlineStockStore)
 
+	ecomPaymentStore := ecomPayment.NewStore(database)
+	ecomPaymentHandler := ecomPayment.NewHandler(ecomPaymentStore, database)
+
 	migrationStore := migration.NewStore(database)
 	migrationHandler := migration.NewHandler(migrationStore)
 
@@ -258,6 +262,7 @@ func main() {
 	ecomCart.RegisterRoutes(ecomProtected.Group("/cart"), ecomCartHandler)
 	ecomWishlist.RegisterRoutes(ecomProtected.Group("/wishlist"), ecomWishlistHandler)
 	ecomOrder.RegisterCustomerRoutes(ecomProtected.Group("/orders"), ecomOrderHandler)
+	ecomPayment.RegisterRoutes(ecomProtected, ecom, ecomPaymentHandler)
 
 	// Quick test route for products
 	api.Get("/products/test", func(c *fiber.Ctx) error {

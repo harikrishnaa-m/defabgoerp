@@ -382,16 +382,31 @@ func (s *Store) CancelOrder(customerID, orderID string) error {
 // ── Admin helpers (for ERP staff to manage ecom orders) ─────
 
 // AdminListOrders lists all ecom orders with filters.
-func (s *Store) AdminListOrders(status string, page, limit int) ([]map[string]interface{}, int, error) {
+func (s *Store) AdminListOrders(status, search, dateFrom, dateTo string, page, limit int) ([]map[string]interface{}, int, error) {
 	offset := (page - 1) * limit
 
-	where := ""
+	where := " WHERE 1=1"
 	args := []interface{}{}
 	idx := 1
 
 	if status != "" {
-		where = fmt.Sprintf(" WHERE o.status = $%d", idx)
+		where += fmt.Sprintf(" AND o.status = $%d", idx)
 		args = append(args, status)
+		idx++
+	}
+	if search != "" {
+		where += fmt.Sprintf(" AND o.order_number ILIKE $%d", idx)
+		args = append(args, "%"+search+"%")
+		idx++
+	}
+	if dateFrom != "" {
+		where += fmt.Sprintf(" AND o.created_at >= $%d", idx)
+		args = append(args, dateFrom)
+		idx++
+	}
+	if dateTo != "" {
+		where += fmt.Sprintf(" AND o.created_at < ($%d::date + interval '1 day')", idx)
+		args = append(args, dateTo)
 		idx++
 	}
 
