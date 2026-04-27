@@ -3,6 +3,8 @@ package cart
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 type Store struct {
@@ -147,6 +149,35 @@ func (s *Store) GetCart(customerID string) ([]map[string]interface{}, error) {
 			"in_stock":        availableStock >= float64(quantity),
 		})
 	}
+
+	// Fetch variant images in batch
+	if len(items) > 0 {
+		ph := make([]string, len(items))
+		args := make([]interface{}, len(items))
+		for i, item := range items {
+			ph[i] = "$" + strconv.Itoa(i+1)
+			args[i] = item["variant_id"]
+		}
+		imgRows, err := s.db.Query(`SELECT variant_id, image_url FROM variant_images WHERE variant_id IN (`+strings.Join(ph, ", ")+`)`, args...)
+		varImgMap := map[string][]string{}
+		if err == nil {
+			for imgRows.Next() {
+				var vid, url string
+				imgRows.Scan(&vid, &url)
+				varImgMap[vid] = append(varImgMap[vid], url)
+			}
+			imgRows.Close()
+		}
+		for _, item := range items {
+			vid := item["variant_id"].(string)
+			imgs := varImgMap[vid]
+			if imgs == nil {
+				imgs = []string{}
+			}
+			item["variant_images"] = imgs
+		}
+	}
+
 	return items, nil
 }
 

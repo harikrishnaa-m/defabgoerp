@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -287,6 +289,7 @@ func (s *Store) GetOrder(customerID, orderID string) (map[string]interface{}, er
 	defer itemRows.Close()
 
 	var items []map[string]interface{}
+	variantIDs := []string{}
 	for itemRows.Next() {
 		var iid, vid, pName, vName, sku string
 		var vCode, qty int
@@ -304,7 +307,57 @@ func (s *Store) GetOrder(customerID, orderID string) (map[string]interface{}, er
 			"unit_price":   uPrice,
 			"total_price":  tPrice,
 		})
+		variantIDs = append(variantIDs, vid)
 	}
+
+	// Fetch images for each variant and its product
+	if len(variantIDs) > 0 {
+		ph := make([]string, len(variantIDs))
+		args := make([]interface{}, len(variantIDs))
+		for i, vid := range variantIDs {
+			ph[i] = "$" + strconv.Itoa(i+1)
+			args[i] = vid
+		}
+		inClause := strings.Join(ph, ", ")
+
+		// Variant images
+		varImgMap := map[string][]string{}
+		vimgRows, err := s.db.Query(`SELECT variant_id, image_url FROM variant_images WHERE variant_id IN (`+inClause+`)`, args...)
+		if err == nil {
+			for vimgRows.Next() {
+				var vid, url string
+				vimgRows.Scan(&vid, &url)
+				varImgMap[vid] = append(varImgMap[vid], url)
+			}
+			vimgRows.Close()
+		}
+
+		// Product main image via variant → product
+		prodImgMap := map[string]string{}
+		prodImgRows, err := s.db.Query(`
+			SELECT v.id, COALESCE(p.main_image_url, '')
+			FROM variants v JOIN products p ON p.id = v.product_id
+			WHERE v.id IN (`+inClause+`)`, args...)
+		if err == nil {
+			for prodImgRows.Next() {
+				var vid, img string
+				prodImgRows.Scan(&vid, &img)
+				prodImgMap[vid] = img
+			}
+			prodImgRows.Close()
+		}
+
+		for _, item := range items {
+			vid := item["variant_id"].(string)
+			imgs := varImgMap[vid]
+			if imgs == nil {
+				imgs = []string{}
+			}
+			item["variant_images"] = imgs
+			item["product_image"] = prodImgMap[vid]
+		}
+	}
+
 	order["items"] = items
 
 	return order, nil
