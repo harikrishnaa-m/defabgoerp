@@ -363,20 +363,44 @@ func (s *Store) GetOrder(customerID, orderID string) (map[string]interface{}, er
 	return order, nil
 }
 
-// CancelOrder allows customer to cancel a PENDING order.
-func (s *Store) CancelOrder(customerID, orderID string) error {
-	res, err := s.db.Exec(`
-		UPDATE ecom_orders SET status = 'CANCELLED', updated_at = NOW()
-		WHERE id = $1 AND customer_id = $2 AND status = 'PENDING'
-	`, orderID, customerID)
+// CancelOrderResult holds the details returned after a successful cancellation.
+type CancelOrderResult struct {
+	OrderNumber   string
+	PaymentMethod string
+	PaymentStatus string
+	GrandTotal    float64
+}
+
+// CancelOrder cancels an order if it is not DELIVERED or RETURNED.
+// Returns the order details needed to decide whether to issue a refund.
+func (s *Store) CancelOrder(customerID, orderID string) (*CancelOrderResult, error) {
+	var result CancelOrderResult
+	err := s.db.QueryRow(`
+		UPDATE ecom_orders
+		SET status = 'CANCELLED', updated_at = NOW()
+		WHERE id = $1
+		  AND customer_id = $2
+		  AND status NOT IN ('DELIVERED', 'RETURNED', 'CANCELLED')
+		RETURNING order_number, payment_method, payment_status, grand_total
+	`, orderID, customerID).Scan(
+		&result.OrderNumber,
+		&result.PaymentMethod,
+		&result.PaymentStatus,
+		&result.GrandTotal,
+	)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("order not found or cannot be cancelled")
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("order not found or cannot be cancelled")
-	}
-	return nil
+	return &result, nil
+}
+
+// MarkRefundInitiated sets payment_status to REFUND_INITIATED after cancel+refund.
+func (s *Store) MarkRefundInitiated(orderNumber string) error {
+	_, err := s.db.Exec(`
+		UPDATE ecom_orders SET payment_status = 'REFUND_INITIATED', updated_at = NOW()
+		WHERE order_number = $1
+	`, orderNumber)
+	return err
 }
 
 // ── Admin helpers (for ERP staff to manage ecom orders) ─────

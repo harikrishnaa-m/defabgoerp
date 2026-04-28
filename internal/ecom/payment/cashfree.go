@@ -120,8 +120,78 @@ func GetOrderStatus(cfOrderID string) (*CashfreePaymentStatus, error) {
 	return &status, nil
 }
 
+// InitiateRefund creates a refund for a Cashfree order.
+// orderID is our order_number (e.g. ECOM-00018), refundID must be unique per refund.
+func InitiateRefund(orderID, refundID string, amount float64) error {
+	body, err := json.Marshal(map[string]interface{}{
+		"refund_amount": amount,
+		"refund_id":     refundID,
+		"refund_note":   "Customer cancellation",
+	})
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequest("POST",
+		cashfreeBaseURL()+"/orders/"+orderID+"/refunds",
+		bytes.NewBuffer(body),
+	)
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-api-version", "2023-08-01")
+	httpReq.Header.Set("x-client-id", os.Getenv("CASHFREE_APP_ID"))
+	httpReq.Header.Set("x-client-secret", os.Getenv("CASHFREE_SECRET_KEY"))
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("cashfree refund request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("cashfree refund error %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// GetRefundStatus fetches the status of a specific refund from Cashfree.
+// Returns "SUCCESS", "PENDING", "CANCELLED", etc.
+func GetRefundStatus(orderID, refundID string) (string, error) {
+	httpReq, err := http.NewRequest("GET",
+		cashfreeBaseURL()+"/orders/"+orderID+"/refunds/"+refundID, nil)
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("x-api-version", "2023-08-01")
+	httpReq.Header.Set("x-client-id", os.Getenv("CASHFREE_APP_ID"))
+	httpReq.Header.Set("x-client-secret", os.Getenv("CASHFREE_SECRET_KEY"))
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("cashfree request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("cashfree error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		RefundStatus string `json:"refund_status"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result.RefundStatus, nil
+}
+
 // VerifyWebhookSignature verifies the Cashfree webhook HMAC-SHA256 signature.
-// Cashfree signs: timestamp + rawBody
 func VerifyWebhookSignature(timestamp, signature string, rawBody []byte) bool {
 	secret := os.Getenv("CASHFREE_SECRET_KEY")
 	message := timestamp + string(rawBody)
