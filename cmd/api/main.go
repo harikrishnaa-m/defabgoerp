@@ -256,13 +256,17 @@ func main() {
 	ecomCustomer.RegisterPublicRoutes(ecom.Group("/auth"), ecomCustomerHandler)
 	ecomProduct.RegisterRoutes(ecom.Group("/products"), ecomProductHandler)
 
+	// Public payment webhook — must be registered BEFORE ecomProtected is created
+	// so Fiber's ecom JWT middleware does not intercept it.
+	ecom.Post("/payments/webhook", ecomPaymentHandler.Webhook)
+
 	// E-COMMERCE PROTECTED ROUTES (before ERP protected group)
 	ecomProtected := ecom.Group("", ecomMw.EcomJWTProtected(database))
 	ecomCustomer.RegisterProtectedRoutes(ecomProtected, ecomCustomerHandler)
 	ecomCart.RegisterRoutes(ecomProtected.Group("/cart"), ecomCartHandler)
 	ecomWishlist.RegisterRoutes(ecomProtected.Group("/wishlist"), ecomWishlistHandler)
 	ecomOrder.RegisterCustomerRoutes(ecomProtected.Group("/orders"), ecomOrderHandler)
-	ecomPayment.RegisterRoutes(ecomProtected, ecom, ecomPaymentHandler)
+	ecomPayment.RegisterAuthRoutes(ecomProtected, ecomPaymentHandler)
 
 	// Quick test route for products
 	api.Get("/products/test", func(c *fiber.Ctx) error {

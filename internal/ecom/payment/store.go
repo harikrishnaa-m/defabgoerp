@@ -22,13 +22,14 @@ func (s *Store) SaveCashfreeOrder(orderID, cfOrderID, sessionID string) error {
 	return err
 }
 
-// MarkOrderPaid updates payment_status to PAID and saves the payment reference.
-func (s *Store) MarkOrderPaid(cfOrderID, paymentRef string) error {
+// MarkOrderPaid updates payment_status to PAID. orderNumber is our ECOM-XXXXX order number
+// (echoed back by Cashfree in webhook data.order.order_id).
+func (s *Store) MarkOrderPaid(orderNumber, paymentRef string) error {
 	_, err := s.db.Exec(`
 		UPDATE ecom_orders
 		SET payment_status = 'PAID', payment_ref = $2, updated_at = NOW()
-		WHERE cf_order_id = $1
-	`, cfOrderID, paymentRef)
+		WHERE order_number = $1
+	`, orderNumber, paymentRef)
 	return err
 }
 
@@ -40,4 +41,24 @@ func (s *Store) GetOrderForPayment(orderID string) (cfOrderID, sessionID, status
 		FROM ecom_orders WHERE id = $1
 	`, orderID).Scan(&cfOrderID, &sessionID, &status, &grandTotal)
 	return
+}
+
+// MarkOrderPaidByCFOrderID marks an order as PAID using the Cashfree order ID (no payment ref).
+func (s *Store) MarkOrderPaidByCFOrderID(cfOrderID string) error {
+	_, err := s.db.Exec(`
+		UPDATE ecom_orders
+		SET payment_status = 'PAID', updated_at = NOW()
+		WHERE cf_order_id = $1
+	`, cfOrderID)
+	return err
+}
+
+// MarkOrderPaidByOrderNumber marks an order as PAID using our order_number.
+func (s *Store) MarkOrderPaidByOrderNumber(orderNumber string) error {
+	_, err := s.db.Exec(`
+		UPDATE ecom_orders
+		SET payment_status = 'PAID', updated_at = NOW()
+		WHERE order_number = $1
+	`, orderNumber)
+	return err
 }
