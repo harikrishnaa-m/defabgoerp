@@ -1,10 +1,12 @@
 package order
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
 	ecomMw "defab-erp/internal/ecom/middleware"
+	ecomPayment "defab-erp/internal/ecom/payment"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -87,9 +89,31 @@ func (h *Handler) CancelOrder(c *fiber.Ctx) error {
 	cust := c.Locals("ecom_customer").(*ecomMw.EcomCustomer)
 	orderID := c.Params("id")
 
-	if err := h.store.CancelOrder(cust.ID, orderID); err != nil {
+	result, err := h.store.CancelOrder(cust.ID, orderID)
+	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
+
+	// If paid online, initiate refund via Cashfree
+	if result.PaymentMethod == "ONLINE" && result.PaymentStatus == "PAID" {
+		refundID := fmt.Sprintf("REF-%s", result.OrderNumber)
+		if err := ecomPayment.InitiateRefund(result.OrderNumber, refundID, result.GrandTotal); err != nil {
+			// Cancellation already done — return success but flag refund failure
+			return c.JSON(fiber.Map{
+				"message":       "order cancelled",
+				"refund_status": "failed",
+				"refund_error":  err.Error(),
+			})
+		}
+		// Mark payment status as refund initiated
+		_ = h.store.MarkRefundInitiated(result.OrderNumber)
+		return c.JSON(fiber.Map{
+			"message":       "order cancelled",
+			"refund_status": "initiated",
+			"refund_amount": result.GrandTotal,
+		})
+	}
+
 	return c.JSON(fiber.Map{"message": "order cancelled"})
 }
 

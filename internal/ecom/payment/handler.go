@@ -125,34 +125,47 @@ func (h *Handler) Webhook(c *fiber.Ctx) error {
 
 	// Extract event type
 	eventType, _ := payload["type"].(string)
-	if eventType != "PAYMENT_SUCCESS_WEBHOOK" {
-		// Acknowledge other events without processing
-		return c.SendStatus(200)
-	}
+	log.Printf("[WEBHOOK] event type=%q", eventType)
 
-	data, _ := payload["data"].(map[string]interface{})
-	if data == nil {
-		return c.SendStatus(200)
-	}
+	switch eventType {
+	case "PAYMENT_SUCCESS_WEBHOOK":
+		data, _ := payload["data"].(map[string]interface{})
+		if data == nil {
+			return c.SendStatus(200)
+		}
+		order, _ := data["order"].(map[string]interface{})
+		payment, _ := data["payment"].(map[string]interface{})
+		if order == nil || payment == nil {
+			return c.SendStatus(200)
+		}
+		orderNumber, _ := order["order_id"].(string)
+		cfPaymentID, _ := payment["cf_payment_id"].(string)
+		paymentStatus, _ := payment["payment_status"].(string)
+		if orderNumber == "" || paymentStatus != "SUCCESS" {
+			return c.SendStatus(200)
+		}
+		payRef := fmt.Sprintf("CF-%s", cfPaymentID)
+		if err := h.store.MarkOrderPaid(orderNumber, payRef); err != nil {
+			log.Printf("[WEBHOOK] MarkOrderPaid failed: %v", err)
+		}
 
-	order, _ := data["order"].(map[string]interface{})
-	payment, _ := data["payment"].(map[string]interface{})
-	if order == nil || payment == nil {
-		return c.SendStatus(200)
-	}
-
-	cfOrderID, _ := order["order_id"].(string) // Cashfree's order_id (our order_number)
-	cfPaymentID, _ := payment["cf_payment_id"].(string)
-	paymentStatus, _ := payment["payment_status"].(string)
-
-	if cfOrderID == "" || paymentStatus != "SUCCESS" {
-		return c.SendStatus(200)
-	}
-
-	payRef := fmt.Sprintf("CF-%s", cfPaymentID)
-	if err := h.store.MarkOrderPaid(cfOrderID, payRef); err != nil {
-		// Log but still return 200 so Cashfree doesn't retry
-		return c.SendStatus(200)
+	case "REFUND_SUCCESS_WEBHOOK", "REFUND_STATUS_WEBHOOK":
+		data, _ := payload["data"].(map[string]interface{})
+		if data == nil {
+			return c.SendStatus(200)
+		}
+		refund, _ := data["refund"].(map[string]interface{})
+		if refund == nil {
+			return c.SendStatus(200)
+		}
+		orderID, _ := refund["order_id"].(string) // our order_number
+		refundStatus, _ := refund["refund_status"].(string)
+		if orderID == "" || refundStatus != "SUCCESS" {
+			return c.SendStatus(200)
+		}
+		if err := h.store.MarkRefunded(orderID); err != nil {
+			log.Printf("[WEBHOOK] MarkRefunded failed: %v", err)
+		}
 	}
 
 	return c.SendStatus(200)
@@ -193,4 +206,37 @@ func (h *Handler) Verify(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"payment_status": cfStatus.OrderStatus, "order_id": orderID})
+}
+
+// GET /ecom/payments/:order_id/refund-status
+// Polls Cashfree for the refund status and syncs the DB if refund is confirmed.
+func (h *Handler) RefundStatus(c *fiber.Ctx) error {
+	cust := c.Locals("ecom_customer").(*ecomMw.EcomCustomer)
+	orderID := c.Params("order_id")
+
+	var orderNumber, payStatus string
+	err := h.db.QueryRow(`
+		SELECT order_number, payment_status FROM ecom_orders
+		WHERE id = $1 AND customer_id = $2
+	`, orderID, cust.ID).Scan(&orderNumber, &payStatus)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "order not found"})
+	}
+
+	if payStatus == "REFUNDED" {
+		return c.JSON(fiber.Map{"refund_status": "SUCCESS", "order_id": orderID})
+	}
+
+	refundID := fmt.Sprintf("REF-%s", orderNumber)
+	status, err := GetRefundStatus(orderNumber, refundID)
+	if err != nil {
+		return c.Status(502).JSON(fiber.Map{"error": "could not check refund status"})
+	}
+
+	if status == "SUCCESS" {
+		_ = h.store.MarkRefunded(orderNumber)
+		return c.JSON(fiber.Map{"refund_status": "SUCCESS", "order_id": orderID})
+	}
+
+	return c.JSON(fiber.Map{"refund_status": status, "order_id": orderID})
 }

@@ -62,3 +62,23 @@ func (s *Store) MarkOrderPaidByOrderNumber(orderNumber string) error {
 	`, orderNumber)
 	return err
 }
+
+// MarkRefundInitiated sets payment_status to REFUND_INITIATED.
+func (s *Store) MarkRefundInitiated(orderNumber string) error {
+	_, err := s.db.Exec(`
+		UPDATE ecom_orders
+		SET payment_status = 'REFUND_INITIATED', updated_at = NOW()
+		WHERE order_number = $1
+	`, orderNumber)
+	return err
+}
+
+// MarkRefunded sets payment_status to REFUNDED when Cashfree confirms the refund.
+func (s *Store) MarkRefunded(orderNumber string) error {
+	_, err := s.db.Exec(`
+		UPDATE ecom_orders
+		SET payment_status = 'REFUNDED', updated_at = NOW()
+		WHERE order_number = $1
+	`, orderNumber)
+	return err
+}
