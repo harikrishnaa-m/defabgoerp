@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 
 	ecomMw "defab-erp/internal/ecom/middleware"
@@ -106,9 +107,16 @@ func (h *Handler) Webhook(c *fiber.Ctx) error {
 	signature := c.Get("x-webhook-signature")
 	rawBody := c.Body()
 
+	log.Printf("[WEBHOOK] timestamp=%q", timestamp)
+	log.Printf("[WEBHOOK] received signature=%q", signature)
+	log.Printf("[WEBHOOK] body (first 300)=%s", string(rawBody[:min(300, len(rawBody))]))
+	log.Printf("[WEBHOOK] computed signature=%s", DebugSignature(timestamp, rawBody))
+
 	if !VerifyWebhookSignature(timestamp, signature, rawBody) {
+		log.Printf("[WEBHOOK] signature MISMATCH — returning 401")
 		return c.Status(401).SendString("invalid signature")
 	}
+	log.Printf("[WEBHOOK] signature OK")
 
 	var payload map[string]interface{}
 	if err := json.Unmarshal(rawBody, &payload); err != nil {
@@ -148,4 +156,41 @@ func (h *Handler) Webhook(c *fiber.Ctx) error {
 	}
 
 	return c.SendStatus(200)
+}
+
+// GET /ecom/payments/:order_id/verify
+// Called by frontend after redirect to check if payment was captured.
+func (h *Handler) Verify(c *fiber.Ctx) error {
+	cust := c.Locals("ecom_customer").(*ecomMw.EcomCustomer)
+	orderID := c.Params("order_id")
+
+	// Fetch order_number and payment_status; order_number is what we sent to Cashfree
+	var orderNumber, payStatus string
+	err := h.db.QueryRow(`
+		SELECT order_number, payment_status FROM ecom_orders
+		WHERE id = $1 AND customer_id = $2
+	`, orderID, cust.ID).Scan(&orderNumber, &payStatus)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "order not found"})
+	}
+
+	// Already marked paid (e.g. via webhook)
+	if payStatus == "PAID" {
+		return c.JSON(fiber.Map{"payment_status": "PAID", "order_id": orderID})
+	}
+
+	// Poll Cashfree using our order_number (Cashfree's GET /orders/{order_id} uses our order_id)
+	cfStatus, err := GetOrderStatus(orderNumber)
+	if err != nil {
+		return c.Status(502).JSON(fiber.Map{"error": "could not verify with payment gateway"})
+	}
+
+	if cfStatus.OrderStatus == "PAID" {
+		if err := h.store.MarkOrderPaidByOrderNumber(orderNumber); err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": "failed to update order"})
+		}
+		return c.JSON(fiber.Map{"payment_status": "PAID", "order_id": orderID})
+	}
+
+	return c.JSON(fiber.Map{"payment_status": cfStatus.OrderStatus, "order_id": orderID})
 }

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -86,6 +86,40 @@ func CreateOrder(req CashfreeOrderRequest) (*CashfreeOrderResponse, error) {
 	return &cfResp, nil
 }
 
+type CashfreePaymentStatus struct {
+	OrderID     string `json:"order_id"`
+	OrderStatus string `json:"order_status"` // PAID, ACTIVE, EXPIRED, etc.
+}
+
+// GetOrderStatus fetches the payment status of a Cashfree order by cf_order_id.
+func GetOrderStatus(cfOrderID string) (*CashfreePaymentStatus, error) {
+	httpReq, err := http.NewRequest("GET", cashfreeBaseURL()+"/orders/"+cfOrderID, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("x-api-version", "2023-08-01")
+	httpReq.Header.Set("x-client-id", os.Getenv("CASHFREE_APP_ID"))
+	httpReq.Header.Set("x-client-secret", os.Getenv("CASHFREE_SECRET_KEY"))
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("cashfree request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("cashfree error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var status CashfreePaymentStatus
+	if err := json.Unmarshal(respBody, &status); err != nil {
+		return nil, fmt.Errorf("failed to parse cashfree response: %w", err)
+	}
+	return &status, nil
+}
+
 // VerifyWebhookSignature verifies the Cashfree webhook HMAC-SHA256 signature.
 // Cashfree signs: timestamp + rawBody
 func VerifyWebhookSignature(timestamp, signature string, rawBody []byte) bool {
@@ -93,6 +127,22 @@ func VerifyWebhookSignature(timestamp, signature string, rawBody []byte) bool {
 	message := timestamp + string(rawBody)
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(message))
-	expected := hex.EncodeToString(mac.Sum(nil))
+	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(expected), []byte(signature))
+}
+
+// DebugSignature returns the computed signature for logging purposes.
+func DebugSignature(timestamp string, rawBody []byte) string {
+	secret := os.Getenv("CASHFREE_SECRET_KEY")
+	message := timestamp + string(rawBody)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(message))
+	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
