@@ -178,7 +178,7 @@ func (s *Store) ListOrders(customerID string, page, limit int) ([]map[string]int
 
 	rows, err := s.db.Query(`
 		SELECT id, order_number, item_count, grand_total,
-		       status, payment_status, payment_method, created_at
+		       status, payment_status, payment_method, created_at, delivered_at
 		FROM ecom_orders
 		WHERE customer_id = $1
 		ORDER BY created_at DESC
@@ -193,19 +193,20 @@ func (s *Store) ListOrders(customerID string, page, limit int) ([]map[string]int
 	for rows.Next() {
 		var id, orderNum, status, payStatus string
 		var payMethod sql.NullString
+		var deliveredAt sql.NullTime
 		var itemCount int
 		var grandTotal float64
 		var createdAt time.Time
 
 		rows.Scan(&id, &orderNum, &itemCount, &grandTotal,
-			&status, &payStatus, &payMethod, &createdAt)
+			&status, &payStatus, &payMethod, &createdAt, &deliveredAt)
 
 		pm := ""
 		if payMethod.Valid {
 			pm = payMethod.String
 		}
 
-		orders = append(orders, map[string]interface{}{
+		row := map[string]interface{}{
 			"id":             id,
 			"order_number":   orderNum,
 			"item_count":     itemCount,
@@ -214,7 +215,16 @@ func (s *Store) ListOrders(customerID string, page, limit int) ([]map[string]int
 			"payment_status": payStatus,
 			"payment_method": pm,
 			"created_at":     createdAt,
-		})
+		}
+		if deliveredAt.Valid {
+			validTill := deliveredAt.Time.Add(7 * 24 * time.Hour)
+			row["return_valid_till"] = validTill
+			row["return_eligible"] = status == "DELIVERED" && time.Now().Before(validTill)
+		} else {
+			row["return_valid_till"] = nil
+			row["return_eligible"] = false
+		}
+		orders = append(orders, row)
 	}
 	return orders, total, nil
 }
@@ -228,13 +238,14 @@ func (s *Store) GetOrder(customerID, orderID string) (map[string]interface{}, er
 	var subTotal, discountAmt, taxAmt, shippingCharge, grandTotal float64
 	var createdAt, updatedAt time.Time
 
+	var deliveredAt sql.NullTime
 	err := s.db.QueryRow(`
 		SELECT id, order_number, item_count,
 		       sub_total, discount_amount, tax_amount, shipping_charge, grand_total,
 		       status, payment_status, payment_method, payment_ref, notes,
 		       shipping_name, shipping_phone, shipping_address,
 		       shipping_city, shipping_state, shipping_pincode,
-		       created_at, updated_at
+		       created_at, updated_at, delivered_at
 		FROM ecom_orders
 		WHERE id = $1 AND customer_id = $2
 	`, orderID, customerID).Scan(
@@ -243,10 +254,18 @@ func (s *Store) GetOrder(customerID, orderID string) (map[string]interface{}, er
 		&status, &payStatus, &payMethod, &payRef, &notes,
 		&shippingName, &shippingPhone, &shippingAddr,
 		&shippingCity, &shippingState, &shippingPincode,
-		&createdAt, &updatedAt,
+		&createdAt, &updatedAt, &deliveredAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+
+	var returnValidTill interface{}
+	returnEligible := false
+	if deliveredAt.Valid {
+		vt := deliveredAt.Time.Add(7 * 24 * time.Hour)
+		returnValidTill = vt
+		returnEligible = status == "DELIVERED" && time.Now().Before(vt)
 	}
 
 	order := map[string]interface{}{
@@ -271,8 +290,10 @@ func (s *Store) GetOrder(customerID, orderID string) (map[string]interface{}, er
 			"state":   nullStr(shippingState),
 			"pincode": nullStr(shippingPincode),
 		},
-		"created_at": createdAt,
-		"updated_at": updatedAt,
+		"created_at":        createdAt,
+		"updated_at":        updatedAt,
+		"return_valid_till": returnValidTill,
+		"return_eligible":   returnEligible,
 	}
 
 	// Fetch items
@@ -485,9 +506,31 @@ func (s *Store) AdminListOrders(status, search, dateFrom, dateTo string, page, l
 
 // AdminUpdateStatus updates the order status (CONFIRMED, PROCESSING, SHIPPED, DELIVERED, CANCELLED).
 func (s *Store) AdminUpdateStatus(orderID, status string) error {
+	query := `UPDATE ecom_orders SET status = $2, updated_at = NOW() WHERE id = $1`
+	if status == "DELIVERED" {
+		query = `UPDATE ecom_orders SET status = $2, delivered_at = NOW(), updated_at = NOW() WHERE id = $1`
+	}
+	res, err := s.db.Exec(query, orderID, status)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("order not found")
+	}
+	return nil
+}
+
+// MarkDelivered sets status = DELIVERED, delivered_at = NOW(), and for COD orders also sets payment_status = PAID.
+func (s *Store) MarkDelivered(orderID string) error {
 	res, err := s.db.Exec(`
-		UPDATE ecom_orders SET status = $2, updated_at = NOW() WHERE id = $1
-	`, orderID, status)
+		UPDATE ecom_orders
+		SET status = 'DELIVERED',
+		    delivered_at = NOW(),
+		    payment_status = CASE WHEN payment_method = 'COD' THEN 'PAID' ELSE payment_status END,
+		    updated_at = NOW()
+		WHERE id = $1
+	`, orderID)
 	if err != nil {
 		return err
 	}
