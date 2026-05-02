@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
@@ -197,16 +198,23 @@ func GetRefundStatus(orderID, refundID string) (string, error) {
 }
 
 // generatePayoutSignature creates the x-cf-signature header value.
-// Payload is "clientId.unixTimestamp", encrypted with RSA PKCS1v15 using the public key.
+// Payload is "clientId.unixTimestamp", encrypted with RSA OAEP (SHA1) to match OpenSSL default.
+// Reads key from CASHFREE_PAYOUT_PUBLIC_KEY env var (Render) or CASHFREE_PAYOUT_PUBLIC_KEY_FILE (local).
 func generatePayoutSignature() (string, error) {
-	pubKeyPath := os.Getenv("CASHFREE_PAYOUT_PUBLIC_KEY_FILE")
-	if pubKeyPath == "" {
-		return "", nil // IP whitelist mode — no signature needed
+	var pubKeyBytes []byte
+
+	if keyEnv := os.Getenv("CASHFREE_PAYOUT_PUBLIC_KEY"); keyEnv != "" {
+		pubKeyBytes = []byte(strings.ReplaceAll(keyEnv, `\n`, "\n"))
+	} else if keyFile := os.Getenv("CASHFREE_PAYOUT_PUBLIC_KEY_FILE"); keyFile != "" {
+		var err error
+		pubKeyBytes, err = os.ReadFile(keyFile)
+		if err != nil {
+			return "", fmt.Errorf("read public key: %w", err)
+		}
+	} else {
+		return "", nil // no key configured — IP whitelist mode
 	}
-	pubKeyBytes, err := os.ReadFile(pubKeyPath)
-	if err != nil {
-		return "", fmt.Errorf("read public key: %w", err)
-	}
+
 	block, _ := pem.Decode(pubKeyBytes)
 	if block == nil {
 		return "", fmt.Errorf("failed to decode PEM block")
@@ -217,7 +225,7 @@ func generatePayoutSignature() (string, error) {
 	}
 	pubKey := pubInterface.(*rsa.PublicKey)
 	data := fmt.Sprintf("%s.%d", os.Getenv("CASHFREE_PAYOUT_CLIENT_ID"), time.Now().Unix())
-	encrypted, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubKey, []byte(data), nil)
+	encrypted, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, pubKey, []byte(data), nil)
 	if err != nil {
 		return "", fmt.Errorf("encrypt signature: %w", err)
 	}
