@@ -64,6 +64,7 @@ import (
 	ecomOrder "defab-erp/internal/ecom/order"
 	ecomPayment "defab-erp/internal/ecom/payment"
 	ecomProduct "defab-erp/internal/ecom/product"
+	ecomReturn "defab-erp/internal/ecom/return"
 	ecomWishlist "defab-erp/internal/ecom/wishlist"
 
 	"defab-erp/internal/migration"
@@ -215,6 +216,10 @@ func main() {
 	ecomPaymentStore := ecomPayment.NewStore(database)
 	ecomPaymentHandler := ecomPayment.NewHandler(ecomPaymentStore, database)
 
+	ecomReturnStore := ecomReturn.NewStore(database)
+	ecomReturnHandler := ecomReturn.NewHandler(ecomReturnStore)
+	ecomPaymentHandler.SetReturnStore(ecomReturnStore)
+
 	migrationStore := migration.NewStore(database)
 	migrationHandler := migration.NewHandler(migrationStore)
 
@@ -256,9 +261,10 @@ func main() {
 	ecomCustomer.RegisterPublicRoutes(ecom.Group("/auth"), ecomCustomerHandler)
 	ecomProduct.RegisterRoutes(ecom.Group("/products"), ecomProductHandler)
 
-	// Public payment webhook — must be registered BEFORE ecomProtected is created
-	// so Fiber's ecom JWT middleware does not intercept it.
+	// Public webhooks — must be registered BEFORE ecomProtected is created
+	// so Fiber's ecom JWT middleware does not intercept them.
 	ecom.Post("/payments/webhook", ecomPaymentHandler.Webhook)
+	ecom.Post("/payouts/webhook", ecomPaymentHandler.PayoutWebhook)
 
 	// E-COMMERCE PROTECTED ROUTES (before ERP protected group)
 	ecomProtected := ecom.Group("", ecomMw.EcomJWTProtected(database))
@@ -267,6 +273,7 @@ func main() {
 	ecomWishlist.RegisterRoutes(ecomProtected.Group("/wishlist"), ecomWishlistHandler)
 	ecomOrder.RegisterCustomerRoutes(ecomProtected.Group("/orders"), ecomOrderHandler)
 	ecomPayment.RegisterAuthRoutes(ecomProtected, ecomPaymentHandler)
+	ecomReturn.RegisterCustomerRoutes(ecomProtected, ecomReturnHandler)
 
 	// Quick test route for products
 	api.Get("/products/test", func(c *fiber.Ctx) error {
@@ -659,6 +666,17 @@ func main() {
 		ecomOrderHandler,
 	)
 
+	// Admin: ERP staff managing ecom returns
+	ecomReturn.RegisterAdminRoutes(
+		protected.Group("/admin/ecom-returns",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+			),
+		),
+		ecomReturnHandler,
+	)
+
 	// Admin: ERP staff managing online reserved stock
 	ecomOnlineStock.RegisterRoutes(
 		protected.Group("/admin/online-stocks",
@@ -675,6 +693,9 @@ func main() {
 	if port == "" {
 		port = "3000"
 	}
+
+	log.Printf("🔗 PG webhook:     %s", os.Getenv("CASHFREE_WEBHOOK_URL"))
+	log.Printf("🔗 Payout webhook: %s", os.Getenv("CASHFREE_PAYOUT_WEBHOOK_URL"))
 
 	log.Fatal(app.Listen(":" + port))
 }

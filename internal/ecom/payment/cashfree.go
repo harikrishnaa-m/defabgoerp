@@ -3,11 +3,17 @@ package payment
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -189,6 +195,183 @@ func GetRefundStatus(orderID, refundID string) (string, error) {
 		return "", fmt.Errorf("failed to parse response: %w", err)
 	}
 	return result.RefundStatus, nil
+}
+
+// generatePayoutSignature creates the x-cf-signature header value.
+// Payload is "clientId.unixTimestamp", encrypted with RSA OAEP (SHA1) to match OpenSSL default.
+// Reads key from CASHFREE_PAYOUT_PUBLIC_KEY env var (Render) or CASHFREE_PAYOUT_PUBLIC_KEY_FILE (local).
+func generatePayoutSignature() (string, error) {
+	var pubKeyBytes []byte
+
+	if keyEnv := os.Getenv("CASHFREE_PAYOUT_PUBLIC_KEY"); keyEnv != "" {
+		pubKeyBytes = []byte(strings.ReplaceAll(keyEnv, `\n`, "\n"))
+	} else if keyFile := os.Getenv("CASHFREE_PAYOUT_PUBLIC_KEY_FILE"); keyFile != "" {
+		var err error
+		pubKeyBytes, err = os.ReadFile(keyFile)
+		if err != nil {
+			return "", fmt.Errorf("read public key: %w", err)
+		}
+	} else {
+		return "", nil // no key configured — IP whitelist mode
+	}
+
+	block, _ := pem.Decode(pubKeyBytes)
+	if block == nil {
+		return "", fmt.Errorf("failed to decode PEM block")
+	}
+	pubInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return "", fmt.Errorf("parse public key: %w", err)
+	}
+	pubKey := pubInterface.(*rsa.PublicKey)
+	data := fmt.Sprintf("%s.%d", os.Getenv("CASHFREE_PAYOUT_CLIENT_ID"), time.Now().Unix())
+	encrypted, err := rsa.EncryptOAEP(sha1.New(), rand.Reader, pubKey, []byte(data), nil)
+	if err != nil {
+		return "", fmt.Errorf("encrypt signature: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(encrypted), nil
+}
+
+// setPayoutHeaders sets auth headers on a payout request, including x-cf-signature if public key is configured.
+func setPayoutHeaders(req *http.Request) error {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-client-id", os.Getenv("CASHFREE_PAYOUT_CLIENT_ID"))
+	req.Header.Set("x-client-secret", os.Getenv("CASHFREE_PAYOUT_CLIENT_SECRET"))
+	req.Header.Set("x-api-version", "2024-01-01")
+	sig, err := generatePayoutSignature()
+	if err != nil {
+		return err
+	}
+	if sig != "" {
+		req.Header.Set("x-cf-signature", sig)
+	}
+	return nil
+}
+
+// cashfreePayoutBaseURL returns the Cashfree Payouts API base URL.
+func cashfreePayoutBaseURL() string {
+	if strings.ToLower(os.Getenv("CASHFREE_ENV")) == "production" {
+		return "https://api.cashfree.com/payout"
+	}
+	return "https://sandbox.cashfree.com/payout"
+}
+
+type PayoutBeneficiary struct {
+	BeneficiaryID string `json:"beneId"`
+	Name          string `json:"name"`
+	Email         string `json:"email"`
+	Phone         string `json:"phone"`
+	BankAccount   string `json:"bankAccount,omitempty"`
+	IFSC          string `json:"ifsc,omitempty"`
+	VPA           string `json:"vpa,omitempty"` // UPI ID
+	Address       string `json:"address,omitempty"`
+}
+
+// sanitizeBeneID strips non-alphanumeric characters (Cashfree requirement).
+func sanitizeBeneID(id string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return -1
+	}, id)
+}
+
+// registerBeneficiary creates the beneficiary via POST /payout/beneficiary.
+// A 409 means already exists — treated as success.
+func registerBeneficiary(beneID string, b PayoutBeneficiary) error {
+	instrumentDetails := map[string]interface{}{}
+	if b.VPA != "" {
+		instrumentDetails["vpa"] = b.VPA
+	} else {
+		instrumentDetails["bank_account_number"] = b.BankAccount
+		instrumentDetails["bank_ifsc"] = b.IFSC
+	}
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"beneficiary_id":                 beneID,
+		"beneficiary_name":               b.Name,
+		"beneficiary_instrument_details": instrumentDetails,
+		"beneficiary_contact_details": map[string]interface{}{
+			"beneficiary_email": b.Email,
+			"beneficiary_phone": b.Phone,
+		},
+	})
+
+	url := cashfreePayoutBaseURL() + "/beneficiary"
+	log.Printf("[PAYOUT BENE] registering at %s body: %s", url, string(payload))
+
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(payload))
+	if err := setPayoutHeaders(req); err != nil {
+		return fmt.Errorf("payout signature error: %w", err)
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("beneficiary registration failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("[PAYOUT BENE] status=%d body=%s", resp.StatusCode, string(respBody))
+
+	if resp.StatusCode == 409 {
+		// Already registered — fine to continue.
+		return nil
+	}
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return fmt.Errorf("beneficiary registration error %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// InitiatePayout sends money to a bank account or UPI via Cashfree Payouts V2.
+// Step 1: register beneficiary. Step 2: transfer using beneficiary_id.
+func InitiatePayout(transferID string, amount float64, b PayoutBeneficiary) error {
+	beneID := sanitizeBeneID(b.BeneficiaryID)
+
+	if err := registerBeneficiary(beneID, b); err != nil {
+		return err
+	}
+
+	transferMode := "banktransfer"
+	if b.VPA != "" {
+		transferMode = "upi"
+	}
+
+	payload, _ := json.Marshal(map[string]interface{}{
+		"transfer_id":      transferID,
+		"transfer_amount":  amount,
+		"transfer_mode":    transferMode,
+		"transfer_remarks": "Return refund",
+		"beneficiary_details": map[string]interface{}{
+			"beneficiary_id": beneID,
+		},
+	})
+
+	url := cashfreePayoutBaseURL() + "/transfers"
+	log.Printf("[PAYOUT V2] calling URL: %s body: %s", url, string(payload))
+
+	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(payload))
+	if err := setPayoutHeaders(req); err != nil {
+		return fmt.Errorf("payout signature error: %w", err)
+	}
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("payout transfer failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("[PAYOUT V2] status=%d body=%s", resp.StatusCode, string(respBody))
+
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		return fmt.Errorf("payout error %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
 
 // VerifyWebhookSignature verifies the Cashfree webhook HMAC-SHA256 signature.

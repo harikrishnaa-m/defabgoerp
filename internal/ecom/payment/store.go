@@ -73,12 +73,21 @@ func (s *Store) MarkRefundInitiated(orderNumber string) error {
 	return err
 }
 
-// MarkRefunded sets payment_status to REFUNDED when Cashfree confirms the refund.
+// MarkRefunded sets payment_status to REFUNDED, order status to RETURNED, and updates any linked return record.
 func (s *Store) MarkRefunded(orderNumber string) error {
 	_, err := s.db.Exec(`
 		UPDATE ecom_orders
-		SET payment_status = 'REFUNDED', updated_at = NOW()
+		SET payment_status = 'REFUNDED', status = 'RETURNED', updated_at = NOW()
 		WHERE order_number = $1
+	`, orderNumber)
+	if err != nil {
+		return err
+	}
+	// Also mark the return request as REFUNDED (if one exists for this order)
+	_, err = s.db.Exec(`
+		UPDATE ecom_returns SET status = 'REFUNDED', updated_at = NOW()
+		WHERE order_id = (SELECT id FROM ecom_orders WHERE order_number = $1 LIMIT 1)
+		  AND status = 'REFUND_INITIATED'
 	`, orderNumber)
 	return err
 }

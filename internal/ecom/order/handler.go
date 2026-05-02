@@ -180,6 +180,18 @@ func (h *Handler) AdminUpdateStatus(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "status updated", "status": in.Status})
 }
 
+// POST /admin/ecom-orders/:id/deliver
+func (h *Handler) AdminMarkDelivered(c *fiber.Ctx) error {
+	orderID := c.Params("id")
+	if err := h.store.MarkDelivered(orderID); err != nil {
+		if err.Error() == "order not found" {
+			return c.Status(404).JSON(fiber.Map{"error": "order not found"})
+		}
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "order marked as delivered"})
+}
+
 // PATCH /ecom/admin/orders/:id/payment
 func (h *Handler) AdminUpdatePayment(c *fiber.Ctx) error {
 	orderID := c.Params("id")

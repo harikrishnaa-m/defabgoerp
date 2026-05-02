@@ -12,13 +12,23 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+// ReturnStoreInterface is the subset of ecom/return Store used by the payment handler.
+type ReturnStoreInterface interface {
+	MarkPayoutCompleted(transferID string) error
+}
+
 type Handler struct {
-	store *Store
-	db    *sql.DB
+	store       *Store
+	db          *sql.DB
+	returnStore ReturnStoreInterface
 }
 
 func NewHandler(s *Store, db *sql.DB) *Handler {
 	return &Handler{store: s, db: db}
+}
+
+func (h *Handler) SetReturnStore(rs ReturnStoreInterface) {
+	h.returnStore = rs
 }
 
 // POST /ecom/payments/initiate
@@ -165,6 +175,50 @@ func (h *Handler) Webhook(c *fiber.Ctx) error {
 		}
 		if err := h.store.MarkRefunded(orderID); err != nil {
 			log.Printf("[WEBHOOK] MarkRefunded failed: %v", err)
+		}
+	}
+
+	return c.SendStatus(200)
+}
+
+// POST /ecom/payouts/webhook  (public — Cashfree Payouts webhook)
+func (h *Handler) PayoutWebhook(c *fiber.Ctx) error {
+	rawBody := c.Body()
+	log.Printf("[PAYOUT WEBHOOK] raw body: %s", string(rawBody))
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rawBody, &payload); err != nil {
+		log.Printf("[PAYOUT WEBHOOK] JSON parse error: %v", err)
+		return c.Status(400).SendString("invalid JSON")
+	}
+
+	// Try both V1 camelCase and V2 snake_case field names
+	event, _ := payload["event"].(string)
+	if event == "" {
+		event, _ = payload["type"].(string)
+	}
+
+	// V2: fields are nested under "data"
+	transferID, _ := payload["transferId"].(string)
+	status, _ := payload["status"].(string)
+	if data, ok := payload["data"].(map[string]interface{}); ok {
+		if transferID == "" {
+			transferID, _ = data["transfer_id"].(string)
+		}
+		if status == "" {
+			status, _ = data["status"].(string)
+		}
+	}
+
+	log.Printf("[PAYOUT WEBHOOK] event=%q transferId=%q status=%q", event, transferID, status)
+
+	if transferID == "" {
+		return c.SendStatus(200)
+	}
+
+	if event == "TRANSFER_SUCCESS" || status == "SUCCESS" || status == "TRANSFER_SUCCESS" {
+		if err := h.returnStore.MarkPayoutCompleted(transferID); err != nil {
+			log.Printf("[PAYOUT WEBHOOK] MarkPayoutCompleted failed: %v", err)
 		}
 	}
 
