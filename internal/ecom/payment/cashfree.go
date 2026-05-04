@@ -202,17 +202,30 @@ func GetRefundStatus(orderID, refundID string) (string, error) {
 // Reads key from CASHFREE_PAYOUT_PUBLIC_KEY env var (Render) or CASHFREE_PAYOUT_PUBLIC_KEY_FILE (local).
 func generatePayoutSignature() (string, error) {
 	var pubKeyBytes []byte
-
+	//replaced part
 	if keyEnv := os.Getenv("CASHFREE_PAYOUT_PUBLIC_KEY"); keyEnv != "" {
-		pubKeyBytes = []byte(strings.ReplaceAll(keyEnv, `\n`, "\n"))
+
+		// 🔥 FULL CLEANUP (fixes Render issues)
+		keyEnv = strings.ReplaceAll(keyEnv, "\\n", "\n")
+		keyEnv = strings.ReplaceAll(keyEnv, "\r", "")
+		keyEnv = strings.TrimSpace(keyEnv)
+
+		if !strings.Contains(keyEnv, "BEGIN PUBLIC KEY") {
+			return "", fmt.Errorf("invalid public key format")
+		}
+
+		pubKeyBytes = []byte(keyEnv)
+
 	} else if keyFile := os.Getenv("CASHFREE_PAYOUT_PUBLIC_KEY_FILE"); keyFile != "" {
+
 		var err error
 		pubKeyBytes, err = os.ReadFile(keyFile)
 		if err != nil {
 			return "", fmt.Errorf("read public key: %w", err)
 		}
+
 	} else {
-		return "", nil // no key configured — IP whitelist mode
+		return "", fmt.Errorf("no public key configured") // 🔥 DON'T silently skip
 	}
 
 	block, _ := pem.Decode(pubKeyBytes)
