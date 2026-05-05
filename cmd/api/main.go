@@ -67,7 +67,9 @@ import (
 	ecomReturn "defab-erp/internal/ecom/return"
 	ecomWishlist "defab-erp/internal/ecom/wishlist"
 
+	"defab-erp/internal/directgrn"
 	"defab-erp/internal/migration"
+	"defab-erp/internal/purchasereturn"
 )
 
 func main() {
@@ -222,6 +224,12 @@ func main() {
 
 	migrationStore := migration.NewStore(database)
 	migrationHandler := migration.NewHandler(migrationStore)
+
+	directGRNStore := directgrn.NewStore(database)
+	directGRNHandler := directgrn.NewHandler(directGRNStore, accountingRecorder)
+
+	purchaseReturnStore := purchasereturn.NewStore(database)
+	purchaseReturnHandler := purchasereturn.NewHandler(purchaseReturnStore)
 
 	// Wire auto-recording into billing & purchase handlers
 	billingHandler.SetRecorder(accountingRecorder)
@@ -630,6 +638,28 @@ func main() {
 			),
 		),
 		attendanceHandler,
+	)
+
+	directgrn.RegisterRoutes(
+		protected.Group("/direct-grn",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		directGRNHandler,
+	)
+
+	purchasereturn.RegisterRoutes(
+		protected.Group("/purchase-returns",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		purchaseReturnHandler,
 	)
 
 	protected.Get("/me", func(c *fiber.Ctx) error {
