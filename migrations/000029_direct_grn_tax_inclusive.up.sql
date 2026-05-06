@@ -1,0 +1,1 @@
+ALTER TABLE purchase_order_items ADD COLUMN IF NOT EXISTS tax_inclusive BOOLEAN NOT NULL DEFAULT FALSE;
