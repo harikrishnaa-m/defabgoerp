@@ -39,11 +39,11 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 // GET /
 func (h *Handler) List(c *fiber.Ctx) error {
 	f := ListFilter{
-		SupplierName: c.Query("supplier_name"),
-		PRNumber:     c.Query("pr_number"),
-		GRNNumber:    c.Query("grn_number"),
-		DateFrom:     c.Query("date_from"),
-		DateTo:       c.Query("date_to"),
+		SupplierName:  c.Query("supplier_name"),
+		PRNumber:      c.Query("pr_number"),
+		InvoiceNumber: c.Query("invoice_number"),
+		DateFrom:      c.Query("date_from"),
+		DateTo:        c.Query("date_to"),
 	}
 	rows, err := h.store.List(f)
 	if err != nil {

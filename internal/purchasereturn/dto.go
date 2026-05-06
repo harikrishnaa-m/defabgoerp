@@ -85,11 +85,11 @@ type PurchaseReturnDetail struct {
 
 // ListFilter holds optional query filters.
 type ListFilter struct {
-	SupplierName string // partial, case-insensitive
-	PRNumber     string // partial, case-insensitive
-	GRNNumber    string // partial, case-insensitive
-	DateFrom     string // YYYY-MM-DD
-	DateTo       string // YYYY-MM-DD
+	SupplierName  string // partial, case-insensitive
+	PRNumber      string // partial, case-insensitive
+	InvoiceNumber string // partial, case-insensitive
+	DateFrom      string // YYYY-MM-DD
+	DateTo        string // YYYY-MM-DD
 }
 
 // InvoiceLookupItem is one pre-populated item line returned by the invoice lookup.

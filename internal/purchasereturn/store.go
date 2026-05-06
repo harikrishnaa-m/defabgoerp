@@ -303,9 +303,9 @@ func (s *Store) List(f ListFilter) ([]PurchaseReturnListRow, error) {
 		args = append(args, "%"+strings.ToLower(f.PRNumber)+"%")
 		idx++
 	}
-	if f.GRNNumber != "" {
-		conditions = append(conditions, fmt.Sprintf("LOWER(gr.grn_number) LIKE $%d", idx))
-		args = append(args, "%"+strings.ToLower(f.GRNNumber)+"%")
+	if f.InvoiceNumber != "" {
+		conditions = append(conditions, fmt.Sprintf("LOWER(pi.invoice_number) LIKE $%d", idx))
+		args = append(args, "%"+strings.ToLower(f.InvoiceNumber)+"%")
 		idx++
 	}
 	if f.DateFrom != "" {
