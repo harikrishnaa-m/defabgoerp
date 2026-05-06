@@ -70,6 +70,7 @@ import (
 	"defab-erp/internal/directgrn"
 	"defab-erp/internal/migration"
 	"defab-erp/internal/purchasereturn"
+	"defab-erp/internal/supplieraging"
 )
 
 func main() {
@@ -230,6 +231,9 @@ func main() {
 
 	purchaseReturnStore := purchasereturn.NewStore(database)
 	purchaseReturnHandler := purchasereturn.NewHandler(purchaseReturnStore)
+
+	supplierAgingStore := supplieraging.NewStore(database)
+	supplierAgingHandler := supplieraging.NewHandler(supplierAgingStore)
 
 	// Wire auto-recording into billing & purchase handlers
 	billingHandler.SetRecorder(accountingRecorder)
@@ -660,6 +664,17 @@ func main() {
 			),
 		),
 		purchaseReturnHandler,
+	)
+
+	supplieraging.RegisterRoutes(
+		protected.Group("/supplier-aging",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		supplierAgingHandler,
 	)
 
 	protected.Get("/me", func(c *fiber.Ctx) error {
