@@ -2,13 +2,16 @@ package directgrn
 
 import (
 	"database/sql"
+	"errors"
 	"log"
+	"strconv"
 	"strings"
 
 	"defab-erp/internal/core/httperr"
 	"defab-erp/internal/core/model"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // AccountingRecorder mirrors the interface in purchaseinvoice/handler.go.
@@ -60,6 +63,10 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 	result, err := h.store.Create(in, user.ID.String())
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "invoice_number") {
+			return httperr.Conflict(c, "Invoice number already exists")
+		}
 		log.Println("direct grn create error:", err)
 		return httperr.Internal(c)
 	}
@@ -78,18 +85,22 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 // List handles GET /direct-grn?grn_number=&supplier_name=&date_from=&date_to=
 func (h *Handler) List(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	f := ListFilter{
 		GRNNumber:    c.Query("grn_number"),
 		SupplierName: c.Query("supplier_name"),
 		DateFrom:     c.Query("date_from"),
 		DateTo:       c.Query("date_to"),
+		Page:         page,
+		Limit:        limit,
 	}
-	list, err := h.store.List(f)
+	result, err := h.store.List(f)
 	if err != nil {
 		log.Println("direct grn list error:", err)
 		return httperr.Internal(c)
 	}
-	return c.JSON(list)
+	return c.JSON(result)
 }
 
 // GetByID handles GET /direct-grn/:id

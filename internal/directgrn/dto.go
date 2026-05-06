@@ -14,8 +14,8 @@ type DirectGRNItem struct {
 	GSTPercent           float64 `json:"gst_percent"`
 	AdditionalWork       string  `json:"additional_work"`
 	AdditionalWorkAmount float64 `json:"additional_work_amount"`
-	PaidByUserID         string  `json:"paid_by_user_id"`     // references users.id (internal staff)
-	PaidToSupplierID     string  `json:"paid_to_supplier_id"` // references suppliers.id
+	PaidByUserID         string  `json:"paid_by_user_id"`
+	PaidToSupplierID     string  `json:"paid_to_supplier_id"`
 	CashAmount           float64 `json:"cash_amount"`
 	CreditAmount         float64 `json:"credit_amount"`
 }
@@ -32,10 +32,11 @@ type DirectGRNInput struct {
 	WarehouseID         string            `json:"warehouse_id"`
 	PurchaseType        string            `json:"purchase_type"`
 	OrderDate           string            `json:"order_date"`
-	TransportSupplierID string            `json:"transport_supplier_id"` // references suppliers.id
+	TransportSupplierID string            `json:"transport_supplier_id"`
 	LRNumber            string            `json:"lr_number"`
 	InvoiceNumber       string            `json:"invoice_number"`
 	InvoiceDate         string            `json:"invoice_date"`
+	TaxInclusive        bool              `json:"tax_inclusive"` // applies to all items
 	DiscountAmount      float64           `json:"discount_amount"`
 	RoundOff            float64           `json:"round_off"`
 	Notes               string            `json:"notes"`
@@ -63,6 +64,8 @@ type ListFilter struct {
 	SupplierName string // partial, case-insensitive
 	DateFrom     string // YYYY-MM-DD, filters received_date >=
 	DateTo       string // YYYY-MM-DD, filters received_date <=
+	Page         int    // 1-based, default 1
+	Limit        int    // default 20
 }
 
 // DirectGRNListRow is one row in the list view.
@@ -86,6 +89,7 @@ type DirectGRNListRow struct {
 	InvoiceDate           string  `json:"invoice_date"`
 	NetAmount             float64 `json:"net_amount"`
 	AdditionalCharges     float64 `json:"additional_charges"`
+	AdditionalWorkAmount  float64 `json:"additional_work_amount"`
 }
 
 // DirectGRNDetailItem is one item in the detail view.
@@ -103,6 +107,7 @@ type DirectGRNDetailItem struct {
 	GSTPercent           float64 `json:"gst_percent"`
 	GSTAmount            float64 `json:"gst_amount"`
 	TotalPrice           float64 `json:"total_price"`
+	TaxInclusive         bool    `json:"tax_inclusive"`
 	AdditionalWork       string  `json:"additional_work"`
 	AdditionalWorkAmount float64 `json:"additional_work_amount"`
 	PaidByUserID         string  `json:"paid_by_user_id"`

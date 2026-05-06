@@ -274,8 +274,27 @@ func (s *Store) Create(in CreatePurchaseReturnInput, userID string) (string, err
 	return prID, nil
 }
 
-// List returns purchase returns with optional filters.
-func (s *Store) List(f ListFilter) ([]PurchaseReturnListRow, error) {
+// ListResult wraps paginated rows and total count.
+type ListResult struct {
+	Data       []PurchaseReturnListRow `json:"data"`
+	Total      int                     `json:"total"`
+	Page       int                     `json:"page"`
+	Limit      int                     `json:"limit"`
+	TotalPages int                     `json:"total_pages"`
+}
+
+// List returns purchase returns with optional filters and pagination.
+func (s *Store) List(f ListFilter) (*ListResult, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	page := f.Page
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+
 	base := `
 		SELECT
 			pr.id, pr.pr_number, pr.pr_date::text,
@@ -322,7 +341,15 @@ func (s *Store) List(f ListFilter) ([]PurchaseReturnListRow, error) {
 	if len(conditions) > 0 {
 		base += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	base += " ORDER BY pr.pr_date DESC, pr.created_at DESC"
+
+	// total count
+	countQ := "SELECT COUNT(*) FROM (" + base + ") AS _cnt"
+	var total int
+	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("count purchase_returns: %w", err)
+	}
+
+	base += fmt.Sprintf(" ORDER BY pr.pr_date DESC, pr.created_at DESC LIMIT %d OFFSET %d", limit, offset)
 
 	rows, err := s.db.Query(base, args...)
 	if err != nil {
@@ -347,7 +374,18 @@ func (s *Store) List(f ListFilter) ([]PurchaseReturnListRow, error) {
 	if list == nil {
 		list = []PurchaseReturnListRow{}
 	}
-	return list, nil
+
+	totalPages := total / limit
+	if total%limit != 0 {
+		totalPages++
+	}
+	return &ListResult{
+		Data:       list,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+	}, nil
 }
 
 // GetByID returns full detail for one purchase return.
@@ -448,6 +486,16 @@ func (s *Store) GetInvoiceLookup(invoiceNumber string) (*InvoiceLookupResponse, 
 	if err != nil {
 		return nil, fmt.Errorf("invoice %q not found", invoiceNumber)
 	}
+
+	// Fetch tax_inclusive from the first item of this invoice's PO
+	_ = s.db.QueryRow(`
+		SELECT COALESCE(poi.tax_inclusive, FALSE)
+		FROM purchase_invoice_items pii
+		JOIN purchase_invoices pi  ON pi.id  = pii.purchase_invoice_id
+		JOIN purchase_order_items poi ON poi.id = pii.purchase_order_item_id
+		WHERE pi.invoice_number = $1
+		LIMIT 1
+	`, invoiceNumber).Scan(&resp.TaxInclusive)
 
 	rows, err := s.db.Query(`
 		SELECT

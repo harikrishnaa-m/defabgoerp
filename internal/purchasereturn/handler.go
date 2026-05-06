@@ -1,6 +1,8 @@
 package purchasereturn
 
 import (
+	"strconv"
+
 	"github.com/gofiber/fiber/v2"
 
 	"defab-erp/internal/core/model"
@@ -38,18 +40,22 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 // GET /
 func (h *Handler) List(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	f := ListFilter{
 		SupplierName:  c.Query("supplier_name"),
 		PRNumber:      c.Query("pr_number"),
 		InvoiceNumber: c.Query("invoice_number"),
 		DateFrom:      c.Query("date_from"),
 		DateTo:        c.Query("date_to"),
+		Page:          page,
+		Limit:         limit,
 	}
 	rows, err := h.store.List(f)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
-	return c.JSON(fiber.Map{"data": rows})
+	return c.JSON(rows)
 }
 
 // GET /:id

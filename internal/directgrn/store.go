@@ -78,9 +78,18 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 			return nil, fmt.Errorf("quantity for item %q must be greater than zero", item.ItemName)
 		}
 		itemID := uuid.New().String()
-		gstAmt := item.Quantity * item.UnitPrice * item.GSTPercent / 100
-		lineTotal := (item.Quantity * item.UnitPrice) + gstAmt
-		totalAmount += item.Quantity * item.UnitPrice
+		var gstAmt, lineBase, lineTotal float64
+		if in.TaxInclusive {
+			// unit_price includes GST — back-calculate
+			gstAmt = item.Quantity * item.UnitPrice * item.GSTPercent / (100 + item.GSTPercent)
+			lineBase = item.Quantity*item.UnitPrice - gstAmt
+			lineTotal = item.Quantity * item.UnitPrice
+		} else {
+			lineBase = item.Quantity * item.UnitPrice
+			gstAmt = lineBase * item.GSTPercent / 100
+			lineTotal = lineBase + gstAmt
+		}
+		totalAmount += lineBase
 		taxAmount += gstAmt
 
 		_, err = tx.Exec(`
@@ -89,19 +98,22 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 				 quantity, unit_price, gst_percent, gst_amount, total_price,
 				 product_code, category, free_qty,
 				 additional_work, additional_work_amount,
-				 paid_by_user_id, paid_to_supplier_id, cash_amount, credit_amount)
+				 paid_by_user_id, paid_to_supplier_id, cash_amount, credit_amount,
+				 tax_inclusive)
 			VALUES
 				($1, $2, $3, $4, $5, $6,
 				 $7, $8, $9, $10, $11,
 				 $12, $13, $14,
 				 $15, $16,
-				 NULLIF($17,'')::uuid, NULLIF($18,'')::uuid, $19, $20)
+				 NULLIF($17,'')::uuid, NULLIF($18,'')::uuid, $19, $20,
+				 $21)
 		`,
 			itemID, poID, item.ItemName, item.Description, item.HSNCode, item.Unit,
 			item.Quantity, item.UnitPrice, item.GSTPercent, gstAmt, lineTotal,
 			item.ProductCode, item.Category, item.FreeQty,
 			item.AdditionalWork, item.AdditionalWorkAmount,
 			item.PaidByUserID, item.PaidToSupplierID, item.CashAmount, item.CreditAmount,
+			in.TaxInclusive,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert purchase_order_items: %w", err)
@@ -296,8 +308,27 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 	}, nil
 }
 
-// List returns Direct GRNs with optional filters (GRN number, supplier name, date range).
-func (s *Store) List(f ListFilter) ([]DirectGRNListRow, error) {
+// ListResult wraps paginated rows and total count.
+type ListResult struct {
+	Data       []DirectGRNListRow `json:"data"`
+	Total      int                `json:"total"`
+	Page       int                `json:"page"`
+	Limit      int                `json:"limit"`
+	TotalPages int                `json:"total_pages"`
+}
+
+// List returns Direct GRNs with optional filters and pagination.
+func (s *Store) List(f ListFilter) (*ListResult, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	page := f.Page
+	if page <= 0 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+
 	base := `
 		SELECT
 			gr.id                                     AS grn_id,
@@ -321,7 +352,11 @@ func (s *Store) List(f ListFilter) ([]DirectGRNListRow, error) {
 			COALESCE(
 				(SELECT SUM(pc.amount) FROM purchase_charges pc WHERE pc.purchase_order_id = po.id),
 				0
-			)                                        AS additional_charges
+			)                                        AS additional_charges,
+			COALESCE(
+				(SELECT SUM(poi.additional_work_amount) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id),
+				0
+			)                                        AS additional_work_amount
 		FROM goods_receipts gr
 		JOIN purchase_orders po      ON po.id = gr.purchase_order_id
 		JOIN purchase_invoices pi    ON pi.purchase_order_id = po.id
@@ -358,7 +393,15 @@ func (s *Store) List(f ListFilter) ([]DirectGRNListRow, error) {
 	if len(conditions) > 0 {
 		base += " WHERE " + strings.Join(conditions, " AND ")
 	}
-	base += " ORDER BY gr.received_date DESC"
+
+	// total count (same filters, no pagination)
+	countQ := "SELECT COUNT(*) FROM (" + base + ") AS _cnt"
+	var total int
+	if err := s.db.QueryRow(countQ, args...).Scan(&total); err != nil {
+		return nil, fmt.Errorf("count direct grn: %w", err)
+	}
+
+	base += fmt.Sprintf(" ORDER BY gr.received_date DESC LIMIT %d OFFSET %d", limit, offset)
 
 	rows, err := s.db.Query(base, args...)
 	if err != nil {
@@ -377,7 +420,7 @@ func (s *Store) List(f ListFilter) ([]DirectGRNListRow, error) {
 			&r.TransportSupplierID, &r.TransportSupplierName, &r.LRNumber,
 			&r.ReceivedDate, &r.ExpectedDate,
 			&r.InvoiceID, &r.InvoiceNumber, &r.InvoiceDate,
-			&r.NetAmount, &r.AdditionalCharges,
+			&r.NetAmount, &r.AdditionalCharges, &r.AdditionalWorkAmount,
 		); err != nil {
 			return nil, fmt.Errorf("scan direct grn list row: %w", err)
 		}
@@ -386,7 +429,18 @@ func (s *Store) List(f ListFilter) ([]DirectGRNListRow, error) {
 	if list == nil {
 		list = []DirectGRNListRow{}
 	}
-	return list, nil
+
+	totalPages := total / limit
+	if total%limit != 0 {
+		totalPages++
+	}
+	return &ListResult{
+		Data:       list,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+	}, nil
 }
 
 // GetByID returns full detail for one Direct GRN by GRN id.
@@ -448,7 +502,8 @@ func (s *Store) GetByID(grnID string) (*DirectGRNDetail, error) {
 			COALESCE(poi.additional_work, ''), poi.additional_work_amount,
 			COALESCE(poi.paid_by_user_id::text, ''), COALESCE(u.name, ''),
 			COALESCE(poi.paid_to_supplier_id::text, ''), COALESCE(sp.name, ''),
-			poi.cash_amount, poi.credit_amount
+			poi.cash_amount, poi.credit_amount,
+			COALESCE(poi.tax_inclusive, FALSE)
 		FROM purchase_order_items poi
 		LEFT JOIN users u      ON u.id  = poi.paid_by_user_id
 		LEFT JOIN suppliers sp ON sp.id = poi.paid_to_supplier_id
@@ -472,6 +527,7 @@ func (s *Store) GetByID(grnID string) (*DirectGRNDetail, error) {
 			&it.PaidByUserID, &it.PaidByUserName,
 			&it.PaidToSupplierID, &it.PaidToSupplierName,
 			&it.CashAmount, &it.CreditAmount,
+			&it.TaxInclusive,
 		); err != nil {
 			return nil, fmt.Errorf("scan item: %w", err)
 		}

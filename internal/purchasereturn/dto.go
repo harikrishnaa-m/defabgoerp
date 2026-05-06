@@ -90,6 +90,8 @@ type ListFilter struct {
 	InvoiceNumber string // partial, case-insensitive
 	DateFrom      string // YYYY-MM-DD
 	DateTo        string // YYYY-MM-DD
+	Page          int    // 1-based, default 1
+	Limit         int    // default 20
 }
 
 // InvoiceLookupItem is one pre-populated item line returned by the invoice lookup.
@@ -110,5 +112,6 @@ type InvoiceLookupResponse struct {
 	SupplierName  string              `json:"supplier_name"`
 	Currency      string              `json:"currency"`      // defaults: Rs
 	ExchangeRate  float64             `json:"exchange_rate"` // defaults: 1
+	TaxInclusive  bool                `json:"tax_inclusive"`
 	Items         []InvoiceLookupItem `json:"items"`
 }
