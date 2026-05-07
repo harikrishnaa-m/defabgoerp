@@ -167,6 +167,7 @@ func (s *Store) Create(in CreatePurchaseReturnInput, userID string) (string, err
 	type calcItem struct {
 		poItemID     string
 		itemName     string
+		productCode  string
 		hsnCode      string
 		unit         string
 		qty          float64
@@ -196,9 +197,16 @@ func (s *Store) Create(in CreatePurchaseReturnInput, userID string) (string, err
 		subAmount += linePrice
 		totalGST += gstAmt
 
+		// Look up product_code from purchase_order_items if we have a link
+		var productCode string
+		if it.PurchaseOrderItemID != "" {
+			_ = tx.QueryRow(`SELECT COALESCE(product_code,'') FROM purchase_order_items WHERE id = $1`, it.PurchaseOrderItemID).Scan(&productCode)
+		}
+
 		items = append(items, calcItem{
 			poItemID:     it.PurchaseOrderItemID,
 			itemName:     it.ItemName,
+			productCode:  productCode,
 			hsnCode:      it.HSNCode,
 			unit:         it.Unit,
 			qty:          it.Quantity,
@@ -221,7 +229,7 @@ func (s *Store) Create(in CreatePurchaseReturnInput, userID string) (string, err
 			 currency, exchange_rate, sub_amount, tax_amount, duty_amount,
 			 round_off, net_amount, reason, status, created_by)
 		VALUES ($1, $2, $3, NULLIF($4,'')::uuid, NULLIF($5,'')::uuid,
-		        $6, $7, $8, $9, $10, $11, $12, $13, 'PENDING', $14)
+		        $6, $7, $8, $9, $10, $11, $12, $13, 'COMPLETED', $14)
 		RETURNING id
 	`, prNumber, prDate, in.SupplierID, purchaseInvoiceID, grnID,
 		currency, exchangeRate, subAmount, totalGST, in.DutyAmount,
@@ -246,17 +254,26 @@ func (s *Store) Create(in CreatePurchaseReturnInput, userID string) (string, err
 		}
 
 		if warehouseID != "" {
-			// Deduct from raw_material_stocks
-			_, err = tx.Exec(`
-				UPDATE raw_material_stocks
-				SET quantity = quantity - $1, updated_at = NOW()
-				WHERE item_name = $2 AND warehouse_id = $3
-			`, it.qty, it.itemName, warehouseID)
+			// Deduct from raw_material_stocks — use product_code key if available,
+			// otherwise fall back to item_name.
+			if it.productCode != "" {
+				_, err = tx.Exec(`
+					UPDATE raw_material_stocks
+					SET quantity = quantity - $1, updated_at = NOW()
+					WHERE product_code = $2 AND warehouse_id = $3
+				`, it.qty, it.productCode, warehouseID)
+			} else {
+				_, err = tx.Exec(`
+					UPDATE raw_material_stocks
+					SET quantity = quantity - $1, updated_at = NOW()
+					WHERE item_name = $2 AND warehouse_id = $3
+				`, it.qty, it.itemName, warehouseID)
+			}
 			if err != nil {
 				return "", fmt.Errorf("deduct raw_material_stocks: %w", err)
 			}
 
-			// Record movement (OUT type for return, negative quantity)
+			// Record movement
 			_, err = tx.Exec(`
 				INSERT INTO raw_material_movements
 					(item_name, warehouse_id, quantity, movement_type, reference)

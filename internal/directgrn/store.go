@@ -20,13 +20,14 @@ func NewStore(db *sql.DB) *Store {
 
 // poItemRecord holds the data needed for GRN + invoice creation after PO items are inserted.
 type poItemRecord struct {
-	id         string
-	itemName   string
-	hsnCode    string
-	unit       string
-	qty        float64
-	unitPrice  float64
-	gstPercent float64
+	id          string
+	itemName    string
+	productCode string
+	hsnCode     string
+	unit        string
+	qty         float64
+	unitPrice   float64
+	gstPercent  float64
 }
 
 // Create runs a single DB transaction that creates a Purchase Order, Goods Receipt,
@@ -120,13 +121,14 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 		}
 
 		poItems = append(poItems, poItemRecord{
-			id:         itemID,
-			itemName:   item.ItemName,
-			hsnCode:    item.HSNCode,
-			unit:       item.Unit,
-			qty:        item.Quantity,
-			unitPrice:  item.UnitPrice,
-			gstPercent: item.GSTPercent,
+			id:          itemID,
+			itemName:    item.ItemName,
+			productCode: item.ProductCode,
+			hsnCode:     item.HSNCode,
+			unit:        item.Unit,
+			qty:         item.Quantity,
+			unitPrice:   item.UnitPrice,
+			gstPercent:  item.GSTPercent,
 		})
 	}
 
@@ -191,17 +193,32 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 			return nil, fmt.Errorf("update po item received_qty: %w", err)
 		}
 
-		// Upsert raw_material_stocks
-		_, err = tx.Exec(`
-			INSERT INTO raw_material_stocks (item_name, hsn_code, unit, warehouse_id, quantity, updated_at)
-			VALUES ($1, $2, $3, $4, $5, NOW())
-			ON CONFLICT (item_name, warehouse_id)
-			DO UPDATE SET
-				quantity   = raw_material_stocks.quantity + $5,
-				hsn_code   = COALESCE(NULLIF($2, ''), raw_material_stocks.hsn_code),
-				unit       = $3,
-				updated_at = NOW()
-		`, it.itemName, it.hsnCode, it.unit, in.WarehouseID, it.qty)
+		// Upsert raw_material_stocks — conflict key is (product_code, warehouse_id) when
+		// product_code is provided, otherwise falls back to (item_name, warehouse_id).
+		if it.productCode != "" {
+			_, err = tx.Exec(`
+				INSERT INTO raw_material_stocks (item_name, product_code, hsn_code, unit, warehouse_id, quantity, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, NOW())
+				ON CONFLICT (product_code, warehouse_id) WHERE product_code IS NOT NULL AND product_code <> ''
+				DO UPDATE SET
+					quantity     = raw_material_stocks.quantity + $6,
+					item_name    = $1,
+					hsn_code     = COALESCE(NULLIF($3, ''), raw_material_stocks.hsn_code),
+					unit         = $4,
+					updated_at   = NOW()
+			`, it.itemName, it.productCode, it.hsnCode, it.unit, in.WarehouseID, it.qty)
+		} else {
+			_, err = tx.Exec(`
+				INSERT INTO raw_material_stocks (item_name, hsn_code, unit, warehouse_id, quantity, updated_at)
+				VALUES ($1, $2, $3, $4, $5, NOW())
+				ON CONFLICT (item_name, warehouse_id) WHERE product_code IS NULL OR product_code = ''
+				DO UPDATE SET
+					quantity   = raw_material_stocks.quantity + $5,
+					hsn_code   = COALESCE(NULLIF($2, ''), raw_material_stocks.hsn_code),
+					unit       = $3,
+					updated_at = NOW()
+			`, it.itemName, it.hsnCode, it.unit, in.WarehouseID, it.qty)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("upsert raw_material_stocks: %w", err)
 		}
