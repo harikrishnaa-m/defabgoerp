@@ -314,7 +314,7 @@ func (s *Store) List(f ListFilter) (*ListResult, error) {
 
 	base := `
 		SELECT
-			pr.id, pr.pr_number, pr.pr_date::text,
+			pr.id, pr.pr_number, TO_CHAR(pr.pr_date, 'DD/MM/YYYY'),
 			pr.supplier_id, COALESCE(sup.name, ''),
 			COALESCE(pr.goods_receipt_id::text, ''), COALESCE(gr.grn_number, ''),
 			COALESCE(pr.purchase_invoice_id::text, ''), COALESCE(pi.invoice_number, ''),
