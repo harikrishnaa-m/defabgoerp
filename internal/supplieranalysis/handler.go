@@ -3,7 +3,6 @@ package supplieranalysis
 import (
 	"log"
 	"strconv"
-	"time"
 
 	"defab-erp/internal/core/httperr"
 
@@ -22,34 +21,26 @@ func NewHandler(s *Store) *Handler {
 // Mode 1 — Search by Supplier (search_by_item absent or false):
 //
 //	supplier_id  — required
-//	month        — 1-12, required
-//	year         — default: current year
+//	month        — number of months to show (1=current only, 2=current+prev, …)
 //	warehouse_id — optional
 //	search_item  — optional, partial item name/code filter within supplier
 //
 // Mode 2 — Search by Item (search_by_item=true):
 //
-//	search_item  — required (item code / name, partial match)
-//	month        — 1-12, required
-//	year         — default: current year
+//	search_item  — required
+//	month        — number of months to show
 //	warehouse_id — optional
 func (h *Handler) Get(c *fiber.Ctx) error {
 	searchByItem := c.Query("search_by_item") == "true"
 
-	month, err := strconv.Atoi(c.Query("month"))
-	if err != nil || month < 1 || month > 12 {
-		return httperr.BadRequest(c, "month must be a number between 1 and 12")
-	}
-
-	year, _ := strconv.Atoi(c.Query("year", strconv.Itoa(time.Now().Year())))
-	if year == 0 {
-		year = time.Now().Year()
+	lastN, err := strconv.Atoi(c.Query("month", "1"))
+	if err != nil || lastN < 1 {
+		return httperr.BadRequest(c, "month must be a positive number (1 = current month, 2 = current + previous, …)")
 	}
 
 	f := Filter{
 		SupplierID:   c.Query("supplier_id"),
-		Month:        month,
-		Year:         year,
+		LastNMonths:  lastN,
 		WarehouseID:  c.Query("warehouse_id"),
 		SearchItem:   c.Query("search_item"),
 		SearchByItem: searchByItem,

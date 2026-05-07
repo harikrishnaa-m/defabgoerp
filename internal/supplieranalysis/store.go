@@ -16,21 +16,24 @@ func NewStore(db *sql.DB) *Store {
 }
 
 func (s *Store) Get(f Filter) (*SupplierAnalysisResponse, error) {
-	if f.Month < 1 || f.Month > 12 {
-		return nil, fmt.Errorf("month must be between 1 and 12")
+	if f.LastNMonths < 1 {
+		f.LastNMonths = 1
 	}
-	if f.Year == 0 {
-		f.Year = time.Now().Year()
-	}
+
+	// Date range: start of (current month - (N-1)) to end of current month
+	now := time.Now()
+	dateFrom := time.Date(now.Year(), now.Month()-time.Month(f.LastNMonths-1), 1, 0, 0, 0, 0, time.UTC)
+	dateTo := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC).Add(-24 * time.Hour)
 
 	resp := &SupplierAnalysisResponse{
-		SupplierID: f.SupplierID,
-		Month:      f.Month,
-		Year:       f.Year,
-		Items:      []SupplierAnalysisRow{},
+		SupplierID:  f.SupplierID,
+		LastNMonths: f.LastNMonths,
+		DateFrom:    dateFrom.Format("02/01/2006"),
+		DateTo:      dateTo.Format("02/01/2006"),
+		Items:       []SupplierAnalysisRow{},
 	}
 
-	// Mode 1: search by supplier — resolve name and require supplier_id
+	// Mode 1: search by supplier
 	if !f.SearchByItem {
 		if f.SupplierID == "" {
 			return nil, fmt.Errorf("supplier_id is required")
@@ -40,19 +43,19 @@ func (s *Store) Get(f Filter) (*SupplierAnalysisResponse, error) {
 			return nil, fmt.Errorf("supplier not found")
 		}
 	} else {
-		// Mode 2: search by item — item text is required
 		if f.SearchItem == "" {
 			return nil, fmt.Errorf("search_item is required when search_by_item is true")
 		}
 	}
 
 	// Build dynamic WHERE clauses
-	args := []interface{}{f.Month, f.Year}
+	// $1 = dateFrom, $2 = dateTo
+	args := []interface{}{dateFrom.Format("2006-01-02"), dateTo.Format("2006-01-02")}
 	argIdx := 3
 
 	where := []string{
-		`EXTRACT(MONTH FROM po.order_date::date) = $1`,
-		`EXTRACT(YEAR  FROM po.order_date::date) = $2`,
+		`po.order_date::date >= $1::date`,
+		`po.order_date::date <= $2::date`,
 	}
 
 	if !f.SearchByItem && f.SupplierID != "" {
@@ -82,7 +85,7 @@ func (s *Store) Get(f Filter) (*SupplierAnalysisResponse, error) {
 			COALESCE(poi.unit, ''),
 			poi.unit_price,
 			COALESCE(po.po_number, ''),
-			COALESCE(po.order_date::text, ''),
+			COALESCE(TO_CHAR(po.order_date, 'DD/MM/YYYY'), ''),
 			COALESCE(pi.discount_amount, 0),
 			COALESCE(w.name, ''),
 			COALESCE(po.warehouse_id::text, '')
