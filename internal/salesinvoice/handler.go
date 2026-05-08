@@ -20,14 +20,25 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 
 	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
 	if page < 1 {
 		page = 1
 	}
-	if limit < 1 || limit > 100 {
-		limit = 20
+
+	// limit=0 means "no limit" — send everything.
+	// Only apply a positive limit when the caller explicitly sets one.
+	limitStr := c.Query("limit")
+	limit := 0
+	if limitStr != "" {
+		limit = c.QueryInt("limit", 0)
+		if limit < 1 {
+			limit = 0
+		}
 	}
-	offset := (page - 1) * limit
+
+	offset := 0
+	if limit > 0 {
+		offset = (page - 1) * limit
+	}
 
 	status := c.Query("status")
 	search := c.Query("search")
