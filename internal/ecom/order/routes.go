@@ -16,4 +16,5 @@ func RegisterAdminRoutes(r fiber.Router, h *Handler) {
 	r.Get("/:id", h.AdminGetOrder)
 	r.Patch("/:id/status", h.AdminUpdateStatus)
 	r.Patch("/:id/payment", h.AdminUpdatePayment)
+	r.Post("/:id/deliver", h.AdminMarkDelivered)
 }

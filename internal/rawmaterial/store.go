@@ -16,7 +16,7 @@ func NewStore(db *sql.DB) *Store {
 // ListByWarehouse returns all raw material stock for a warehouse.
 func (s *Store) ListByWarehouse(warehouseID string, limit, offset int) ([]RawMaterialStockRow, error) {
 	rows, err := s.db.Query(`
-		SELECT rms.id, rms.item_name, rms.hsn_code, rms.unit,
+		SELECT rms.id, rms.item_name, rms.product_code, rms.hsn_code, rms.unit,
 		       rms.warehouse_id, w.name AS warehouse_name,
 		       rms.quantity, rms.updated_at::text
 		FROM raw_material_stocks rms
@@ -34,7 +34,7 @@ func (s *Store) ListByWarehouse(warehouseID string, limit, offset int) ([]RawMat
 	for rows.Next() {
 		var r RawMaterialStockRow
 		if err := rows.Scan(
-			&r.ID, &r.ItemName, &r.HSNCode, &r.Unit,
+			&r.ID, &r.ItemName, &r.ProductCode, &r.HSNCode, &r.Unit,
 			&r.WarehouseID, &r.WarehouseName,
 			&r.Quantity, &r.UpdatedAt,
 		); err != nil {
@@ -76,7 +76,7 @@ func (s *Store) ListAll(hsnCode, search string, limit, offset int) ([]RawMateria
 
 	n++
 	q := fmt.Sprintf(`
-		SELECT rms.id, rms.item_name, rms.hsn_code, rms.unit,
+		SELECT rms.id, rms.item_name, rms.product_code, rms.hsn_code, rms.unit,
 		       rms.warehouse_id, w.name AS warehouse_name,
 		       rms.quantity, rms.updated_at::text
 		FROM raw_material_stocks rms
@@ -96,7 +96,7 @@ func (s *Store) ListAll(hsnCode, search string, limit, offset int) ([]RawMateria
 	for rows.Next() {
 		var r RawMaterialStockRow
 		if err := rows.Scan(
-			&r.ID, &r.ItemName, &r.HSNCode, &r.Unit,
+			&r.ID, &r.ItemName, &r.ProductCode, &r.HSNCode, &r.Unit,
 			&r.WarehouseID, &r.WarehouseName,
 			&r.Quantity, &r.UpdatedAt,
 		); err != nil {
@@ -131,7 +131,7 @@ func (s *Store) ListByBranch(branchID, hsnCode, search string, limit, offset int
 
 	n++
 	q := fmt.Sprintf(`
-		SELECT rms.id, rms.item_name, rms.hsn_code, rms.unit,
+		SELECT rms.id, rms.item_name, rms.product_code, rms.hsn_code, rms.unit,
 		       rms.warehouse_id, w.name AS warehouse_name,
 		       rms.quantity, rms.updated_at::text
 		FROM raw_material_stocks rms
@@ -151,7 +151,7 @@ func (s *Store) ListByBranch(branchID, hsnCode, search string, limit, offset int
 	for rows.Next() {
 		var r RawMaterialStockRow
 		if err := rows.Scan(
-			&r.ID, &r.ItemName, &r.HSNCode, &r.Unit,
+			&r.ID, &r.ItemName, &r.ProductCode, &r.HSNCode, &r.Unit,
 			&r.WarehouseID, &r.WarehouseName,
 			&r.Quantity, &r.UpdatedAt,
 		); err != nil {

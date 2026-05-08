@@ -5,6 +5,7 @@ import "database/sql"
 type RawMaterialStockRow struct {
 	ID            string
 	ItemName      string
+	ProductCode   sql.NullString
 	HSNCode       sql.NullString
 	Unit          sql.NullString
 	WarehouseID   string

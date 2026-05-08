@@ -94,25 +94,40 @@ func (s *Store) Create(in CreateGoodsReceiptInput, userID string) (string, error
 		}
 
 		// Fetch PO item details for raw material stock
-		var itemName, hsnCode, unit string
+		var itemName, hsnCode, unit, productCode string
 		err = tx.QueryRow(`
-			SELECT item_name, COALESCE(hsn_code,''), unit
+			SELECT item_name, COALESCE(hsn_code,''), unit, COALESCE(product_code,'')
 			FROM purchase_order_items WHERE id = $1
-		`, item.PurchaseOrderItemID).Scan(&itemName, &hsnCode, &unit)
+		`, item.PurchaseOrderItemID).Scan(&itemName, &hsnCode, &unit, &productCode)
 		if err != nil {
 			return "", fmt.Errorf("fetch po item details: %w", err)
 		}
 
-		// Upsert raw_material_stocks
-		_, err = tx.Exec(`
-			INSERT INTO raw_material_stocks (item_name, hsn_code, unit, warehouse_id, quantity, updated_at)
-			VALUES ($1, $2, $3, $4, $5, NOW())
-			ON CONFLICT (item_name, warehouse_id)
-			DO UPDATE SET quantity = raw_material_stocks.quantity + $5,
-			             hsn_code = COALESCE(NULLIF($2,''), raw_material_stocks.hsn_code),
-			             unit = $3,
-			             updated_at = NOW()
-		`, itemName, hsnCode, unit, warehouseID, item.ReceivedQty)
+		// Upsert raw_material_stocks — conflict key is (product_code, warehouse_id) when
+		// product_code is provided, otherwise falls back to (item_name, warehouse_id).
+		if productCode != "" {
+			_, err = tx.Exec(`
+				INSERT INTO raw_material_stocks (item_name, product_code, hsn_code, unit, warehouse_id, quantity, updated_at)
+				VALUES ($1, $2, $3, $4, $5, $6, NOW())
+				ON CONFLICT (product_code, warehouse_id) WHERE product_code IS NOT NULL AND product_code <> ''
+				DO UPDATE SET
+					quantity   = raw_material_stocks.quantity + $6,
+					item_name  = $1,
+					hsn_code   = COALESCE(NULLIF($3,''), raw_material_stocks.hsn_code),
+					unit       = $4,
+					updated_at = NOW()
+			`, itemName, productCode, hsnCode, unit, warehouseID, item.ReceivedQty)
+		} else {
+			_, err = tx.Exec(`
+				INSERT INTO raw_material_stocks (item_name, hsn_code, unit, warehouse_id, quantity, updated_at)
+				VALUES ($1, $2, $3, $4, $5, NOW())
+				ON CONFLICT (item_name, warehouse_id) WHERE product_code IS NULL OR product_code = ''
+				DO UPDATE SET quantity = raw_material_stocks.quantity + $5,
+				             hsn_code = COALESCE(NULLIF($2,''), raw_material_stocks.hsn_code),
+				             unit = $3,
+				             updated_at = NOW()
+			`, itemName, hsnCode, unit, warehouseID, item.ReceivedQty)
+		}
 		if err != nil {
 			return "", fmt.Errorf("upsert raw_material_stocks: %w", err)
 		}

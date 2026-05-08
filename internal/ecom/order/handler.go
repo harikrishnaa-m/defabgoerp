@@ -1,10 +1,12 @@
 package order
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
 	ecomMw "defab-erp/internal/ecom/middleware"
+	ecomPayment "defab-erp/internal/ecom/payment"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -31,6 +33,9 @@ func (h *Handler) Checkout(c *fiber.Ctx) error {
 		in.PaymentMethod = "COD"
 	}
 	in.PaymentMethod = strings.ToUpper(in.PaymentMethod)
+	if in.PaymentMethod != "COD" && in.PaymentMethod != "ONLINE" {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid payment_method, must be COD or ONLINE"})
+	}
 
 	result, err := h.store.Checkout(cust.ID, in)
 	if err != nil {
@@ -38,7 +43,7 @@ func (h *Handler) Checkout(c *fiber.Ctx) error {
 		if msg == "cart is empty" || msg == "address not found" {
 			return c.Status(400).JSON(fiber.Map{"error": msg})
 		}
-		return c.Status(500).JSON(fiber.Map{"error": "checkout failed"})
+		return c.Status(500).JSON(fiber.Map{"error": msg})
 	}
 
 	return c.Status(201).JSON(result)
@@ -84,9 +89,31 @@ func (h *Handler) CancelOrder(c *fiber.Ctx) error {
 	cust := c.Locals("ecom_customer").(*ecomMw.EcomCustomer)
 	orderID := c.Params("id")
 
-	if err := h.store.CancelOrder(cust.ID, orderID); err != nil {
+	result, err := h.store.CancelOrder(cust.ID, orderID)
+	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
+
+	// If paid online, initiate refund via Cashfree
+	if result.PaymentMethod == "ONLINE" && result.PaymentStatus == "PAID" {
+		refundID := fmt.Sprintf("REF-%s", result.OrderNumber)
+		if err := ecomPayment.InitiateRefund(result.OrderNumber, refundID, result.GrandTotal); err != nil {
+			// Cancellation already done — return success but flag refund failure
+			return c.JSON(fiber.Map{
+				"message":       "order cancelled",
+				"refund_status": "failed",
+				"refund_error":  err.Error(),
+			})
+		}
+		// Mark payment status as refund initiated
+		_ = h.store.MarkRefundInitiated(result.OrderNumber)
+		return c.JSON(fiber.Map{
+			"message":       "order cancelled",
+			"refund_status": "initiated",
+			"refund_amount": result.GrandTotal,
+		})
+	}
+
 	return c.JSON(fiber.Map{"message": "order cancelled"})
 }
 
@@ -97,8 +124,11 @@ func (h *Handler) AdminListOrders(c *fiber.Ctx) error {
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 20)
 	status := strings.ToUpper(c.Query("status"))
+	search := c.Query("q")
+	dateFrom := c.Query("date_from")
+	dateTo := c.Query("date_to")
 
-	orders, total, err := h.store.AdminListOrders(status, page, limit)
+	orders, total, err := h.store.AdminListOrders(status, search, dateFrom, dateTo, page, limit)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to fetch orders"})
 	}
@@ -148,6 +178,18 @@ func (h *Handler) AdminUpdateStatus(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 	return c.JSON(fiber.Map{"message": "status updated", "status": in.Status})
+}
+
+// POST /admin/ecom-orders/:id/deliver
+func (h *Handler) AdminMarkDelivered(c *fiber.Ctx) error {
+	orderID := c.Params("id")
+	if err := h.store.MarkDelivered(orderID); err != nil {
+		if err.Error() == "order not found" {
+			return c.Status(404).JSON(fiber.Map{"error": "order not found"})
+		}
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"message": "order marked as delivered"})
 }
 
 // PATCH /ecom/admin/orders/:id/payment

@@ -3,6 +3,8 @@ package cart
 import (
 	"database/sql"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 type Store struct {
@@ -40,23 +42,6 @@ func (s *Store) AddItem(customerID, variantID string, quantity int) error {
 	err = s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM variants WHERE id = $1 AND is_active = true)`, variantID).Scan(&exists)
 	if err != nil || !exists {
 		return fmt.Errorf("variant not found or inactive")
-	}
-
-	// Check online stock is reserved and sufficient
-	var onlineQty int
-	err = s.db.QueryRow(`SELECT COALESCE(quantity, 0) FROM online_stocks WHERE variant_id = $1`, variantID).Scan(&onlineQty)
-	if err != nil || onlineQty == 0 {
-		return fmt.Errorf("variant not available online")
-	}
-
-	// Check that current cart qty + new quantity won't exceed online stock
-	var currentQty int
-	s.db.QueryRow(`
-		SELECT COALESCE(quantity, 0) FROM ecom_cart_items
-		WHERE cart_id = $1 AND variant_id = $2
-	`, cartID, variantID).Scan(&currentQty)
-	if currentQty+quantity > onlineQty {
-		return fmt.Errorf("insufficient online stock (available: %d)", onlineQty)
 	}
 
 	_, err = s.db.Exec(`
@@ -164,6 +149,35 @@ func (s *Store) GetCart(customerID string) ([]map[string]interface{}, error) {
 			"in_stock":        availableStock >= float64(quantity),
 		})
 	}
+
+	// Fetch variant images in batch
+	if len(items) > 0 {
+		ph := make([]string, len(items))
+		args := make([]interface{}, len(items))
+		for i, item := range items {
+			ph[i] = "$" + strconv.Itoa(i+1)
+			args[i] = item["variant_id"]
+		}
+		imgRows, err := s.db.Query(`SELECT variant_id, image_url FROM variant_images WHERE variant_id IN (`+strings.Join(ph, ", ")+`)`, args...)
+		varImgMap := map[string][]string{}
+		if err == nil {
+			for imgRows.Next() {
+				var vid, url string
+				imgRows.Scan(&vid, &url)
+				varImgMap[vid] = append(varImgMap[vid], url)
+			}
+			imgRows.Close()
+		}
+		for _, item := range items {
+			vid := item["variant_id"].(string)
+			imgs := varImgMap[vid]
+			if imgs == nil {
+				imgs = []string{}
+			}
+			item["variant_images"] = imgs
+		}
+	}
+
 	return items, nil
 }
 

@@ -62,9 +62,18 @@ import (
 	ecomMw "defab-erp/internal/ecom/middleware"
 	ecomOnlineStock "defab-erp/internal/ecom/onlinestock"
 	ecomOrder "defab-erp/internal/ecom/order"
+	ecomPayment "defab-erp/internal/ecom/payment"
 	ecomProduct "defab-erp/internal/ecom/product"
+	ecomReturn "defab-erp/internal/ecom/return"
+	ecomWishlist "defab-erp/internal/ecom/wishlist"
 
+	"defab-erp/internal/directgrn"
 	"defab-erp/internal/migration"
+	"defab-erp/internal/purchasereport"
+	"defab-erp/internal/purchasereturn"
+	"defab-erp/internal/supplieraging"
+	"defab-erp/internal/supplieranalysis"
+	"defab-erp/internal/supplierstatement"
 )
 
 func main() {
@@ -201,14 +210,42 @@ func main() {
 	ecomCartStore := ecomCart.NewStore(database)
 	ecomCartHandler := ecomCart.NewHandler(ecomCartStore)
 
+	ecomWishlistStore := ecomWishlist.NewStore(database)
+	ecomWishlistHandler := ecomWishlist.NewHandler(ecomWishlistStore)
+
 	ecomOrderStore := ecomOrder.NewStore(database)
 	ecomOrderHandler := ecomOrder.NewHandler(ecomOrderStore)
 
 	ecomOnlineStockStore := ecomOnlineStock.NewStore(database)
 	ecomOnlineStockHandler := ecomOnlineStock.NewHandler(ecomOnlineStockStore)
 
+	ecomPaymentStore := ecomPayment.NewStore(database)
+	ecomPaymentHandler := ecomPayment.NewHandler(ecomPaymentStore, database)
+
+	ecomReturnStore := ecomReturn.NewStore(database)
+	ecomReturnHandler := ecomReturn.NewHandler(ecomReturnStore)
+	ecomPaymentHandler.SetReturnStore(ecomReturnStore)
+
 	migrationStore := migration.NewStore(database)
 	migrationHandler := migration.NewHandler(migrationStore)
+
+	directGRNStore := directgrn.NewStore(database)
+	directGRNHandler := directgrn.NewHandler(directGRNStore, accountingRecorder)
+
+	purchaseReturnStore := purchasereturn.NewStore(database)
+	purchaseReturnHandler := purchasereturn.NewHandler(purchaseReturnStore)
+
+	supplierAgingStore := supplieraging.NewStore(database)
+	supplierAgingHandler := supplieraging.NewHandler(supplierAgingStore)
+
+	supplierAnalysisStore := supplieranalysis.NewStore(database)
+	supplierAnalysisHandler := supplieranalysis.NewHandler(supplierAnalysisStore)
+
+	purchaseReportStore := purchasereport.NewStore(database)
+	purchaseReportHandler := purchasereport.NewHandler(purchaseReportStore)
+
+	supplierStatementStore := supplierstatement.NewStore(database)
+	supplierStatementHandler := supplierstatement.NewHandler(supplierStatementStore)
 
 	// Wire auto-recording into billing & purchase handlers
 	billingHandler.SetRecorder(accountingRecorder)
@@ -248,11 +285,19 @@ func main() {
 	ecomCustomer.RegisterPublicRoutes(ecom.Group("/auth"), ecomCustomerHandler)
 	ecomProduct.RegisterRoutes(ecom.Group("/products"), ecomProductHandler)
 
+	// Public webhooks — must be registered BEFORE ecomProtected is created
+	// so Fiber's ecom JWT middleware does not intercept them.
+	ecom.Post("/payments/webhook", ecomPaymentHandler.Webhook)
+	ecom.Post("/payouts/webhook", ecomPaymentHandler.PayoutWebhook)
+
 	// E-COMMERCE PROTECTED ROUTES (before ERP protected group)
 	ecomProtected := ecom.Group("", ecomMw.EcomJWTProtected(database))
 	ecomCustomer.RegisterProtectedRoutes(ecomProtected, ecomCustomerHandler)
 	ecomCart.RegisterRoutes(ecomProtected.Group("/cart"), ecomCartHandler)
+	ecomWishlist.RegisterRoutes(ecomProtected.Group("/wishlist"), ecomWishlistHandler)
 	ecomOrder.RegisterCustomerRoutes(ecomProtected.Group("/orders"), ecomOrderHandler)
+	ecomPayment.RegisterAuthRoutes(ecomProtected, ecomPaymentHandler)
+	ecomReturn.RegisterCustomerRoutes(ecomProtected, ecomReturnHandler)
 
 	// Quick test route for products
 	api.Get("/products/test", func(c *fiber.Ctx) error {
@@ -611,6 +656,72 @@ func main() {
 		attendanceHandler,
 	)
 
+	directgrn.RegisterRoutes(
+		protected.Group("/direct-grn",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		directGRNHandler,
+	)
+
+	purchasereturn.RegisterRoutes(
+		protected.Group("/purchase-returns",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		purchaseReturnHandler,
+	)
+
+	supplieraging.RegisterRoutes(
+		protected.Group("/supplier-aging",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		supplierAgingHandler,
+	)
+
+	supplieranalysis.RegisterRoutes(
+		protected.Group("/supplier-analysis",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		supplierAnalysisHandler,
+	)
+
+	purchasereport.RegisterRoutes(
+		protected.Group("/purchase-report",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		purchaseReportHandler,
+	)
+
+	supplierstatement.RegisterRoutes(
+		protected.Group("/supplier-statement",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		supplierStatementHandler,
+	)
+
 	protected.Get("/me", func(c *fiber.Ctx) error {
 		user := c.Locals("user").(*model.User)
 		return c.JSON(user)
@@ -636,13 +747,24 @@ func main() {
 
 	// Admin: ERP staff managing ecom orders
 	ecomOrder.RegisterAdminRoutes(
-		protected.Group("/ecom-orders",
+		protected.Group("/admin/ecom-orders",
 			middleware.RequireRole(
 				model.RoleSuperAdmin,
 				model.RoleStoreManager,
 			),
 		),
 		ecomOrderHandler,
+	)
+
+	// Admin: ERP staff managing ecom returns
+	ecomReturn.RegisterAdminRoutes(
+		protected.Group("/admin/ecom-returns",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+			),
+		),
+		ecomReturnHandler,
 	)
 
 	// Admin: ERP staff managing online reserved stock
@@ -661,6 +783,9 @@ func main() {
 	if port == "" {
 		port = "3000"
 	}
+
+	log.Printf("🔗 PG webhook:     %s", os.Getenv("CASHFREE_WEBHOOK_URL"))
+	log.Printf("🔗 Payout webhook: %s", os.Getenv("CASHFREE_PAYOUT_WEBHOOK_URL"))
 
 	log.Fatal(app.Listen(":" + port))
 }

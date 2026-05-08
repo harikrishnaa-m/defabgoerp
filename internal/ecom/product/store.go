@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"math"
 	"strconv"
+	"strings"
 )
 
 type Store struct {
@@ -90,6 +91,120 @@ func (s *Store) ListProducts(categoryID string, search string, page, limit int) 
 		}
 
 		products = append(products, p)
+	}
+
+	// Populate variants for all products in batch
+	if len(products) > 0 {
+		pIDs := make([]string, len(products))
+		pIDIndex := map[string]int{}
+		for i, p := range products {
+			id := p["id"].(string)
+			pIDs[i] = id
+			pIDIndex[id] = i
+		}
+
+		phProd := make([]string, len(pIDs))
+		prodArgs := make([]interface{}, len(pIDs))
+		for i, pid := range pIDs {
+			phProd[i] = "$" + strconv.Itoa(i+1)
+			prodArgs[i] = pid
+		}
+		prodIn := strings.Join(phProd, ", ")
+
+		varRows, err := s.db.Query(`
+			SELECT v.id, v.product_id, v.variant_code, v.name, v.sku, v.price, COALESCE(v.barcode, ''),
+			       COALESCE(SUM(st.quantity), 0) AS total_stock
+			FROM variants v
+			LEFT JOIN stocks st ON st.variant_id = v.id
+			WHERE v.product_id IN (`+prodIn+`) AND v.is_active = true
+			GROUP BY v.id, v.product_id, v.variant_code, v.name, v.sku, v.price, v.barcode
+			ORDER BY v.variant_code
+		`, prodArgs...)
+		if err == nil {
+			defer varRows.Close()
+
+			variantsByProduct := map[string][]map[string]interface{}{}
+			variantIDs := []string{}
+			variantMap := map[string]map[string]interface{}{}
+
+			for varRows.Next() {
+				var vid, productID, vname, sku, barcode string
+				var variantCode int
+				var price, stock float64
+				if err := varRows.Scan(&vid, &productID, &variantCode, &vname, &sku, &price, &barcode, &stock); err != nil {
+					continue
+				}
+				v := map[string]interface{}{
+					"id":           vid,
+					"variant_code": variantCode,
+					"name":         vname,
+					"sku":          sku,
+					"price":        price,
+					"barcode":      barcode,
+					"in_stock":     stock > 0,
+				}
+				variantsByProduct[productID] = append(variantsByProduct[productID], v)
+				variantIDs = append(variantIDs, vid)
+				variantMap[vid] = v
+			}
+
+			if len(variantIDs) > 0 {
+				phVar := make([]string, len(variantIDs))
+				varArgs2 := make([]interface{}, len(variantIDs))
+				for i, vid := range variantIDs {
+					phVar[i] = "$" + strconv.Itoa(i+1)
+					varArgs2[i] = vid
+				}
+				varIn := strings.Join(phVar, ", ")
+
+				// Variant images
+				imgRows, err := s.db.Query(`SELECT variant_id, image_url FROM variant_images WHERE variant_id IN (`+varIn+`)`, varArgs2...)
+				if err == nil {
+					for imgRows.Next() {
+						var variantID, url string
+						imgRows.Scan(&variantID, &url)
+						if v, ok := variantMap[variantID]; ok {
+							imgs, _ := v["images"].([]string)
+							v["images"] = append(imgs, url)
+						}
+					}
+					imgRows.Close()
+				}
+
+				// Variant attributes
+				attrRows, err := s.db.Query(`
+					SELECT vam.variant_id, a.name, av.value
+					FROM variant_attribute_mapping vam
+					JOIN attribute_values av ON av.id = vam.attribute_value_id
+					JOIN attributes a ON a.id = av.attribute_id
+					WHERE vam.variant_id IN (`+varIn+`)
+				`, varArgs2...)
+				if err == nil {
+					for attrRows.Next() {
+						var variantID, aName, aVal string
+						attrRows.Scan(&variantID, &aName, &aVal)
+						if v, ok := variantMap[variantID]; ok {
+							attrs, _ := v["attributes"].(map[string]string)
+							if attrs == nil {
+								attrs = map[string]string{}
+							}
+							attrs[aName] = aVal
+							v["attributes"] = attrs
+						}
+					}
+					attrRows.Close()
+				}
+			}
+
+			for i := range products {
+				pid := products[i]["id"].(string)
+				variants := variantsByProduct[pid]
+				if variants == nil {
+					variants = []map[string]interface{}{}
+				}
+				products[i]["variants"] = variants
+			}
+		}
 	}
 
 	totalPages := int(math.Ceil(float64(total) / float64(limit)))
