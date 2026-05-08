@@ -67,10 +67,12 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 		LEFT JOIN warehouses w ON w.id = si.warehouse_id
 		%s
 		ORDER BY si.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, baseWhere, argIdx, argIdx+1)
+	`, baseWhere)
 
-	args = append(args, limit, offset)
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", argIdx, argIdx+1)
+		args = append(args, limit, offset)
+	}
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
