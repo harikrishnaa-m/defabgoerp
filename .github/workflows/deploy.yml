@@ -21,7 +21,7 @@ jobs:
       - name: Health check
         run: |
           sleep 15
-          docker logs defab_backend_prod --tail 20 | grep -q "✅ Database Connected" || {
+          docker logs defab_backend_prod --tail 20 | grep -q "Database Connected" || {
             echo "❌ Deploy failed — DB not connected"
             docker logs defab_backend_prod --tail 30
             exit 1
