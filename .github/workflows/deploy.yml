@@ -1,0 +1,29 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Pull latest code
+        working-directory: /home/defab_erp_backend
+        run: git pull origin main
+
+      - name: Rebuild and restart containers
+        working-directory: /home/defab_erp_backend
+        run: docker compose -f docker-compose.prod.yml up --build -d
+
+      - name: Health check
+        run: |
+          sleep 15
+          docker logs defab_backend_prod --tail 20 | grep -q "Database Connected" || {
+            echo "❌ Deploy failed — DB not connected"
+            docker logs defab_backend_prod --tail 30
+            exit 1
+          }
+          echo "✅ Deploy successful"
