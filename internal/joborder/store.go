@@ -116,42 +116,75 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 			if mat.QuantityUsed <= 0 {
 				continue
 			}
-			_, err = tx.Exec(`
-				INSERT INTO job_order_materials (job_order_id, raw_material_stock_id, quantity_used)
-				VALUES ($1,$2,$3)
-			`, jobID, mat.RawMaterialStockID, mat.QuantityUsed)
-			if err != nil {
-				return "", fmt.Errorf("insert job material: %w", err)
-			}
 
-			// Look up item_name and warehouse_id from raw_material_stocks
-			var itemName, rmWhID string
-			err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, mat.RawMaterialStockID).Scan(&itemName, &rmWhID)
-			if err != nil {
-				return "", fmt.Errorf("raw material stock not found: %w", err)
-			}
+			if mat.VariantCode != "" {
+				// Variant-based path: look up the variant and deduct from stocks
+				var variantID string
+				err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, mat.VariantCode).Scan(&variantID)
+				if err != nil {
+					return "", fmt.Errorf("variant not found for code %s: %w", mat.VariantCode, err)
+				}
+				whID := mat.WarehouseID
+				_, err = tx.Exec(`
+					INSERT INTO job_order_materials (job_order_id, variant_id, variant_warehouse_id, quantity_used)
+					VALUES ($1,$2,$3,$4)
+				`, jobID, variantID, whID, mat.QuantityUsed)
+				if err != nil {
+					return "", fmt.Errorf("insert job material: %w", err)
+				}
+				res, err := tx.Exec(`
+					UPDATE stocks SET quantity = quantity - $1, updated_at = NOW()
+					WHERE variant_id = $2 AND warehouse_id = $3 AND quantity >= $1
+				`, mat.QuantityUsed, variantID, whID)
+				if err != nil {
+					return "", fmt.Errorf("deduct variant stock: %w", err)
+				}
+				rows, _ := res.RowsAffected()
+				if rows == 0 {
+					return "", fmt.Errorf("insufficient stock for variant %s", mat.VariantCode)
+				}
+				_, err = tx.Exec(`
+					INSERT INTO stock_movements
+						(variant_id, from_warehouse_id, quantity, movement_type, reference, status)
+					VALUES ($1,$2,$3,'JOB_OUT',$4,'COMPLETED')
+				`, variantID, whID, mat.QuantityUsed, "JOB:"+jobNumber)
+				if err != nil {
+					return "", fmt.Errorf("insert stock_movements: %w", err)
+				}
+			} else {
+				// Legacy raw_material_stocks path
+				_, err = tx.Exec(`
+					INSERT INTO job_order_materials (job_order_id, raw_material_stock_id, quantity_used)
+					VALUES ($1,$2,$3)
+				`, jobID, mat.RawMaterialStockID, mat.QuantityUsed)
+				if err != nil {
+					return "", fmt.Errorf("insert job material: %w", err)
+				}
 
-			// Deduct from raw_material_stocks
-			res, err := tx.Exec(`
-				UPDATE raw_material_stocks SET quantity = quantity - $1, updated_at = NOW()
-				WHERE id = $2 AND quantity >= $1
-			`, mat.QuantityUsed, mat.RawMaterialStockID)
-			if err != nil {
-				return "", fmt.Errorf("deduct raw material stock: %w", err)
-			}
-			rows, _ := res.RowsAffected()
-			if rows == 0 {
-				return "", fmt.Errorf("insufficient raw material stock for %s", itemName)
-			}
-
-			// Log raw material movement
-			_, err = tx.Exec(`
-				INSERT INTO raw_material_movements
-					(item_name, warehouse_id, quantity, movement_type, reference)
-				VALUES ($1,$2,$3,'OUT',$4)
-			`, itemName, rmWhID, mat.QuantityUsed, "JOB:"+jobNumber)
-			if err != nil {
-				return "", fmt.Errorf("create raw material movement: %w", err)
+				var itemName, rmWhID string
+				err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, mat.RawMaterialStockID).Scan(&itemName, &rmWhID)
+				if err != nil {
+					return "", fmt.Errorf("raw material stock not found: %w", err)
+				}
+				res, err := tx.Exec(`
+					UPDATE raw_material_stocks SET quantity = quantity - $1, updated_at = NOW()
+					WHERE id = $2 AND quantity >= $1
+				`, mat.QuantityUsed, mat.RawMaterialStockID)
+				if err != nil {
+					return "", fmt.Errorf("deduct raw material stock: %w", err)
+				}
+				rows, _ := res.RowsAffected()
+				if rows == 0 {
+					return "", fmt.Errorf("insufficient raw material stock for %s", itemName)
+				}
+				_, err = tx.Exec(`
+					INSERT INTO raw_material_movements
+						(item_name, warehouse_id, quantity, movement_type, reference)
+					VALUES ($1,$2,$3,'OUT',$4)
+				`, itemName, rmWhID, mat.QuantityUsed, "JOB:"+jobNumber)
+				if err != nil {
+					return "", fmt.Errorf("create raw material movement: %w", err)
+				}
 			}
 		}
 	}
@@ -389,18 +422,23 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 		var oldMatSrc string
 		tx.QueryRow(`SELECT material_source FROM job_orders WHERE id = $1`, id).Scan(&oldMatSrc)
 
-		oldRows, err := tx.Query(`SELECT raw_material_stock_id, quantity_used FROM job_order_materials WHERE job_order_id = $1`, id)
+		oldRows, err := tx.Query(`
+			SELECT COALESCE(raw_material_stock_id::text,''), COALESCE(variant_id::text,''),
+			       COALESCE(variant_warehouse_id::text,''), quantity_used
+			FROM job_order_materials WHERE job_order_id = $1`, id)
 		if err != nil {
 			return fmt.Errorf("fetch old materials: %w", err)
 		}
 		type matItem struct {
-			stockID string
-			qty     float64
+			stockID   string
+			variantID string
+			whID      string
+			qty       float64
 		}
 		var oldMats []matItem
 		for oldRows.Next() {
 			var m matItem
-			if err := oldRows.Scan(&m.stockID, &m.qty); err != nil {
+			if err := oldRows.Scan(&m.stockID, &m.variantID, &m.whID, &m.qty); err != nil {
 				oldRows.Close()
 				return err
 			}
@@ -411,19 +449,31 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 		// Reverse old stock if it was STORE-sourced
 		if oldMatSrc == MaterialSourceStore {
 			for _, m := range oldMats {
-				var itemName, rmWhID string
-				err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, m.stockID).Scan(&itemName, &rmWhID)
-				if err != nil {
-					return fmt.Errorf("raw material lookup: %w", err)
-				}
-				_, err = tx.Exec(`UPDATE raw_material_stocks SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`, m.qty, m.stockID)
-				if err != nil {
-					return err
-				}
-				_, err = tx.Exec(`INSERT INTO raw_material_movements (item_name, warehouse_id, quantity, movement_type, reference) VALUES ($1,$2,$3,'IN',$4)`,
-					itemName, rmWhID, m.qty, "JOB_UPDATE_REVERSE:"+id)
-				if err != nil {
-					return err
+				if m.variantID != "" {
+					_, err = tx.Exec(`UPDATE stocks SET quantity = quantity + $1, updated_at = NOW() WHERE variant_id = $2 AND warehouse_id = $3`, m.qty, m.variantID, m.whID)
+					if err != nil {
+						return err
+					}
+					_, err = tx.Exec(`INSERT INTO stock_movements (variant_id, to_warehouse_id, quantity, movement_type, reference, status) VALUES ($1,$2,$3,'JOB_IN',$4,'COMPLETED')`,
+						m.variantID, m.whID, m.qty, "JOB_UPDATE_REVERSE:"+id)
+					if err != nil {
+						return err
+					}
+				} else {
+					var itemName, rmWhID string
+					err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, m.stockID).Scan(&itemName, &rmWhID)
+					if err != nil {
+						return fmt.Errorf("raw material lookup: %w", err)
+					}
+					_, err = tx.Exec(`UPDATE raw_material_stocks SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2`, m.qty, m.stockID)
+					if err != nil {
+						return err
+					}
+					_, err = tx.Exec(`INSERT INTO raw_material_movements (item_name, warehouse_id, quantity, movement_type, reference) VALUES ($1,$2,$3,'IN',$4)`,
+						itemName, rmWhID, m.qty, "JOB_UPDATE_REVERSE:"+id)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -436,28 +486,55 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 
 		// Insert new materials and deduct stock if STORE
 		for _, m := range in.Materials {
-			_, err = tx.Exec(`
-				INSERT INTO job_order_materials (job_order_id, raw_material_stock_id, quantity_used)
-				VALUES ($1,$2,$3)
-			`, id, m.RawMaterialStockID, m.QuantityUsed)
-			if err != nil {
-				return fmt.Errorf("insert material: %w", err)
-			}
+			if m.VariantCode != "" {
+				var variantID string
+				err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, m.VariantCode).Scan(&variantID)
+				if err != nil {
+					return fmt.Errorf("variant not found for code %s: %w", m.VariantCode, err)
+				}
+				whID := m.WarehouseID
+				_, err = tx.Exec(`
+					INSERT INTO job_order_materials (job_order_id, variant_id, variant_warehouse_id, quantity_used)
+					VALUES ($1,$2,$3,$4)
+				`, id, variantID, whID, m.QuantityUsed)
+				if err != nil {
+					return fmt.Errorf("insert material: %w", err)
+				}
+				if matSrc == MaterialSourceStore {
+					_, err = tx.Exec(`UPDATE stocks SET quantity = quantity - $1, updated_at = NOW() WHERE variant_id = $2 AND warehouse_id = $3`, m.QuantityUsed, variantID, whID)
+					if err != nil {
+						return err
+					}
+					_, err = tx.Exec(`INSERT INTO stock_movements (variant_id, from_warehouse_id, quantity, movement_type, reference, status) VALUES ($1,$2,$3,'JOB_OUT',$4,'COMPLETED')`,
+						variantID, whID, m.QuantityUsed, "JOB_UPDATE:"+id)
+					if err != nil {
+						return err
+					}
+				}
+			} else {
+				_, err = tx.Exec(`
+					INSERT INTO job_order_materials (job_order_id, raw_material_stock_id, quantity_used)
+					VALUES ($1,$2,$3)
+				`, id, m.RawMaterialStockID, m.QuantityUsed)
+				if err != nil {
+					return fmt.Errorf("insert material: %w", err)
+				}
 
-			if matSrc == MaterialSourceStore {
-				var itemName, rmWhID string
-				err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, m.RawMaterialStockID).Scan(&itemName, &rmWhID)
-				if err != nil {
-					return fmt.Errorf("raw material lookup: %w", err)
-				}
-				_, err = tx.Exec(`UPDATE raw_material_stocks SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2`, m.QuantityUsed, m.RawMaterialStockID)
-				if err != nil {
-					return err
-				}
-				_, err = tx.Exec(`INSERT INTO raw_material_movements (item_name, warehouse_id, quantity, movement_type, reference) VALUES ($1,$2,$3,'OUT',$4)`,
-					itemName, rmWhID, m.QuantityUsed, "JOB_UPDATE:"+id)
-				if err != nil {
-					return err
+				if matSrc == MaterialSourceStore {
+					var itemName, rmWhID string
+					err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, m.RawMaterialStockID).Scan(&itemName, &rmWhID)
+					if err != nil {
+						return fmt.Errorf("raw material lookup: %w", err)
+					}
+					_, err = tx.Exec(`UPDATE raw_material_stocks SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2`, m.QuantityUsed, m.RawMaterialStockID)
+					if err != nil {
+						return err
+					}
+					_, err = tx.Exec(`INSERT INTO raw_material_movements (item_name, warehouse_id, quantity, movement_type, reference) VALUES ($1,$2,$3,'OUT',$4)`,
+						itemName, rmWhID, m.QuantityUsed, "JOB_UPDATE:"+id)
+					if err != nil {
+						return err
+					}
 				}
 			}
 		}

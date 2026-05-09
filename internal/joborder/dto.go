@@ -13,6 +13,8 @@ type CreateJobOrderItemInput struct {
 
 type CreateJobOrderMaterialInput struct {
 	RawMaterialStockID string  `json:"raw_material_stock_id"`
+	VariantCode        string  `json:"variant_code"`
+	WarehouseID        string  `json:"warehouse_id"`
 	QuantityUsed       float64 `json:"quantity_used"`
 }
 

@@ -325,3 +325,12 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 	}
 	return c.JSON(results)
 }
+
+func (h *Handler) GetByCode(c *fiber.Ctx) error {
+	code := c.Params("code")
+	result, err := h.store.GetByCode(code)
+	if err != nil {
+		return c.Status(404).JSON(fiber.Map{"error": "no active variant found with code " + code})
+	}
+	return c.JSON(result)
+}

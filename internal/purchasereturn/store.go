@@ -254,33 +254,46 @@ func (s *Store) Create(in CreatePurchaseReturnInput, userID string) (string, err
 		}
 
 		if warehouseID != "" {
-			// Deduct from raw_material_stocks — use product_code key if available,
-			// otherwise fall back to item_name.
 			if it.productCode != "" {
+				// product_code is treated as a variant code — the variant MUST exist.
+				var variantID string
+				err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, it.productCode).Scan(&variantID)
+				if err != nil {
+					return "", fmt.Errorf("no active product variant found with code %s — please create the product and variant in the catalog first", it.productCode)
+				}
 				_, err = tx.Exec(`
-					UPDATE raw_material_stocks
-					SET quantity = quantity - $1, updated_at = NOW()
-					WHERE product_code = $2 AND warehouse_id = $3
-				`, it.qty, it.productCode, warehouseID)
+					UPDATE stocks SET quantity = quantity - $1, updated_at = NOW()
+					WHERE variant_id = $2 AND warehouse_id = $3
+				`, it.qty, variantID, warehouseID)
+				if err != nil {
+					return "", fmt.Errorf("deduct stocks: %w", err)
+				}
+				_, err = tx.Exec(`
+					INSERT INTO stock_movements
+						(variant_id, from_warehouse_id, quantity, movement_type, reference, status)
+					VALUES ($1,$2,$3,'PURCHASE_RETURN',$4,'COMPLETED')
+				`, variantID, warehouseID, it.qty, prNumber)
+				if err != nil {
+					return "", fmt.Errorf("insert stock_movements: %w", err)
+				}
 			} else {
+				// No product_code — raw material return.
 				_, err = tx.Exec(`
 					UPDATE raw_material_stocks
 					SET quantity = quantity - $1, updated_at = NOW()
 					WHERE item_name = $2 AND warehouse_id = $3
 				`, it.qty, it.itemName, warehouseID)
-			}
-			if err != nil {
-				return "", fmt.Errorf("deduct raw_material_stocks: %w", err)
-			}
-
-			// Record movement
-			_, err = tx.Exec(`
-				INSERT INTO raw_material_movements
-					(item_name, warehouse_id, quantity, movement_type, reference)
-				VALUES ($1, $2, $3, 'OUT', $4)
-			`, it.itemName, warehouseID, it.qty, prNumber)
-			if err != nil {
-				return "", fmt.Errorf("insert raw_material_movements: %w", err)
+				if err != nil {
+					return "", fmt.Errorf("deduct raw_material_stocks: %w", err)
+				}
+				_, err = tx.Exec(`
+					INSERT INTO raw_material_movements
+						(item_name, warehouse_id, quantity, movement_type, reference)
+					VALUES ($1, $2, $3, 'OUT', $4)
+				`, it.itemName, warehouseID, it.qty, prNumber)
+				if err != nil {
+					return "", fmt.Errorf("insert raw_material_movements: %w", err)
+				}
 			}
 		}
 	}
