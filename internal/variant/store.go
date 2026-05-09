@@ -320,6 +320,109 @@ func (s *Store) BackfillVariantCodes() (int, error) {
 }
 
 //
+// ================= LOOKUP BY CODE =================
+//
+
+func (s *Store) GetByCode(code string) (map[string]interface{}, error) {
+	var (
+		variantID, variantName, sku, barcode       string
+		productID, productName, productDesc, brand string
+		categoryID, categoryName                   string
+		mainImage, uom, fabricComposition          string
+		pattern, occasion, careInstructions        string
+		variantCode                                int
+		price, costPrice                           float64
+		isActive, isStitched                       bool
+	)
+	err := s.db.QueryRow(`
+		SELECT
+			v.id, v.variant_code, v.name, v.sku,
+			COALESCE(v.barcode,''), v.price, COALESCE(v.cost_price,0), v.is_active,
+			p.id, p.name, COALESCE(p.description,''), COALESCE(p.brand,''),
+			COALESCE(p.main_image_url,''), COALESCE(p.uom,''), COALESCE(p.fabric_composition,''),
+			COALESCE(p.pattern,''), COALESCE(p.occasion,''), COALESCE(p.care_instructions,''),
+			p.is_stitched,
+			COALESCE(c.id::text,''), COALESCE(c.name,'')
+		FROM variants v
+		JOIN products p ON p.id = v.product_id
+		LEFT JOIN categories c ON c.id = p.category_id
+		WHERE v.variant_code::text = $1
+		LIMIT 1
+	`, code).Scan(
+		&variantID, &variantCode, &variantName, &sku,
+		&barcode, &price, &costPrice, &isActive,
+		&productID, &productName, &productDesc, &brand,
+		&mainImage, &uom, &fabricComposition,
+		&pattern, &occasion, &careInstructions,
+		&isStitched,
+		&categoryID, &categoryName,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	attributes, err := s.GetVariantAttributes(variantID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Current stock across all warehouses
+	stockRows, err := s.db.Query(`
+		SELECT s.warehouse_id, w.name, s.quantity
+		FROM stocks s
+		JOIN warehouses w ON w.id = s.warehouse_id
+		WHERE s.variant_id = $1
+	`, variantID)
+	if err != nil {
+		return nil, err
+	}
+	defer stockRows.Close()
+	var stocks []map[string]interface{}
+	for stockRows.Next() {
+		var whID, whName string
+		var qty float64
+		if err := stockRows.Scan(&whID, &whName, &qty); err != nil {
+			return nil, err
+		}
+		stocks = append(stocks, map[string]interface{}{
+			"warehouse_id":   whID,
+			"warehouse_name": whName,
+			"quantity":       qty,
+		})
+	}
+
+	return map[string]interface{}{
+		"id":           variantID,
+		"variant_code": variantCode,
+		"name":         variantName,
+		"sku":          sku,
+		"barcode":      barcode,
+		"price":        price,
+		"cost_price":   costPrice,
+		"is_active":    isActive,
+		"product": map[string]interface{}{
+			"id":                 productID,
+			"name":               productName,
+			"description":        productDesc,
+			"brand":              brand,
+			"main_image_url":     mainImage,
+			"uom":                uom,
+			"fabric_composition": fabricComposition,
+			"pattern":            pattern,
+			"occasion":           occasion,
+			"care_instructions":  careInstructions,
+			"is_stitched":        isStitched,
+		},
+		"category": map[string]interface{}{
+			"id":   categoryID,
+			"name": categoryName,
+		},
+		"attributes": attributes,
+		"stocks":     stocks,
+	}, nil
+}
+
+//
 // ================= SEARCH =================
 //
 

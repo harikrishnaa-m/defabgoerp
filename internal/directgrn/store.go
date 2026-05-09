@@ -193,21 +193,33 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 			return nil, fmt.Errorf("update po item received_qty: %w", err)
 		}
 
-		// Upsert raw_material_stocks — conflict key is (product_code, warehouse_id) when
-		// product_code is provided, otherwise falls back to (item_name, warehouse_id).
 		if it.productCode != "" {
+			// product_code is treated as a variant code — the variant MUST exist.
+			var variantID string
+			err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, it.productCode).Scan(&variantID)
+			if err != nil {
+				return nil, fmt.Errorf("no active product variant found with code %s — please create the product and variant in the catalog first", it.productCode)
+			}
 			_, err = tx.Exec(`
-				INSERT INTO raw_material_stocks (item_name, product_code, hsn_code, unit, warehouse_id, quantity, updated_at)
-				VALUES ($1, $2, $3, $4, $5, $6, NOW())
-				ON CONFLICT (product_code, warehouse_id) WHERE product_code IS NOT NULL AND product_code <> ''
-				DO UPDATE SET
-					quantity     = raw_material_stocks.quantity + $6,
-					item_name    = $1,
-					hsn_code     = COALESCE(NULLIF($3, ''), raw_material_stocks.hsn_code),
-					unit         = $4,
-					updated_at   = NOW()
-			`, it.itemName, it.productCode, it.hsnCode, it.unit, in.WarehouseID, it.qty)
+				INSERT INTO stocks (variant_id, warehouse_id, quantity, stock_type, updated_at)
+				VALUES ($1,$2,$3,'PRODUCT',NOW())
+				ON CONFLICT (variant_id, warehouse_id) DO UPDATE SET
+					quantity   = stocks.quantity + $3,
+					updated_at = NOW()
+			`, variantID, in.WarehouseID, it.qty)
+			if err != nil {
+				return nil, fmt.Errorf("upsert stocks: %w", err)
+			}
+			_, err = tx.Exec(`
+				INSERT INTO stock_movements
+					(variant_id, to_warehouse_id, quantity, movement_type, purchase_order_id, reference, status)
+				VALUES ($1,$2,$3,'PURCHASE_IN',$4,$5,'COMPLETED')
+			`, variantID, in.WarehouseID, it.qty, poID, in.Reference)
+			if err != nil {
+				return nil, fmt.Errorf("insert stock_movements: %w", err)
+			}
 		} else {
+			// No product_code — raw material purchase.
 			_, err = tx.Exec(`
 				INSERT INTO raw_material_stocks (item_name, hsn_code, unit, warehouse_id, quantity, updated_at)
 				VALUES ($1, $2, $3, $4, $5, NOW())
@@ -218,18 +230,17 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 					unit       = $3,
 					updated_at = NOW()
 			`, it.itemName, it.hsnCode, it.unit, in.WarehouseID, it.qty)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("upsert raw_material_stocks: %w", err)
-		}
-
-		_, err = tx.Exec(`
-			INSERT INTO raw_material_movements
-				(item_name, warehouse_id, quantity, movement_type, goods_receipt_id, purchase_order_id, reference)
-			VALUES ($1, $2, $3, 'IN', $4, $5, $6)
-		`, it.itemName, in.WarehouseID, it.qty, grnID, poID, in.Reference)
-		if err != nil {
-			return nil, fmt.Errorf("insert raw_material_movements: %w", err)
+			if err != nil {
+				return nil, fmt.Errorf("upsert raw_material_stocks: %w", err)
+			}
+			_, err = tx.Exec(`
+				INSERT INTO raw_material_movements
+					(item_name, warehouse_id, quantity, movement_type, goods_receipt_id, purchase_order_id, reference)
+				VALUES ($1, $2, $3, 'IN', $4, $5, $6)
+			`, it.itemName, in.WarehouseID, it.qty, grnID, poID, in.Reference)
+			if err != nil {
+				return nil, fmt.Errorf("insert raw_material_movements: %w", err)
+			}
 		}
 	}
 

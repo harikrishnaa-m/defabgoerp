@@ -140,10 +140,22 @@ func (s *Store) CreateProductionOrder(in CreateProductionOrderInput, userID, bra
 		if m.QuantityUsed <= 0 {
 			continue
 		}
-		_, err = tx.Exec(`
-			INSERT INTO production_materials (production_order_id, raw_material_stock_id, quantity_used)
-			VALUES ($1,$2,$3)
-		`, prodID, m.RawMaterialStockID, m.QuantityUsed)
+		if m.VariantCode != "" {
+			var variantID string
+			err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, m.VariantCode).Scan(&variantID)
+			if err != nil {
+				return "", fmt.Errorf("variant not found for code %s: %w", m.VariantCode, err)
+			}
+			_, err = tx.Exec(`
+				INSERT INTO production_materials (production_order_id, variant_id, variant_warehouse_id, quantity_used)
+				VALUES ($1,$2,$3,$4)
+			`, prodID, variantID, m.WarehouseID, m.QuantityUsed)
+		} else {
+			_, err = tx.Exec(`
+				INSERT INTO production_materials (production_order_id, raw_material_stock_id, quantity_used)
+				VALUES ($1,$2,$3)
+			`, prodID, m.RawMaterialStockID, m.QuantityUsed)
+		}
 		if err != nil {
 			return "", fmt.Errorf("insert production material: %w", err)
 		}
@@ -214,18 +226,23 @@ func (s *Store) Complete(prodID, userID string) error {
 	}
 
 	// Deduct raw materials
-	matRows, err := tx.Query(`SELECT raw_material_stock_id, quantity_used FROM production_materials WHERE production_order_id = $1`, prodID)
+	matRows, err := tx.Query(`
+		SELECT COALESCE(raw_material_stock_id::text,''), COALESCE(variant_id::text,''),
+		       COALESCE(variant_warehouse_id::text,''), quantity_used
+		FROM production_materials WHERE production_order_id = $1`, prodID)
 	if err != nil {
 		return err
 	}
 	type matItem struct {
-		stockID string
-		qty     float64
+		stockID   string
+		variantID string
+		whID      string
+		qty       float64
 	}
 	var mats []matItem
 	for matRows.Next() {
 		var m matItem
-		if err := matRows.Scan(&m.stockID, &m.qty); err != nil {
+		if err := matRows.Scan(&m.stockID, &m.variantID, &m.whID, &m.qty); err != nil {
 			matRows.Close()
 			return err
 		}
@@ -234,31 +251,52 @@ func (s *Store) Complete(prodID, userID string) error {
 	matRows.Close()
 
 	for _, m := range mats {
-		// Look up item_name and warehouse_id from raw_material_stocks
-		var itemName, rmWhID string
-		err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, m.stockID).Scan(&itemName, &rmWhID)
-		if err != nil {
-			return fmt.Errorf("raw material stock not found: %w", err)
-		}
-
-		res, err := tx.Exec(`
-			UPDATE raw_material_stocks SET quantity = quantity - $1, updated_at = NOW()
-			WHERE id = $2 AND quantity >= $1
-		`, m.qty, m.stockID)
-		if err != nil {
-			return fmt.Errorf("deduct raw material: %w", err)
-		}
-		rows, _ := res.RowsAffected()
-		if rows == 0 {
-			return fmt.Errorf("insufficient raw material stock for %s", itemName)
-		}
-		_, err = tx.Exec(`
-			INSERT INTO raw_material_movements
-				(item_name, warehouse_id, quantity, movement_type, reference)
-			VALUES ($1,$2,$3,'OUT',$4)
-		`, itemName, rmWhID, m.qty, "PROD:"+prodID)
-		if err != nil {
-			return err
+		if m.variantID != "" {
+			res, err := tx.Exec(`
+				UPDATE stocks SET quantity = quantity - $1, updated_at = NOW()
+				WHERE variant_id = $2 AND warehouse_id = $3 AND quantity >= $1
+			`, m.qty, m.variantID, m.whID)
+			if err != nil {
+				return fmt.Errorf("deduct variant stock: %w", err)
+			}
+			rows, _ := res.RowsAffected()
+			if rows == 0 {
+				return fmt.Errorf("insufficient stock for variant %s", m.variantID)
+			}
+			_, err = tx.Exec(`
+				INSERT INTO stock_movements
+					(variant_id, from_warehouse_id, quantity, movement_type, reference, status)
+				VALUES ($1,$2,$3,'PRODUCTION_OUT',$4,'COMPLETED')
+			`, m.variantID, m.whID, m.qty, "PROD:"+prodID)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Legacy raw_material_stocks path
+			var itemName, rmWhID string
+			err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, m.stockID).Scan(&itemName, &rmWhID)
+			if err != nil {
+				return fmt.Errorf("raw material stock not found: %w", err)
+			}
+			res, err := tx.Exec(`
+				UPDATE raw_material_stocks SET quantity = quantity - $1, updated_at = NOW()
+				WHERE id = $2 AND quantity >= $1
+			`, m.qty, m.stockID)
+			if err != nil {
+				return fmt.Errorf("deduct raw material: %w", err)
+			}
+			rows, _ := res.RowsAffected()
+			if rows == 0 {
+				return fmt.Errorf("insufficient raw material stock for %s", itemName)
+			}
+			_, err = tx.Exec(`
+				INSERT INTO raw_material_movements
+					(item_name, warehouse_id, quantity, movement_type, reference)
+				VALUES ($1,$2,$3,'OUT',$4)
+			`, itemName, rmWhID, m.qty, "PROD:"+prodID)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
