@@ -2,10 +2,18 @@ package directgrn
 
 // DirectGRNItem represents one line item in a Direct GRN.
 type DirectGRNItem struct {
-	ItemName             string  `json:"item_name"`
-	Description          string  `json:"description"`
-	ProductCode          string  `json:"product_code"`
-	Category             string  `json:"category"`
+	ItemName    string `json:"item_name"`
+	Description string `json:"description"`
+	ProductCode string `json:"product_code"`
+	Category    string `json:"category"`
+	// CategoryID and ProductID identify existing catalog entities.
+	// When CreateVariant is true a new variant is created:
+	//   – if ProductID is set, the variant is added under that product;
+	//   – otherwise the category (by CategoryID or Category name) and product
+	//     (by ItemName) are upserted and then the variant is created under them.
+	CategoryID           string  `json:"category_id"`
+	ProductID            string  `json:"product_id"`
+	CreateVariant        bool    `json:"create_variant"`
 	HSNCode              string  `json:"hsn_code"`
 	Unit                 string  `json:"unit"`
 	Quantity             float64 `json:"quantity"`

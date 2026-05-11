@@ -2,6 +2,7 @@ package migration
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,3 +162,58 @@ func (h *Handler) ImportSales(c *fiber.Ctx) error {
 		"result":  result,
 	})
 }
+
+// ImportVyttilaStock handles POST /api/migration/import-vyttila-stock
+//
+// Accepts a multipart file upload (field name: "file") of the Vyttila stock xlsx.
+// Query params:
+//
+//	branch   – branch name to target (default: "DEFAB Vyttila"); created if not found
+//	dry_run  – "true" to preview counts without writing to DB
+func (h *Handler) ImportVyttilaStock(c *fiber.Ctx) error {
+	branch := strings.TrimSpace(c.Query("branch"))
+	if branch == "" {
+		branch = "DEFAB Vyttila"
+	}
+	dryRun := c.Query("dry_run") == "true"
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "multipart field 'file' is required",
+		})
+	}
+
+	f, err := fileHeader.Open()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to open uploaded file: " + err.Error(),
+		})
+	}
+	defer f.Close()
+
+	fileBytes, err := io.ReadAll(f)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to read uploaded file: " + err.Error(),
+		})
+	}
+
+	result, err := h.store.ImportVyttilaStock(fileBytes, branch, dryRun)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "import failed",
+			"details": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "vyttila stock import completed",
+		"branch":  branch,
+		"dry_run": dryRun,
+		"result":  result,
+	})
+}
+
+// ensure model import is used (imported for auth in ImportSales)
+var _ = (*model.User)(nil)

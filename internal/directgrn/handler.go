@@ -67,8 +67,8 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "invoice_number") {
 			return httperr.Conflict(c, "Invoice number already exists")
 		}
-		log.Println("direct grn create error:", err)
-		return httperr.Internal(c)
+		log.Printf("direct grn create error: %+v", err)
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}
 
 	// Trigger accounting auto-record (non-blocking)
@@ -115,4 +115,15 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 		return httperr.Internal(c)
 	}
 	return c.JSON(detail)
+}
+
+// GetNextVariantCode handles GET /direct-grn/next-variant-code.
+// Returns the next safe variant_code to use (MAX(variant_code)+1).
+func (h *Handler) GetNextVariantCode(c *fiber.Ctx) error {
+	next, err := h.store.NextVariantCode()
+	if err != nil {
+		log.Println("next variant code error:", err)
+		return httperr.Internal(c)
+	}
+	return c.JSON(fiber.Map{"next_variant_code": next})
 }
