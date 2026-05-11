@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
 	"defab-erp/internal/auth"
 	"defab-erp/internal/core/db"
@@ -262,7 +263,10 @@ func main() {
 
 	// 4. Fiber
 	app := fiber.New(fiber.Config{
-		BodyLimit: 50 * 1024 * 1024, // 50 MB
+		BodyLimit:    50 * 1024 * 1024, // 50 MB
+		ReadTimeout:  5 * 60 * time.Second,
+		WriteTimeout: 10 * 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	})
 
 	app.Use(logger.New())

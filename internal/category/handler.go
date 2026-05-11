@@ -37,33 +37,59 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 //
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
+	search := c.Query("search")
+	pageStr := c.Query("page")
+	limitStr := c.Query("limit")
 
-	if page < 1 {
-		page = 1
+	// If page or limit is provided, use paginated response (preserves old frontend behaviour).
+	if pageStr != "" || limitStr != "" {
+		page := c.QueryInt("page", 1)
+		limit := c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		offset := (page - 1) * limit
+
+		rows, err := h.store.ListActivePaged(search, limit, offset)
+		if err != nil {
+			return c.Status(500).SendString(err.Error())
+		}
+		defer rows.Close()
+
+		var out []fiber.Map
+		for rows.Next() {
+			var id, name, imageURL string
+			var active bool
+			var productsCount int
+			rows.Scan(&id, &name, &active, &productsCount, &imageURL)
+			out = append(out, fiber.Map{
+				"id":             id,
+				"name":           name,
+				"is_active":      active,
+				"products_count": productsCount,
+				"image_url":      imageURL,
+			})
+		}
+		total, _ := h.store.CountActive(search)
+		return c.JSON(fiber.Map{"data": out, "page": page, "limit": limit, "total": total})
 	}
-	if limit < 1 || limit > 100 {
-		limit = 20
-	}
 
-	offset := (page - 1) * limit
-
-	rows, err := h.store.ListActive(limit, offset)
+	// No pagination params — return all.
+	rows, err := h.store.ListActive(search)
 	if err != nil {
 		return c.Status(500).SendString(err.Error())
 	}
 	defer rows.Close()
 
 	var out []fiber.Map
-
 	for rows.Next() {
 		var id, name, imageURL string
 		var active bool
 		var productsCount int
-
 		rows.Scan(&id, &name, &active, &productsCount, &imageURL)
-
 		out = append(out, fiber.Map{
 			"id":             id,
 			"name":           name,
@@ -72,15 +98,75 @@ func (h *Handler) List(c *fiber.Ctx) error {
 			"image_url":      imageURL,
 		})
 	}
+	return c.JSON(out)
+}
 
-	total, _ := h.store.CountActive()
+//
+// LIST PRODUCTS WITHIN A CATEGORY
+//
 
-	return c.JSON(fiber.Map{
-		"data":  out,
-		"page":  page,
-		"limit": limit,
-		"total": total,
-	})
+func (h *Handler) ListProducts(c *fiber.Ctx) error {
+	categoryID := c.Params("id")
+	search := c.Query("search")
+	pageStr := c.Query("page")
+	limitStr := c.Query("limit")
+
+	// If page or limit is provided, use paginated response (preserves old frontend behaviour).
+	if pageStr != "" || limitStr != "" {
+		page := c.QueryInt("page", 1)
+		limit := c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+		offset := (page - 1) * limit
+
+		rows, err := h.store.ListProductsByCategoryPaged(categoryID, search, limit, offset)
+		if err != nil {
+			return c.Status(500).SendString(err.Error())
+		}
+		defer rows.Close()
+
+		var out []fiber.Map
+		for rows.Next() {
+			var id, name, brand, mainImage string
+			var active bool
+			rows.Scan(&id, &name, &brand, &mainImage, &active)
+			out = append(out, fiber.Map{
+				"id":             id,
+				"name":           name,
+				"brand":          brand,
+				"main_image_url": mainImage,
+				"is_active":      active,
+			})
+		}
+		total, _ := h.store.CountProductsByCategory(categoryID, search)
+		return c.JSON(fiber.Map{"data": out, "page": page, "limit": limit, "total": total})
+	}
+
+	// No pagination params — return all.
+	rows, err := h.store.ListProductsByCategory(categoryID, search)
+	if err != nil {
+		return c.Status(500).SendString(err.Error())
+	}
+	defer rows.Close()
+
+	var out []fiber.Map
+	for rows.Next() {
+		var id, name, brand, mainImage string
+		var active bool
+		rows.Scan(&id, &name, &brand, &mainImage, &active)
+		out = append(out, fiber.Map{
+			"id":             id,
+			"name":           name,
+			"brand":          brand,
+			"main_image_url": mainImage,
+			"is_active":      active,
+		})
+	}
+	return c.JSON(out)
 }
 
 //

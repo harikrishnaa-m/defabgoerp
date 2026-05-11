@@ -12,7 +12,7 @@ import (
 
 // Connect returns a raw SQL connection pool
 func Connect() *sql.DB {
-	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+	connStr := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=require&default_query_exec_mode=simple_protocol",
 		os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"),
 		os.Getenv("DB_HOST"), os.Getenv("DB_PORT"), os.Getenv("DB_NAME"))
 
@@ -21,11 +21,11 @@ func Connect() *sql.DB {
 		log.Fatal("❌ Failed to open driver:", err)
 	}
 
-	// Performance Tuning (Matches your dbstore.go)
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(30 * time.Minute)
-	db.SetConnMaxIdleTime(5 * time.Minute)
+	// Supabase transaction-mode pooler: stay well under pool_size limit
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(1 * time.Minute)
 
 	if err := db.Ping(); err != nil {
 		log.Fatal("❌ Database Unreachable:", err)
