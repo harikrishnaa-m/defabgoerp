@@ -379,24 +379,44 @@ func (s *Store) ListVouchers(voucherType, from, to, branchID, search string, lim
 		return nil, 0, err
 	}
 
-	query := fmt.Sprintf(`
-		SELECT v.id, v.voucher_number, v.voucher_type, v.voucher_date,
-		       COALESCE(v.narration,''), COALESCE(v.ref_type,''), COALESCE(v.ref_id::text,''),
-		       COALESCE(v.financial_year_id::text,''), COALESCE(fy.name,''),
-		       COALESCE(v.branch_id::text,''), COALESCE(b.name,''),
-		       COALESCE(v.created_by::text,''),
-		       v.is_cancelled, v.created_at,
-		       COALESCE(SUM(vl.debit),0), COALESCE(SUM(vl.credit),0)
-		FROM vouchers v
-		LEFT JOIN voucher_lines vl ON vl.voucher_id = v.id
-		LEFT JOIN financial_years fy ON fy.id = v.financial_year_id
-		LEFT JOIN branches b ON b.id = v.branch_id
-		%s
-		GROUP BY v.id, fy.name, b.name
-		ORDER BY v.voucher_date DESC, v.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, where, idx, idx+1)
-	args = append(args, limit, offset)
+	var query string
+	if limit > 0 {
+		query = fmt.Sprintf(`
+			SELECT v.id, v.voucher_number, v.voucher_type, v.voucher_date,
+			       COALESCE(v.narration,''), COALESCE(v.ref_type,''), COALESCE(v.ref_id::text,''),
+			       COALESCE(v.financial_year_id::text,''), COALESCE(fy.name,''),
+			       COALESCE(v.branch_id::text,''), COALESCE(b.name,''),
+			       COALESCE(v.created_by::text,''),
+			       v.is_cancelled, v.created_at,
+			       COALESCE(SUM(vl.debit),0), COALESCE(SUM(vl.credit),0)
+			FROM vouchers v
+			LEFT JOIN voucher_lines vl ON vl.voucher_id = v.id
+			LEFT JOIN financial_years fy ON fy.id = v.financial_year_id
+			LEFT JOIN branches b ON b.id = v.branch_id
+			%s
+			GROUP BY v.id, fy.name, b.name
+			ORDER BY v.voucher_date DESC, v.created_at DESC
+			LIMIT $%d OFFSET $%d
+		`, where, idx, idx+1)
+		args = append(args, limit, offset)
+	} else {
+		query = fmt.Sprintf(`
+			SELECT v.id, v.voucher_number, v.voucher_type, v.voucher_date,
+			       COALESCE(v.narration,''), COALESCE(v.ref_type,''), COALESCE(v.ref_id::text,''),
+			       COALESCE(v.financial_year_id::text,''), COALESCE(fy.name,''),
+			       COALESCE(v.branch_id::text,''), COALESCE(b.name,''),
+			       COALESCE(v.created_by::text,''),
+			       v.is_cancelled, v.created_at,
+			       COALESCE(SUM(vl.debit),0), COALESCE(SUM(vl.credit),0)
+			FROM vouchers v
+			LEFT JOIN voucher_lines vl ON vl.voucher_id = v.id
+			LEFT JOIN financial_years fy ON fy.id = v.financial_year_id
+			LEFT JOIN branches b ON b.id = v.branch_id
+			%s
+			GROUP BY v.id, fy.name, b.name
+			ORDER BY v.voucher_date DESC, v.created_at DESC
+		`, where)
+	}
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

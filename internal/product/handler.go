@@ -208,8 +208,9 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 
 	row := h.store.Get(id)
 
-	var pid, name, uom, description, fabricComposition, pattern, occasion, careInstructions string
+	var pid, name, uom string
 	var brand, mainImage, cid, cname sql.NullString
+	var description, fabricComposition, pattern, occasion, careInstructions sql.NullString
 	var web, stitched, active bool
 
 	err := row.Scan(
@@ -276,11 +277,11 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		"is_active":          active,
 		"is_web_visible":     web,
 		"is_stitched":        stitched,
-		"description":        description,
-		"fabric_composition": fabricComposition,
-		"pattern":            pattern,
-		"occasion":           occasion,
-		"care_instructions":  careInstructions,
+		"description":        description.String,
+		"fabric_composition": fabricComposition.String,
+		"pattern":            pattern.String,
+		"occasion":           occasion.String,
+		"care_instructions":  careInstructions.String,
 		"category": fiber.Map{
 			"id":   cid.String,
 			"name": cname.String,

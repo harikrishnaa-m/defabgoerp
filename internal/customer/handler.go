@@ -11,18 +11,26 @@ func NewHandler(s *Store) *Handler {
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 10)
 	search := c.Query("search")
 
-	if page < 1 {
-		page = 1
-	}
-	if limit < 1 || limit > 100 {
-		limit = 10
-	}
+	limitStr := c.Query("limit")
+	pageStr := c.Query("page")
 
-	offset := (page - 1) * limit
+	page := 1
+	limit := 0
+	offset := 0
+
+	if limitStr != "" || pageStr != "" {
+		page = c.QueryInt("page", 1)
+		limit = c.QueryInt("limit", 10)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 10
+		}
+		offset = (page - 1) * limit
+	}
 
 	customers, total, err := h.store.List(limit, offset, search)
 	if err != nil {

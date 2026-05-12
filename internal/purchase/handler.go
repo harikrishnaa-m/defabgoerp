@@ -43,9 +43,24 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 // LIST
 func (h *Handler) List(c *fiber.Ctx) error {
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
-	offset := (page - 1) * limit
+	limitStr := c.Query("limit")
+	pageStr := c.Query("page")
+
+	page := 1
+	limit := 0
+	offset := 0
+
+	if limitStr != "" || pageStr != "" {
+		page = c.QueryInt("page", 1)
+		limit = c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 {
+			limit = 20
+		}
+		offset = (page - 1) * limit
+	}
 
 	list, err := h.store.List(limit, offset)
 	if err != nil {

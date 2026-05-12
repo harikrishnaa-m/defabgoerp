@@ -305,9 +305,26 @@ func (h *Handler) LowStock(c *fiber.Ctx) error {
 
 func (h *Handler) All(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
-	page := c.QueryInt("page", 1)
-	limit := c.QueryInt("limit", 20)
-	offset := (page - 1) * limit
+
+	limitStr := c.Query("limit")
+	pageStr := c.Query("page")
+
+	page := 1
+	limit := 0
+	offset := 0
+
+	if limitStr != "" || pageStr != "" {
+		page = c.QueryInt("page", 1)
+		limit = c.QueryInt("limit", 20)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 {
+			limit = 20
+		}
+		offset = (page - 1) * limit
+	}
+
 	variantCode := c.Query("variant_code")
 
 	var total int
@@ -367,11 +384,16 @@ func (h *Handler) All(c *fiber.Ctx) error {
 		})
 	}
 
+	totalPages := 1
+	if limit > 0 {
+		totalPages = int(math.Ceil(float64(total) / float64(limit)))
+	}
+
 	return c.JSON(fiber.Map{
 		"page":        page,
 		"limit":       limit,
 		"total":       total,
-		"total_pages": int(math.Ceil(float64(total) / float64(limit))),
+		"total_pages": totalPages,
 		"data":        data,
 	})
 }
