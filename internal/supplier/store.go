@@ -47,14 +47,23 @@ func (s *Store) Create(in CreateSupplierInput) (string, string, error) {
 
 // LIST (ACTIVE ONLY)
 func (s *Store) List(limit, offset int) (*sql.Rows, error) {
+	if limit > 0 {
+		return s.db.Query(`
+			SELECT
+				id, supplier_code, name, phone, email, address,
+				gst_number, is_active, created_at, updated_at
+			FROM suppliers
+			ORDER BY created_at DESC
+			LIMIT $1 OFFSET $2
+		`, limit, offset)
+	}
 	return s.db.Query(`
 		SELECT
 			id, supplier_code, name, phone, email, address,
 			gst_number, is_active, created_at, updated_at
 		FROM suppliers
 		ORDER BY created_at DESC
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
+	`)
 }
 
 // GET BY ID

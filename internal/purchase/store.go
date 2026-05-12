@@ -89,7 +89,7 @@ func (s *Store) Create(in CreatePurchaseOrderInput) (string, error) {
 
 // LIST
 func (s *Store) List(limit, offset int) ([]POListRow, error) {
-	rows, err := s.db.Query(`
+	q := `
 	SELECT po.id, po.po_number, po.supplier_id,
 	       COALESCE(s.name,'') AS supplier_name,
 	       po.warehouse_id, po.status,
@@ -98,8 +98,13 @@ func (s *Store) List(limit, offset int) ([]POListRow, error) {
 	FROM purchase_orders po
 	LEFT JOIN suppliers s ON s.id = po.supplier_id
 	ORDER BY po.created_at DESC
-	LIMIT $1 OFFSET $2
-	`, limit, offset)
+	`
+	var args []interface{}
+	if limit > 0 {
+		q += " LIMIT $1 OFFSET $2"
+		args = append(args, limit, offset)
+	}
+	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}

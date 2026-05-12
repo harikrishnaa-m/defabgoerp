@@ -221,6 +221,23 @@ func (s *Store) LowStockByBranch(threshold int, branchID string) (*sql.Rows, err
 
 func (s *Store) GetAll(variantCode string, limit, offset int) (*sql.Rows, error) {
 	if variantCode != "" {
+		if limit > 0 {
+			return s.db.Query(`
+				SELECT
+					s.id,
+					p.id, p.name,
+					v.id, v.variant_code, v.name, v.sku,
+					w.id, w.name,
+					s.quantity
+				FROM stocks s
+				JOIN variants v   ON v.id = s.variant_id
+				JOIN products p   ON p.id = v.product_id
+				JOIN warehouses w ON w.id = s.warehouse_id
+				WHERE v.variant_code::text = $1
+				ORDER BY p.name, v.name
+				LIMIT $2 OFFSET $3
+			`, variantCode, limit, offset)
+		}
 		return s.db.Query(`
 			SELECT
 				s.id,
@@ -234,8 +251,23 @@ func (s *Store) GetAll(variantCode string, limit, offset int) (*sql.Rows, error)
 			JOIN warehouses w ON w.id = s.warehouse_id
 			WHERE v.variant_code::text = $1
 			ORDER BY p.name, v.name
-			LIMIT $2 OFFSET $3
-		`, variantCode, limit, offset)
+		`, variantCode)
+	}
+	if limit > 0 {
+		return s.db.Query(`
+			SELECT
+				s.id,
+				p.id, p.name,
+				v.id, v.variant_code, v.name, v.sku,
+				w.id, w.name,
+				s.quantity
+			FROM stocks s
+			JOIN variants v   ON v.id = s.variant_id
+			JOIN products p   ON p.id = v.product_id
+			JOIN warehouses w ON w.id = s.warehouse_id
+			ORDER BY p.name, v.name
+			LIMIT $1 OFFSET $2
+		`, limit, offset)
 	}
 	return s.db.Query(`
 		SELECT
@@ -249,12 +281,28 @@ func (s *Store) GetAll(variantCode string, limit, offset int) (*sql.Rows, error)
 		JOIN products p   ON p.id = v.product_id
 		JOIN warehouses w ON w.id = s.warehouse_id
 		ORDER BY p.name, v.name
-		LIMIT $1 OFFSET $2
-	`, limit, offset)
+	`)
 }
 
 func (s *Store) GetAllByBranch(branchID, variantCode string, limit, offset int) (*sql.Rows, error) {
 	if variantCode != "" {
+		if limit > 0 {
+			return s.db.Query(`
+				SELECT
+					s.id,
+					p.id, p.name,
+					v.id, v.variant_code, v.name, v.sku,
+					w.id, w.name,
+					s.quantity
+				FROM stocks s
+				JOIN variants v   ON v.id = s.variant_id
+				JOIN products p   ON p.id = v.product_id
+				JOIN warehouses w ON w.id = s.warehouse_id
+				WHERE w.branch_id = $1 AND v.variant_code::text = $2
+				ORDER BY p.name, v.name
+				LIMIT $3 OFFSET $4
+			`, branchID, variantCode, limit, offset)
+		}
 		return s.db.Query(`
 			SELECT
 				s.id,
@@ -268,8 +316,24 @@ func (s *Store) GetAllByBranch(branchID, variantCode string, limit, offset int) 
 			JOIN warehouses w ON w.id = s.warehouse_id
 			WHERE w.branch_id = $1 AND v.variant_code::text = $2
 			ORDER BY p.name, v.name
-			LIMIT $3 OFFSET $4
-		`, branchID, variantCode, limit, offset)
+		`, branchID, variantCode)
+	}
+	if limit > 0 {
+		return s.db.Query(`
+			SELECT
+				s.id,
+				p.id, p.name,
+				v.id, v.variant_code, v.name, v.sku,
+				w.id, w.name,
+				s.quantity
+			FROM stocks s
+			JOIN variants v   ON v.id = s.variant_id
+			JOIN products p   ON p.id = v.product_id
+			JOIN warehouses w ON w.id = s.warehouse_id
+			WHERE w.branch_id = $1
+			ORDER BY p.name, v.name
+			LIMIT $2 OFFSET $3
+		`, branchID, limit, offset)
 	}
 	return s.db.Query(`
 		SELECT
@@ -284,8 +348,7 @@ func (s *Store) GetAllByBranch(branchID, variantCode string, limit, offset int) 
 		JOIN warehouses w ON w.id = s.warehouse_id
 		WHERE w.branch_id = $1
 		ORDER BY p.name, v.name
-		LIMIT $2 OFFSET $3
-	`, branchID, limit, offset)
+	`, branchID)
 }
 
 func (s *Store) CountAllByBranch(branchID, variantCode string) (int, error) {

@@ -42,17 +42,24 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	filter := ReturnListFilter{Limit: 20, Offset: 0}
+	filter := ReturnListFilter{Limit: 0, Offset: 0}
 	if bid := c.Query("branch_id"); bid != "" {
 		filter.BranchID = &bid
 	}
 	filter.Status = c.Query("status")
 	filter.Search = c.Query("search")
-	if limit := c.QueryInt("limit"); limit > 0 {
-		filter.Limit = limit
-	}
-	if offset := c.QueryInt("offset"); offset >= 0 {
-		filter.Offset = offset
+
+	limitStr := c.Query("limit")
+	offsetStr := c.Query("offset")
+	if limitStr != "" || offsetStr != "" {
+		if limit := c.QueryInt("limit"); limit > 0 {
+			filter.Limit = limit
+		} else {
+			filter.Limit = 20
+		}
+		if offset := c.QueryInt("offset"); offset >= 0 {
+			filter.Offset = offset
+		}
 	}
 
 	list, total, err := h.store.List(filter.BranchID, filter.Status, filter.Search, filter.Limit, filter.Offset)

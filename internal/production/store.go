@@ -409,28 +409,46 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 		return nil, 0, err
 	}
 
-	n++
-	limitP := n
-	n++
-	offsetP := n
-	args = append(args, limit, offset)
-
-	q := fmt.Sprintf(`
-		SELECT po.id, po.production_number, po.branch_id, po.warehouse_id,
-		       po.output_variant_id, po.output_quantity, po.status,
-		       po.notes, po.started_at, po.completed_at, po.created_by, po.created_at,
-		       COALESCE(p.name,'') AS product_name, COALESCE(v.sku,'') AS sku,
-		       COALESCE(b.name,'') AS branch_name,
-		       COALESCE(u.name,'') AS created_by_name
-		FROM production_orders po
-		LEFT JOIN variants v ON v.id = po.output_variant_id
-		LEFT JOIN products p ON p.id = v.product_id
-		LEFT JOIN branches b ON b.id = po.branch_id
-		LEFT JOIN users u ON u.id = po.created_by
-		%s
-		ORDER BY po.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, where, limitP, offsetP)
+	var q string
+	if limit > 0 {
+		n++
+		limitP := n
+		n++
+		offsetP := n
+		args = append(args, limit, offset)
+		q = fmt.Sprintf(`
+			SELECT po.id, po.production_number, po.branch_id, po.warehouse_id,
+			       po.output_variant_id, po.output_quantity, po.status,
+			       po.notes, po.started_at, po.completed_at, po.created_by, po.created_at,
+			       COALESCE(p.name,'') AS product_name, COALESCE(v.sku,'') AS sku,
+			       COALESCE(b.name,'') AS branch_name,
+			       COALESCE(u.name,'') AS created_by_name
+			FROM production_orders po
+			LEFT JOIN variants v ON v.id = po.output_variant_id
+			LEFT JOIN products p ON p.id = v.product_id
+			LEFT JOIN branches b ON b.id = po.branch_id
+			LEFT JOIN users u ON u.id = po.created_by
+			%s
+			ORDER BY po.created_at DESC
+			LIMIT $%d OFFSET $%d
+		`, where, limitP, offsetP)
+	} else {
+		q = fmt.Sprintf(`
+			SELECT po.id, po.production_number, po.branch_id, po.warehouse_id,
+			       po.output_variant_id, po.output_quantity, po.status,
+			       po.notes, po.started_at, po.completed_at, po.created_by, po.created_at,
+			       COALESCE(p.name,'') AS product_name, COALESCE(v.sku,'') AS sku,
+			       COALESCE(b.name,'') AS branch_name,
+			       COALESCE(u.name,'') AS created_by_name
+			FROM production_orders po
+			LEFT JOIN variants v ON v.id = po.output_variant_id
+			LEFT JOIN products p ON p.id = v.product_id
+			LEFT JOIN branches b ON b.id = po.branch_id
+			LEFT JOIN users u ON u.id = po.created_by
+			%s
+			ORDER BY po.created_at DESC
+		`, where)
+	}
 
 	rows, err := s.db.Query(q, args...)
 	if err != nil {

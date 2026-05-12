@@ -316,14 +316,14 @@ type ListResult struct {
 // List returns purchase returns with optional filters and pagination.
 func (s *Store) List(f ListFilter) (*ListResult, error) {
 	limit := f.Limit
-	if limit <= 0 {
-		limit = 20
-	}
 	page := f.Page
-	if page <= 0 {
-		page = 1
+	offset := 0
+	if limit > 0 {
+		if page < 1 {
+			page = 1
+		}
+		offset = (page - 1) * limit
 	}
-	offset := (page - 1) * limit
 
 	base := `
 		SELECT
@@ -379,7 +379,11 @@ func (s *Store) List(f ListFilter) (*ListResult, error) {
 		return nil, fmt.Errorf("count purchase_returns: %w", err)
 	}
 
-	base += fmt.Sprintf(" ORDER BY pr.pr_date DESC, pr.created_at DESC LIMIT %d OFFSET %d", limit, offset)
+	if limit > 0 {
+		base += fmt.Sprintf(" ORDER BY pr.pr_date DESC, pr.created_at DESC LIMIT %d OFFSET %d", limit, offset)
+	} else {
+		base += " ORDER BY pr.pr_date DESC, pr.created_at DESC"
+	}
 
 	rows, err := s.db.Query(base, args...)
 	if err != nil {
@@ -405,9 +409,12 @@ func (s *Store) List(f ListFilter) (*ListResult, error) {
 		list = []PurchaseReturnListRow{}
 	}
 
-	totalPages := total / limit
-	if total%limit != 0 {
-		totalPages++
+	totalPages := 1
+	if limit > 0 {
+		totalPages = total / limit
+		if total%limit != 0 {
+			totalPages++
+		}
 	}
 	return &ListResult{
 		Data:       list,

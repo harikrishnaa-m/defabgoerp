@@ -65,8 +65,22 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	limit := c.QueryInt("limit", 20)
-	offset := c.QueryInt("offset", 0)
+	limitStr := c.Query("limit")
+	offsetStr := c.Query("offset")
+
+	limit := 0
+	offset := 0
+	if limitStr != "" || offsetStr != "" {
+		limit = c.QueryInt("limit", 20)
+		if limit < 1 {
+			limit = 20
+		}
+		offset = c.QueryInt("offset", 0)
+		if offset < 0 {
+			offset = 0
+		}
+	}
+
 	status := c.Query("status")
 	search := c.Query("search")
 

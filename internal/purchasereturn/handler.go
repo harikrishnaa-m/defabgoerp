@@ -40,8 +40,22 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 // GET /
 func (h *Handler) List(c *fiber.Ctx) error {
-	page, _ := strconv.Atoi(c.Query("page", "1"))
-	limit, _ := strconv.Atoi(c.Query("limit", "20"))
+	pageStr := c.Query("page")
+	limitStr := c.Query("limit")
+
+	page := 0
+	limit := 0
+	if pageStr != "" || limitStr != "" {
+		page, _ = strconv.Atoi(pageStr)
+		limit, _ = strconv.Atoi(limitStr)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 100 {
+			limit = 20
+		}
+	}
+
 	f := ListFilter{
 		SupplierName:  c.Query("supplier_name"),
 		PRNumber:      c.Query("pr_number"),

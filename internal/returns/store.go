@@ -321,9 +321,12 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 		LEFT JOIN users u ON u.id = ro.created_by
 		%s
 		ORDER BY ro.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, baseWhere, idx, idx+1)
-	args = append(args, limit, offset)
+	`, baseWhere)
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
+		args = append(args, limit, offset)
+	}
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
