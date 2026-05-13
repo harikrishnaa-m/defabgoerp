@@ -428,10 +428,19 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	// Build rich response for receipt/print
 	// ──────────────────────────────────────────
 
-	// Fetch branch name
-	var branchName string
+	// Fetch branch details
+	var branchName, branchAddress, branchCity, branchState, branchPhone, branchCode string
 	if branchID != "" {
-		s.db.QueryRow(`SELECT name FROM branches WHERE id = $1`, branchID).Scan(&branchName)
+		s.db.QueryRow(`
+			SELECT
+				COALESCE(name, ''),
+				COALESCE(address, ''),
+				COALESCE(city, ''),
+				COALESCE(state, ''),
+				COALESCE(phone_number, ''),
+				COALESCE(branch_code, '')
+			FROM branches WHERE id = $1`, branchID).
+			Scan(&branchName, &branchAddress, &branchCity, &branchState, &branchPhone, &branchCode)
 	}
 
 	// Fetch warehouse name
@@ -503,6 +512,11 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		// Context
 		"channel":          channel,
 		"branch_name":      branchName,
+		"branch_code":      branchCode,
+		"branch_address":   branchAddress,
+		"branch_city":      branchCity,
+		"branch_state":     branchState,
+		"branch_phone":     branchPhone,
 		"warehouse_name":   warehouseName,
 		"salesperson_name": salespersonName,
 

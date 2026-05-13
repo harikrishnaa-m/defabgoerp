@@ -3,6 +3,7 @@ package accounting
 import (
 	"database/sql"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -65,9 +66,12 @@ func (r *Recorder) RecordSalesInvoice(salesInvoiceID, userID string) error {
 
 	totalDiscount := inv.DiscountAmount + inv.BillDiscount
 
+	// sub_amount is the full MRP (GST-inclusive); revenue = sub_amount − gst_amount
+	salesRevenue := math.Round((inv.SubAmount-inv.GSTAmount)*100) / 100
+
 	lines := []VoucherLine{
 		{LedgerAccountID: LedgerAccountsReceiv, Debit: inv.NetAmount, Narration: "Customer receivable"},
-		{LedgerAccountID: LedgerSalesRevenue, Credit: inv.SubAmount, Narration: "Sales revenue"},
+		{LedgerAccountID: LedgerSalesRevenue, Credit: salesRevenue, Narration: "Sales revenue (excl. GST)"},
 	}
 	if inv.GSTAmount > 0 {
 		lines = append(lines, VoucherLine{
