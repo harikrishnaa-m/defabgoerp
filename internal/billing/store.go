@@ -120,9 +120,8 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		}
 		lineTotal := item.Quantity * item.UnitPrice
 
-		// Auto-resolve TaxPercent based on item type:
-		// PRODUCT: threshold on unit price (per-item cost)
-		// MATERIAL: threshold on line total (quantity × unit price)
+		// Auto-resolve TaxPercent based on item type.
+		// Slab threshold is on the MRP (inclusive) price: > 2500 → 18%, else 5%.
 		if item.ItemType == "MATERIAL" {
 			if lineTotal > 2500 {
 				in.Items[i].TaxPercent = 18
@@ -165,7 +164,8 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		taxableAmount = 0
 	}
 
-	// Proportionally distribute tax across items based on taxable amount
+	// Extract GST from each item's MRP-inclusive net amount.
+	// Prices are already MRP (inclusive of GST), so tax is extracted, not added.
 	for _, item := range in.Items {
 		lineTotal := item.Quantity * item.UnitPrice
 		// Proportional share of bill discount for this item
@@ -174,16 +174,18 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			itemBillDiscount = billDiscount * lineTotal / subtotal
 		}
 		itemBillDiscount = round2(itemBillDiscount)
-		lineTaxable := lineTotal - item.Discount - itemBillDiscount
-		if lineTaxable < 0 {
-			lineTaxable = 0
+		lineTaxableIncl := lineTotal - item.Discount - itemBillDiscount
+		if lineTaxableIncl < 0 {
+			lineTaxableIncl = 0
 		}
-		lineTax := lineTaxable * item.TaxPercent / 100
+		// Extract: tax = inclusive × rate / (100 + rate)
+		lineTax := lineTaxableIncl * item.TaxPercent / (100 + item.TaxPercent)
 		lineTax = round2(lineTax)
 		taxTotal += lineTax
 	}
 
-	grandTotal = taxableAmount + taxTotal
+	// Grand total = net MRP after all discounts (tax is already inside the MRP)
+	grandTotal = taxableAmount
 	grandTotal = round2(grandTotal)
 	subtotal = round2(subtotal)
 	discountTotal = round2(discountTotal)
@@ -249,12 +251,14 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			itemBillDisc = billDiscount * lineTotal / subtotal
 		}
 		itemBillDisc = round2(itemBillDisc)
-		taxAmt := (lineTotal - item.Discount - itemBillDisc) * item.TaxPercent / 100
-		if lineTotal-item.Discount-itemBillDisc < 0 {
-			taxAmt = 0
+		lineTaxableIncl := lineTotal - item.Discount - itemBillDisc
+		if lineTaxableIncl < 0 {
+			lineTaxableIncl = 0
 		}
-		taxAmt = round2(taxAmt)
-		total := round2(lineTotal - item.Discount + taxAmt)
+		// Extract GST from MRP-inclusive net amount
+		taxAmt := round2(lineTaxableIncl * item.TaxPercent / (100 + item.TaxPercent))
+		// total_price = line net at MRP (tax already inside, not added again)
+		total := round2(lineTotal - item.Discount)
 
 		ic := itemCalc{
 			variantID:  item.VariantID,

@@ -59,6 +59,33 @@ func (h *Handler) ImportXlsx(c *fiber.Ctx) error {
 	})
 }
 
+// UpsertXlsx handles POST /api/migration/upsert-xlsx
+// Same params as import-xlsx but with upsert semantics:
+//   - Existing variant (product + code match) → price/cost_price updated to MRP
+//   - New variant → created with MRP as price
+//   - Stock quantity is added for existing rows, created for new ones
+func (h *Handler) UpsertXlsx(c *fiber.Ctx) error {
+	folder := c.Query("folder")
+	branch := c.Query("branch")
+	if folder == "" || branch == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "query params required: folder, branch"})
+	}
+
+	basePath := filepath.Join("internal", "migration", folder)
+	if _, err := os.Stat(basePath); os.IsNotExist(err) {
+		return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("folder not found: %s", basePath)})
+	}
+
+	result, err := h.store.UpsertFolderMRP(basePath, branch)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"message": "upsert completed",
+		"result":  result,
+	})
+}
+
 // DryRun handles GET /api/migration/dry-run
 // Same params as ImportXlsx but only parses and summarises — no DB writes.
 func (h *Handler) DryRun(c *fiber.Ctx) error {
@@ -134,6 +161,30 @@ func (h *Handler) DryRun(c *fiber.Ctx) error {
 		"files":      summaries,
 		"total_rows": totalRows,
 		"file_count": len(files),
+	})
+}
+
+// RepriceFromXlsx handles POST /api/migration/reprice-from-xlsx
+// Re-reads the xlsx folder and updates variants.price to GST-inclusive MRP.
+// Query params: folder (same as import-xlsx)
+func (h *Handler) RepriceFromXlsx(c *fiber.Ctx) error {
+	folder := c.Query("folder")
+	if folder == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "query param required: folder"})
+	}
+
+	basePath := filepath.Join("internal", "migration", folder)
+	if _, err := os.Stat(basePath); os.IsNotExist(err) {
+		return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("folder not found: %s", basePath)})
+	}
+
+	updated, err := h.store.RepriceFolderToMRP(basePath)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"message":          "reprice completed",
+		"variants_updated": updated,
 	})
 }
 
