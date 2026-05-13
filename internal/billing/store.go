@@ -196,6 +196,13 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	for _, p := range in.Payments {
 		totalPaid += round2(p.Amount)
 	}
+
+	// Round grand_total to whole rupee before recording anywhere; track the adjustment in round_off
+	exactNet := round2(grandTotal)
+	roundedNet := math.Round(exactNet)
+	roundOff := round2(roundedNet - exactNet)
+	grandTotal = roundedNet
+
 	paymentStatus := "UNPAID"
 	if totalPaid >= grandTotal {
 		paymentStatus = "PAID"
@@ -300,13 +307,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	invoiceNumber := fmt.Sprintf("INV%05d", invNext)
 
 	gstAmount := taxTotal
-	netAmount := grandTotal
-
-	// Round net_amount to whole number; store the adjustment in round_off
-	exactNet := round2(netAmount)
-	roundedNet := math.Round(exactNet)
-	roundOff := round2(roundedNet - exactNet)
-	netAmount = roundedNet
+	netAmount := grandTotal // already rounded to whole rupee
 
 	invoiceStatus := paymentStatus
 	if invoiceStatus == "PAID" {
@@ -515,6 +516,7 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		"total_gst":      round2(taxTotal),
 		"tax_total":      round2(taxTotal),
 		"grand_total":    round2(grandTotal),
+		"round_off":      round2(roundOff),
 		"paid_amount":    round2(totalPaid),
 		"balance_due":    round2(grandTotal - totalPaid),
 		"payment_status": paymentStatus,
