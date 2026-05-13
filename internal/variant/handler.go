@@ -319,7 +319,8 @@ func (h *Handler) Search(c *fiber.Ctx) error {
 	if q == "" {
 		return c.Status(400).JSON(fiber.Map{"error": "q query param is required"})
 	}
-	results, err := h.store.Search(q)
+	warehouseID := c.Query("warehouse_id")
+	results, err := h.store.Search(q, warehouseID)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}

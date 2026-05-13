@@ -8,6 +8,13 @@ import (
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
+func nilIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 type Store struct {
 	db *sql.DB
 }
@@ -117,18 +124,14 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 				continue
 			}
 
-			if mat.VariantCode != "" {
-				// Variant-based path: look up the variant and deduct from stocks
-				var variantID string
-				err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, mat.VariantCode).Scan(&variantID)
-				if err != nil {
-					return "", fmt.Errorf("variant not found for code %s: %w", mat.VariantCode, err)
-				}
+			if mat.VariantID != "" {
+				// Variant-based path: use the provided variant_id directly
+				variantID := mat.VariantID
 				whID := mat.WarehouseID
 				_, err = tx.Exec(`
 					INSERT INTO job_order_materials (job_order_id, variant_id, variant_warehouse_id, quantity_used)
 					VALUES ($1,$2,$3,$4)
-				`, jobID, variantID, whID, mat.QuantityUsed)
+				`, jobID, nilIfEmpty(variantID), nilIfEmpty(whID), mat.QuantityUsed)
 				if err != nil {
 					return "", fmt.Errorf("insert job material: %w", err)
 				}
@@ -141,7 +144,7 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 				}
 				rows, _ := res.RowsAffected()
 				if rows == 0 {
-					return "", fmt.Errorf("insufficient stock for variant %s", mat.VariantCode)
+					return "", fmt.Errorf("insufficient stock for variant %s", mat.VariantID)
 				}
 				_, err = tx.Exec(`
 					INSERT INTO stock_movements
@@ -486,17 +489,13 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 
 		// Insert new materials and deduct stock if STORE
 		for _, m := range in.Materials {
-			if m.VariantCode != "" {
-				var variantID string
-				err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, m.VariantCode).Scan(&variantID)
-				if err != nil {
-					return fmt.Errorf("variant not found for code %s: %w", m.VariantCode, err)
-				}
+			if m.VariantID != "" {
+				variantID := m.VariantID
 				whID := m.WarehouseID
 				_, err = tx.Exec(`
 					INSERT INTO job_order_materials (job_order_id, variant_id, variant_warehouse_id, quantity_used)
 					VALUES ($1,$2,$3,$4)
-				`, id, variantID, whID, m.QuantityUsed)
+				`, id, nilIfEmpty(variantID), nilIfEmpty(whID), m.QuantityUsed)
 				if err != nil {
 					return fmt.Errorf("insert material: %w", err)
 				}
@@ -859,25 +858,56 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 
 	// Materials
 	matRows, err := s.db.Query(`
-		SELECT jm.id, jm.raw_material_stock_id, jm.quantity_used,
-		       rms.item_name, COALESCE(rms.unit,'') AS unit,
-		       COALESCE(w.name,'') AS warehouse_name
+		SELECT jm.id,
+		       COALESCE(jm.raw_material_stock_id::text, '') AS raw_material_stock_id,
+		       COALESCE(jm.variant_id::text, '')            AS variant_id,
+		       COALESCE(jm.variant_warehouse_id::text, '')  AS variant_warehouse_id,
+		       jm.quantity_used,
+		       COALESCE(rms.item_name, '')  AS rm_item_name,
+		       COALESCE(rms.unit, '')       AS rm_unit,
+		       COALESCE(rmw.name, '')       AS rm_warehouse_name,
+		       COALESCE(v.variant_code, '') AS variant_code,
+		       COALESCE(v.name, '')         AS variant_name,
+		       COALESCE(p.name, '')         AS product_name,
+		       COALESCE(vw.name, '')        AS variant_warehouse_name
 		FROM job_order_materials jm
 		LEFT JOIN raw_material_stocks rms ON rms.id = jm.raw_material_stock_id
-		LEFT JOIN warehouses w ON w.id = rms.warehouse_id
+		LEFT JOIN warehouses rmw ON rmw.id = rms.warehouse_id
+		LEFT JOIN variants v   ON v.id = jm.variant_id
+		LEFT JOIN products p   ON p.id = v.product_id
+		LEFT JOIN warehouses vw ON vw.id = jm.variant_warehouse_id
 		WHERE jm.job_order_id = $1
 	`, id)
 	if err == nil {
 		defer matRows.Close()
 		var mats []map[string]interface{}
 		for matRows.Next() {
-			var mid, stockID, itemName, unit, whName string
+			var mid, stockID, variantID, variantWhID string
 			var qtyUsed float64
-			if err := matRows.Scan(&mid, &stockID, &qtyUsed, &itemName, &unit, &whName); err == nil {
-				mats = append(mats, map[string]interface{}{
-					"id": mid, "raw_material_stock_id": stockID, "quantity_used": qtyUsed,
-					"item_name": itemName, "unit": unit, "warehouse_name": whName,
-				})
+			var rmItemName, rmUnit, rmWhName string
+			var variantCode, variantName, productName, variantWhName string
+			if err := matRows.Scan(&mid, &stockID, &variantID, &variantWhID, &qtyUsed,
+				&rmItemName, &rmUnit, &rmWhName,
+				&variantCode, &variantName, &productName, &variantWhName); err == nil {
+				mat := map[string]interface{}{
+					"id":            mid,
+					"quantity_used": qtyUsed,
+				}
+				if variantID != "" {
+					mat["variant_id"] = variantID
+					mat["variant_code"] = variantCode
+					mat["variant_name"] = variantName
+					mat["product_name"] = productName
+					mat["item_name"] = productName + " - " + variantName
+					mat["warehouse_id"] = variantWhID
+					mat["warehouse_name"] = variantWhName
+				} else {
+					mat["raw_material_stock_id"] = stockID
+					mat["item_name"] = rmItemName
+					mat["unit"] = rmUnit
+					mat["warehouse_name"] = rmWhName
+				}
+				mats = append(mats, mat)
 			}
 		}
 		if mats == nil {

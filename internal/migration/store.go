@@ -1270,7 +1270,7 @@ func parseVyttilaXlsx(fileBytes []byte) ([]vyttilaSheet, error) {
 			if i <= headerRow {
 				continue
 			}
-			if len(row) < 5 {
+			if len(row) < 8 {
 				continue
 			}
 
@@ -1283,15 +1283,21 @@ func parseVyttilaXlsx(fileBytes []byte) ([]vyttilaSheet, error) {
 				continue
 			}
 
-			sp := parseFloat(safeCol(row, 2))
-			cp := parseFloat(safeCol(row, 3))
-			qty := parseFloat(safeCol(row, 4))
-			itemDesc := strings.ToUpper(strings.TrimSpace(safeCol(row, 7)))
+			// New column layout (WITH_GST format):
+			// col1=CODE, col2=SP(with GST), col3=SP(without GST),
+			// col4=GST%, col5=GST amount, col6=CP, col7=QTY, col11=ITEM DESCRIPTION
+			priceExcl := parseFloat(safeCol(row, 3)) // SP without GST — use directly
+			cp := parseFloat(safeCol(row, 6))
+			qty := parseFloat(safeCol(row, 7))
+			itemDesc := strings.ToUpper(strings.TrimSpace(safeCol(row, 11)))
 			if itemDesc == "" {
 				itemDesc = strings.ToUpper(sheet.catName)
 			}
 
-			priceExcl := stripGST(sp)
+			if priceExcl <= 0 {
+				// fallback: strip GST from SP(with GST) if WITHOUT GST cell is empty
+				priceExcl = stripGST(parseFloat(safeCol(row, 2)))
+			}
 			if cp <= 0 {
 				cp = priceExcl
 			}
