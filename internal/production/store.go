@@ -140,16 +140,11 @@ func (s *Store) CreateProductionOrder(in CreateProductionOrderInput, userID, bra
 		if m.QuantityUsed <= 0 {
 			continue
 		}
-		if m.VariantCode != "" {
-			var variantID string
-			err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, m.VariantCode).Scan(&variantID)
-			if err != nil {
-				return "", fmt.Errorf("variant not found for code %s: %w", m.VariantCode, err)
-			}
+		if m.VariantID != "" {
 			_, err = tx.Exec(`
 				INSERT INTO production_materials (production_order_id, variant_id, variant_warehouse_id, quantity_used)
 				VALUES ($1,$2,$3,$4)
-			`, prodID, variantID, m.WarehouseID, m.QuantityUsed)
+			`, prodID, nilIfEmpty(m.VariantID), nilIfEmpty(m.WarehouseID), m.QuantityUsed)
 		} else {
 			_, err = tx.Exec(`
 				INSERT INTO production_materials (production_order_id, raw_material_stock_id, quantity_used)
@@ -421,6 +416,7 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 			       po.output_variant_id, po.output_quantity, po.status,
 			       po.notes, po.started_at, po.completed_at, po.created_by, po.created_at,
 			       COALESCE(p.name,'') AS product_name, COALESCE(v.sku,'') AS sku,
+			       COALESCE(v.name,'') AS variant_name,
 			       COALESCE(b.name,'') AS branch_name,
 			       COALESCE(u.name,'') AS created_by_name
 			FROM production_orders po
@@ -438,6 +434,7 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 			       po.output_variant_id, po.output_quantity, po.status,
 			       po.notes, po.started_at, po.completed_at, po.created_by, po.created_at,
 			       COALESCE(p.name,'') AS product_name, COALESCE(v.sku,'') AS sku,
+			       COALESCE(v.name,'') AS variant_name,
 			       COALESCE(b.name,'') AS branch_name,
 			       COALESCE(u.name,'') AS created_by_name
 			FROM production_orders po
@@ -459,16 +456,16 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 	var list []map[string]interface{}
 	for rows.Next() {
 		var (
-			id, prodNum, whID, outputVID, st, notes, createdBy string
-			productName, sku, branchName, createdByName        string
-			outputQty                                          float64
-			branchIDVal                                        sql.NullString
-			startedAt, completedAt, createdAt                  sql.NullTime
+			id, prodNum, whID, outputVID, st, notes, createdBy       string
+			productName, sku, variantName, branchName, createdByName string
+			outputQty                                                float64
+			branchIDVal                                              sql.NullString
+			startedAt, completedAt, createdAt                        sql.NullTime
 		)
 		if err := rows.Scan(&id, &prodNum, &branchIDVal, &whID,
 			&outputVID, &outputQty, &st,
 			&notes, &startedAt, &completedAt, &createdBy, &createdAt,
-			&productName, &sku, &branchName, &createdByName); err != nil {
+			&productName, &sku, &variantName, &branchName, &createdByName); err != nil {
 			return nil, 0, err
 		}
 		item := map[string]interface{}{
@@ -480,6 +477,7 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 			"output_variant_id": outputVID,
 			"output_quantity":   outputQty,
 			"product_name":      productName,
+			"variant_name":      variantName,
 			"sku":               sku,
 			"status":            st,
 			"notes":             notes,
@@ -548,38 +546,70 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		result["completed_at"] = completedAt.Time
 	}
 
-	// Output product info
-	var productName, sku string
+	// Output product/variant info
+	var productName, variantName, sku string
 	if err := s.db.QueryRow(`
-		SELECT COALESCE(p.name,''), COALESCE(v.sku,'')
+		SELECT COALESCE(p.name,''), COALESCE(v.name,''), COALESCE(v.sku,'')
 		FROM variants v JOIN products p ON p.id = v.product_id
 		WHERE v.id = $1
-	`, outputVID).Scan(&productName, &sku); err == nil {
+	`, outputVID).Scan(&productName, &variantName, &sku); err == nil {
 		result["output_product_name"] = productName
+		result["output_variant_name"] = variantName
 		result["output_sku"] = sku
 	}
 
 	// Materials
 	matRows, err := s.db.Query(`
-		SELECT pm.id, pm.raw_material_stock_id, pm.quantity_used,
-		       rms.item_name, COALESCE(rms.unit,'') AS unit,
-		       COALESCE(w.name,'') AS warehouse_name
+		SELECT pm.id,
+		       COALESCE(pm.raw_material_stock_id::text, '') AS raw_material_stock_id,
+		       COALESCE(pm.variant_id::text, '')            AS variant_id,
+		       COALESCE(pm.variant_warehouse_id::text, '')  AS variant_warehouse_id,
+		       pm.quantity_used,
+		       COALESCE(rms.item_name, '')  AS rm_item_name,
+		       COALESCE(rms.unit, '')       AS rm_unit,
+		       COALESCE(rmw.name, '')       AS rm_warehouse_name,
+		       COALESCE(v.variant_code, '') AS variant_code,
+		       COALESCE(v.name, '')         AS variant_name,
+		       COALESCE(p.name, '')         AS product_name,
+		       COALESCE(vw.name, '')        AS variant_warehouse_name
 		FROM production_materials pm
 		LEFT JOIN raw_material_stocks rms ON rms.id = pm.raw_material_stock_id
-		LEFT JOIN warehouses w ON w.id = rms.warehouse_id
+		LEFT JOIN warehouses rmw ON rmw.id = rms.warehouse_id
+		LEFT JOIN variants v   ON v.id = pm.variant_id
+		LEFT JOIN products p   ON p.id = v.product_id
+		LEFT JOIN warehouses vw ON vw.id = pm.variant_warehouse_id
 		WHERE pm.production_order_id = $1
 	`, id)
 	if err == nil {
 		defer matRows.Close()
 		var mats []map[string]interface{}
 		for matRows.Next() {
-			var mid, stockID, itemName, unit, whName string
+			var mid, stockID, variantID, variantWhID string
 			var mqty float64
-			if err := matRows.Scan(&mid, &stockID, &mqty, &itemName, &unit, &whName); err == nil {
-				mats = append(mats, map[string]interface{}{
-					"id": mid, "raw_material_stock_id": stockID, "quantity_used": mqty,
-					"item_name": itemName, "unit": unit, "warehouse_name": whName,
-				})
+			var rmItemName, rmUnit, rmWhName string
+			var variantCode, variantName, productName, variantWhName string
+			if err := matRows.Scan(&mid, &stockID, &variantID, &variantWhID, &mqty,
+				&rmItemName, &rmUnit, &rmWhName,
+				&variantCode, &variantName, &productName, &variantWhName); err == nil {
+				mat := map[string]interface{}{
+					"id":            mid,
+					"quantity_used": mqty,
+				}
+				if variantID != "" {
+					mat["variant_id"] = variantID
+					mat["variant_code"] = variantCode
+					mat["variant_name"] = variantName
+					mat["product_name"] = productName
+					mat["item_name"] = productName + " - " + variantName
+					mat["warehouse_id"] = variantWhID
+					mat["warehouse_name"] = variantWhName
+				} else {
+					mat["raw_material_stock_id"] = stockID
+					mat["item_name"] = rmItemName
+					mat["unit"] = rmUnit
+					mat["warehouse_name"] = rmWhName
+				}
+				mats = append(mats, mat)
 			}
 		}
 		if mats == nil {
