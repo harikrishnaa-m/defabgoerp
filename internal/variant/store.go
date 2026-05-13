@@ -426,15 +426,17 @@ func (s *Store) GetByCode(code string) (map[string]interface{}, error) {
 // ================= SEARCH =================
 //
 
-func (s *Store) Search(query string) ([]map[string]interface{}, error) {
+func (s *Store) Search(query, warehouseID string) ([]map[string]interface{}, error) {
 	q := "%" + strings.ToLower(query) + "%"
 
 	rows, err := s.db.Query(`
 		SELECT v.id, v.variant_code, v.name, v.sku, COALESCE(v.barcode, ''),
 		       v.price, v.cost_price,
-		       v.is_active, p.id AS product_id, p.name AS product_name
+		       v.is_active, p.id AS product_id, p.name AS product_name,
+		       COALESCE(SUM(st.quantity), 0) AS stock_quantity
 		FROM variants v
 		JOIN products p ON p.id = v.product_id
+		LEFT JOIN stocks st ON st.variant_id = v.id AND ($2 = '' OR st.warehouse_id::text = $2)
 		WHERE v.is_active = true
 		  AND (
 		      LOWER(v.sku) LIKE $1
@@ -442,9 +444,10 @@ func (s *Store) Search(query string) ([]map[string]interface{}, error) {
 		   OR LOWER(p.name) LIKE $1
 		   OR CAST(v.variant_code AS TEXT) LIKE $1
 		  )
+		GROUP BY v.id, v.variant_code, v.name, v.sku, v.barcode, v.price, v.cost_price, v.is_active, p.id, p.name
 		ORDER BY v.variant_code
 		LIMIT 50
-	`, q)
+	`, q, warehouseID)
 	if err != nil {
 		return nil, err
 	}
@@ -454,22 +457,23 @@ func (s *Store) Search(query string) ([]map[string]interface{}, error) {
 	for rows.Next() {
 		var id, name, sku, barcode, productID, productName string
 		var variantCode int
-		var price, costPrice float64
+		var price, costPrice, stockQty float64
 		var isActive bool
-		if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode, &price, &costPrice, &isActive, &productID, &productName); err != nil {
+		if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode, &price, &costPrice, &isActive, &productID, &productName, &stockQty); err != nil {
 			return nil, err
 		}
 		out = append(out, map[string]interface{}{
-			"id":           id,
-			"variant_code": variantCode,
-			"name":         name,
-			"sku":          sku,
-			"barcode":      barcode,
-			"price":        price,
-			"cost_price":   costPrice,
-			"is_active":    isActive,
-			"product_id":   productID,
-			"product_name": productName,
+			"id":             id,
+			"variant_code":   variantCode,
+			"name":           name,
+			"sku":            sku,
+			"barcode":        barcode,
+			"price":          price,
+			"cost_price":     costPrice,
+			"is_active":      isActive,
+			"product_id":     productID,
+			"product_name":   productName,
+			"stock_quantity": stockQty,
 		})
 	}
 	return out, nil
