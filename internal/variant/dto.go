@@ -6,6 +6,7 @@ type CreateVariantInput struct {
 	Price       float64 `json:"price"`
 	CostPrice   float64 `json:"cost_price"`
 	VariantCode *int    `json:"variant_code"`
+	HSNCode     string  `json:"hsn_code"`
 
 	AttributeValueIDs []string `json:"attribute_value_ids"`
 	ImagePaths        []string `json:"image_paths"`

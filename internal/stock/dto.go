@@ -34,6 +34,7 @@ type QuickAddInput struct {
 	VariantName string  `json:"variant_name"`
 	Price       float64 `json:"price"`
 	CostPrice   float64 `json:"cost_price"`
+	HSNCode     string  `json:"hsn_code"`
 
 	// Stock
 	WarehouseID string          `json:"warehouse_id"`
