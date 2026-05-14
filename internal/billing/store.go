@@ -46,7 +46,16 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 	if err != nil {
 		ist = time.FixedZone("IST", 5*60*60+30*60) // fallback
 	}
-	now := time.Now().In(ist)
+	var now time.Time
+	if in.Date != "" {
+		parsed, parseErr := time.ParseInLocation("2006-01-02", in.Date, ist)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid date format, expected YYYY-MM-DD: %w", parseErr)
+		}
+		now = parsed
+	} else {
+		now = time.Now().In(ist)
+	}
 
 	// ──────────────────────────────────────────
 	// 1. Find or create customer

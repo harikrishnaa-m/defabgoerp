@@ -61,19 +61,36 @@ func (s *Store) Create(in CreateVariantInput) (string, string, int, error) {
 	var id string
 	var variantCode int
 
-	err = tx.QueryRow(`
-	INSERT INTO variants
-	(product_id,name,sku,price,cost_price,barcode)
-	VALUES ($1,$2,$3,$4,$5,$6)
-	RETURNING id, variant_code
-	`,
-		in.ProductID,
-		in.Name,
-		sku,
-		in.Price,
-		in.CostPrice,
-		sku,
-	).Scan(&id, &variantCode)
+	if in.VariantCode != nil {
+		err = tx.QueryRow(`
+		INSERT INTO variants
+		(product_id,name,sku,price,cost_price,barcode,variant_code)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		RETURNING id, variant_code
+		`,
+			in.ProductID,
+			in.Name,
+			sku,
+			in.Price,
+			in.CostPrice,
+			sku,
+			*in.VariantCode,
+		).Scan(&id, &variantCode)
+	} else {
+		err = tx.QueryRow(`
+		INSERT INTO variants
+		(product_id,name,sku,price,cost_price,barcode)
+		VALUES ($1,$2,$3,$4,$5,$6)
+		RETURNING id, variant_code
+		`,
+			in.ProductID,
+			in.Name,
+			sku,
+			in.Price,
+			in.CostPrice,
+			sku,
+		).Scan(&id, &variantCode)
+	}
 
 	if err != nil {
 		return "", "", 0, err
@@ -185,12 +202,14 @@ func (s *Store) Update(id string, in UpdateVariantInput) error {
 	UPDATE variants SET
 	name = COALESCE($1,name),
 	price = COALESCE($2,price),
-	cost_price = COALESCE($3,cost_price)
-	WHERE id=$4
+	cost_price = COALESCE($3,cost_price),
+	variant_code = COALESCE($4,variant_code)
+	WHERE id=$5
 	`,
 		in.Name,
 		in.Price,
 		in.CostPrice,
+		in.VariantCode,
 		id,
 	)
 	if err != nil {

@@ -38,4 +38,7 @@ type CreateBillInput struct {
 	BillDiscountType string  `json:"bill_discount_type"` // "flat" or "percent" (defaults to "flat")
 
 	Notes string `json:"notes"`
+
+	// Optional: override invoice/order date. Format: "2006-01-02". Defaults to today.
+	Date string `json:"date"`
 }

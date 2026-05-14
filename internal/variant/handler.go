@@ -27,14 +27,23 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	price, _ := strconv.ParseFloat(priceStr, 64)
 	costPrice, _ := strconv.ParseFloat(costPriceStr, 64)
 
+	var variantCodeInput *int
+	if vcStr := c.FormValue("variant_code"); vcStr != "" {
+		vc, err := strconv.Atoi(vcStr)
+		if err == nil {
+			variantCodeInput = &vc
+		}
+	}
+
 	form, _ := c.MultipartForm()
 	if form == nil {
 		// no multipart form — continue with empty collections
 		in := CreateVariantInput{
-			ProductID: productID,
-			Name:      name,
-			Price:     price,
-			CostPrice: costPrice,
+			ProductID:   productID,
+			Name:        name,
+			Price:       price,
+			CostPrice:   costPrice,
+			VariantCode: variantCodeInput,
 		}
 		id, sku, variantCode, err := h.store.Create(in)
 		if err != nil {
@@ -91,6 +100,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		Name:              name,
 		Price:             price,
 		CostPrice:         costPrice,
+		VariantCode:       variantCodeInput,
 		AttributeValueIDs: cleanAttrIDs,
 		ImagePaths:        imagePaths,
 	}
@@ -257,6 +267,13 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 			}
 		}
 		fmt.Println("Update: attribute_value_ids =", in.AttributeValueIDs)
+
+		if v := c.FormValue("variant_code"); v != "" {
+			vc, err := strconv.Atoi(v)
+			if err == nil {
+				in.VariantCode = &vc
+			}
+		}
 
 		// Handle new image uploads
 		files := form.File["images"]
