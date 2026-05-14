@@ -64,8 +64,8 @@ func (s *Store) Create(in CreateVariantInput) (string, string, int, error) {
 	if in.VariantCode != nil {
 		err = tx.QueryRow(`
 		INSERT INTO variants
-		(product_id,name,sku,price,cost_price,barcode,variant_code)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		(product_id,name,sku,price,cost_price,barcode,variant_code,hsn_code)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
 		RETURNING id, variant_code
 		`,
 			in.ProductID,
@@ -75,12 +75,13 @@ func (s *Store) Create(in CreateVariantInput) (string, string, int, error) {
 			in.CostPrice,
 			sku,
 			*in.VariantCode,
+			in.HSNCode,
 		).Scan(&id, &variantCode)
 	} else {
 		err = tx.QueryRow(`
 		INSERT INTO variants
-		(product_id,name,sku,price,cost_price,barcode)
-		VALUES ($1,$2,$3,$4,$5,$6)
+		(product_id,name,sku,price,cost_price,barcode,hsn_code)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		RETURNING id, variant_code
 		`,
 			in.ProductID,
@@ -89,6 +90,7 @@ func (s *Store) Create(in CreateVariantInput) (string, string, int, error) {
 			in.Price,
 			in.CostPrice,
 			sku,
+			in.HSNCode,
 		).Scan(&id, &variantCode)
 	}
 
