@@ -192,7 +192,8 @@ func (s *Store) LowStock(threshold int) (*sql.Rows, error) {
 		v.name AS variant,
 		v.variant_code,
 		w.name AS warehouse,
-		s.quantity
+		s.quantity,
+		COALESCE(v.hsn_code, '') AS hsn_code
 	FROM stocks s
 	JOIN variants v ON v.id = s.variant_id
 	JOIN products p ON p.id = v.product_id
@@ -209,7 +210,8 @@ func (s *Store) LowStockByBranch(threshold int, branchID string) (*sql.Rows, err
 		v.name AS variant,
 		v.variant_code,
 		w.name AS warehouse,
-		s.quantity
+		s.quantity,
+		COALESCE(v.hsn_code, '') AS hsn_code
 	FROM stocks s
 	JOIN variants v ON v.id = s.variant_id
 	JOIN products p ON p.id = v.product_id
@@ -228,7 +230,8 @@ func (s *Store) GetAll(variantCode string, limit, offset int) (*sql.Rows, error)
 					p.id, p.name,
 					v.id, v.variant_code, v.name, v.sku,
 					w.id, w.name,
-					s.quantity
+					s.quantity,
+					COALESCE(v.hsn_code, '') AS hsn_code
 				FROM stocks s
 				JOIN variants v   ON v.id = s.variant_id
 				JOIN products p   ON p.id = v.product_id
@@ -244,7 +247,8 @@ func (s *Store) GetAll(variantCode string, limit, offset int) (*sql.Rows, error)
 				p.id, p.name,
 				v.id, v.variant_code, v.name, v.sku,
 				w.id, w.name,
-				s.quantity
+				s.quantity,
+				COALESCE(v.hsn_code, '') AS hsn_code
 			FROM stocks s
 			JOIN variants v   ON v.id = s.variant_id
 			JOIN products p   ON p.id = v.product_id
@@ -260,7 +264,8 @@ func (s *Store) GetAll(variantCode string, limit, offset int) (*sql.Rows, error)
 				p.id, p.name,
 				v.id, v.variant_code, v.name, v.sku,
 				w.id, w.name,
-				s.quantity
+				s.quantity,
+				COALESCE(v.hsn_code, '') AS hsn_code
 			FROM stocks s
 			JOIN variants v   ON v.id = s.variant_id
 			JOIN products p   ON p.id = v.product_id
@@ -275,7 +280,8 @@ func (s *Store) GetAll(variantCode string, limit, offset int) (*sql.Rows, error)
 			p.id, p.name,
 			v.id, v.variant_code, v.name, v.sku,
 			w.id, w.name,
-			s.quantity
+			s.quantity,
+			COALESCE(v.hsn_code, '') AS hsn_code
 		FROM stocks s
 		JOIN variants v   ON v.id = s.variant_id
 		JOIN products p   ON p.id = v.product_id
@@ -293,7 +299,8 @@ func (s *Store) GetAllByBranch(branchID, variantCode string, limit, offset int) 
 					p.id, p.name,
 					v.id, v.variant_code, v.name, v.sku,
 					w.id, w.name,
-					s.quantity
+					s.quantity,
+					COALESCE(v.hsn_code, '') AS hsn_code
 				FROM stocks s
 				JOIN variants v   ON v.id = s.variant_id
 				JOIN products p   ON p.id = v.product_id
@@ -309,7 +316,8 @@ func (s *Store) GetAllByBranch(branchID, variantCode string, limit, offset int) 
 				p.id, p.name,
 				v.id, v.variant_code, v.name, v.sku,
 				w.id, w.name,
-				s.quantity
+				s.quantity,
+				COALESCE(v.hsn_code, '') AS hsn_code
 			FROM stocks s
 			JOIN variants v   ON v.id = s.variant_id
 			JOIN products p   ON p.id = v.product_id
@@ -325,7 +333,8 @@ func (s *Store) GetAllByBranch(branchID, variantCode string, limit, offset int) 
 				p.id, p.name,
 				v.id, v.variant_code, v.name, v.sku,
 				w.id, w.name,
-				s.quantity
+				s.quantity,
+				COALESCE(v.hsn_code, '') AS hsn_code
 			FROM stocks s
 			JOIN variants v   ON v.id = s.variant_id
 			JOIN products p   ON p.id = v.product_id
@@ -341,7 +350,8 @@ func (s *Store) GetAllByBranch(branchID, variantCode string, limit, offset int) 
 			p.id, p.name,
 			v.id, v.variant_code, v.name, v.sku,
 			w.id, w.name,
-			s.quantity
+			s.quantity,
+			COALESCE(v.hsn_code, '') AS hsn_code
 		FROM stocks s
 		JOIN variants v   ON v.id = s.variant_id
 		JOIN products p   ON p.id = v.product_id
@@ -685,10 +695,10 @@ func (s *Store) QuickAdd(in QuickAddInput) (QuickAddResult, error) {
 	var variantID string
 	var assignedCode int
 	err = tx.QueryRow(`
-		INSERT INTO variants (product_id, name, sku, price, cost_price, barcode, variant_code)
-		VALUES ($1, $2, $3, $4, $5, $3, $6)
+		INSERT INTO variants (product_id, name, sku, price, cost_price, barcode, variant_code, hsn_code)
+		VALUES ($1, $2, $3, $4, $5, $3, $6, $7)
 		RETURNING id, variant_code
-	`, productID, in.VariantName, sku, in.Price, in.CostPrice, in.VariantCode,
+	`, productID, in.VariantName, sku, in.Price, in.CostPrice, in.VariantCode, in.HSNCode,
 	).Scan(&variantID, &assignedCode)
 	if err != nil {
 		return QuickAddResult{}, fmt.Errorf("create variant: %w", err)

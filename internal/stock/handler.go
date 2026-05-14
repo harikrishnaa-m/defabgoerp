@@ -286,8 +286,9 @@ func (h *Handler) LowStock(c *fiber.Ctx) error {
 		var product, variant, warehouse string
 		var variantCode int
 		var qty decimal.Decimal
+		var hsnCode string
 
-		rows.Scan(&product, &variant, &variantCode, &warehouse, &qty)
+		rows.Scan(&product, &variant, &variantCode, &warehouse, &qty, &hsnCode)
 
 		out = append(out, fiber.Map{
 			"product":      product,
@@ -295,6 +296,7 @@ func (h *Handler) LowStock(c *fiber.Ctx) error {
 			"variant_code": variantCode,
 			"warehouse":    warehouse,
 			"quantity":     qty,
+			"hsn_code":     hsnCode,
 		})
 	}
 
@@ -363,6 +365,7 @@ func (h *Handler) All(c *fiber.Ctx) error {
 			vname, sku  string
 			wid, wname  string
 			qty         decimal.Decimal
+			hsnCode     string
 		)
 
 		if err := rows.Scan(
@@ -371,6 +374,7 @@ func (h *Handler) All(c *fiber.Ctx) error {
 			&vid, &variantCode, &vname, &sku,
 			&wid, &wname,
 			&qty,
+			&hsnCode,
 		); err != nil {
 			return httperr.Internal(c)
 		}
@@ -378,7 +382,7 @@ func (h *Handler) All(c *fiber.Ctx) error {
 		data = append(data, fiber.Map{
 			"id":        stockID,
 			"product":   fiber.Map{"id": pid, "name": pname},
-			"variant":   fiber.Map{"id": vid, "variant_code": variantCode, "name": vname, "sku": sku},
+			"variant":   fiber.Map{"id": vid, "variant_code": variantCode, "name": vname, "sku": sku, "hsn_code": hsnCode},
 			"warehouse": fiber.Map{"id": wid, "name": wname},
 			"quantity":  qty,
 		})
