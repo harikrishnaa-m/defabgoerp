@@ -862,12 +862,18 @@ func detectColumns(allRows [][]string) *colLayout {
 				layout.codeIdx = j
 			// "MRP EXCLUDING GST", "NEW MRP EXCLUDING GST", "MRP EXCLUSING GST" (typo)
 			case strings.Contains(upper, "MRP") && strings.Contains(upper, "EXCL"):
-				layout.mrpExclGstIdx = j
+				if layout.mrpExclGstIdx < 0 { // first occurrence wins
+					layout.mrpExclGstIdx = j
+				}
 			case strings.HasPrefix(upper, "MRP") && !strings.Contains(upper, "EXCL"):
-				layout.mrpIdx = j
+				if layout.mrpIdx < 0 { // first occurrence wins — prevents last-col "MRP" override
+					layout.mrpIdx = j
+				}
 			case strings.Contains(upper, "MRP") && !strings.Contains(upper, "EXCL") && !strings.HasPrefix(upper, "MRP"):
 				// e.g. "Mrp" not starting with MRP after uppercasing — already covered above
-				layout.mrpIdx = j
+				if layout.mrpIdx < 0 {
+					layout.mrpIdx = j
+				}
 			case upper == "QTY":
 				layout.qtyIdx = j
 			}
@@ -909,6 +915,8 @@ func parseFloat(s string) float64 {
 	if s == "" {
 		return 0
 	}
+	// strip thousands separator so "1,775" parses as 1775, not 1
+	s = strings.ReplaceAll(s, ",", "")
 	var v float64
 	fmt.Sscanf(s, "%f", &v)
 	return v

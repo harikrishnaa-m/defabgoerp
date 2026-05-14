@@ -1,184 +1,228 @@
+"""
+verify_vyttila_import.py
+
+Mirrors parseVyttilaXlsx (store.go) exactly, then cross-checks against DB.
+Column layout (WITH_GST format):
+  col1=CODE, col2=SP(with GST)→variants.price, col3=SP(without GST),
+  col4=GST%, col5=GST amount, col6=CP→variants.cost_price, col7=QTY, col11=ITEM DESC
+Key: (cat_name, item_desc_upper, code)  — composite, not just code alone.
+"""
+
+import sys
+import math
+from collections import defaultdict
 import openpyxl
 import psycopg2
 
-# DB connection
-conn = psycopg2.connect(
-    host='aws-1-ap-southeast-1.pooler.supabase.com',
+XLSX_PATH = (sys.argv[1] if len(sys.argv) > 1
+             else r'd:\QMark\defab_erp_backend\internal\migration\Defab Vyttila\LATEST_STOCK_MAY2026_WITH_GST.xlsx')
+BRANCH_NAME = "DEFAB Vyttila"
+
+DB = dict(
+    host="aws-1-ap-south-1.pooler.supabase.com",
     port=6543,
-    user='postgres.erjlvvznszwlxqdiduhq',
-    password='ttH1TANuubY3JoMb',
-    dbname='postgres',
-    sslmode='require'
+    user="postgres.zhatpmhkegzyrrmtdzhm",
+    password="Defab_staging_123",
+    dbname="postgres",
+    sslmode="require",
 )
-cur = conn.cursor()
 
-# Get Vyttila warehouse ID
-cur.execute("SELECT w.id, w.name, b.name FROM warehouses w JOIN branches b ON b.id = w.branch_id WHERE b.name ILIKE '%vyttila%'")
-warehouses = cur.fetchall()
-print('Vyttila warehouses:', warehouses)
-
-if not warehouses:
-    print('ERROR: No Vyttila warehouse found!')
-    conn.close()
-    exit()
-
-wh_id = warehouses[0][0]
-print('Using warehouse:', warehouses[0])
+print(f"Excel: {XLSX_PATH}")
+print(f"Branch: {BRANCH_NAME}")
 print()
 
-# Get all stock for this warehouse from DB
-cur.execute("""
-    SELECT 
-        v.variant_code,
-        v.name as variant_name,
-        v.price,
-        v.cost_price,
-        p.name as product_name,
-        c.name as category_name,
-        s.quantity
-    FROM stocks s
-    JOIN variants v ON v.id = s.variant_id
-    JOIN products p ON p.id = v.product_id
-    JOIN categories c ON c.id = p.category_id
-    WHERE s.warehouse_id = %s
-    ORDER BY c.name, v.variant_code
-""", (wh_id,))
-db_rows = cur.fetchall()
-print('Total DB stock rows for Vyttila:', len(db_rows))
+# ── Helpers ──────────────────────────────────────────────────────────────────
+def safe_col(row, idx):
+    if idx < len(row) and row[idx] is not None:
+        return str(row[idx]).strip()
+    return ""
 
-# Build DB lookup: variant_code -> dict
-db_map = {}
-for row in db_rows:
-    code = row[0]
-    db_map[code] = {
-        'variant_name': row[1],
-        'price': float(row[2]) if row[2] else 0,
-        'cost_price': float(row[3]) if row[3] else 0,
-        'product': row[4],
-        'category': row[5],
-        'qty': float(row[6]) if row[6] else 0
-    }
+def parse_float(s):
+    s = str(s).strip().replace(",", "").replace("₹", "").replace(" ", "")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
 
-# Parse Excel
-excel_path = r'd:\QMark\defab_erp_backend\internal\migration\Defab Vyttila\LATEST_STOCK_MAY2026_WITH_GST.xlsx'
-wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+# ── Parse Excel (exact mirror of parseVyttilaXlsx) ───────────────────────────
+print("[1] Parsing Excel...")
+wb = openpyxl.load_workbook(XLSX_PATH, read_only=True, data_only=True)
+variant_map = {}   # (cat_name, item_upper, code) → {price, cost_price, qty}
+skipped = []
 
-excel_map = {}
-excel_total_qty = 0
-for sname in wb.sheetnames:
-    ws = wb[sname]
-    all_rows = list(ws.iter_rows(values_only=True))
+for sheet_name in wb.sheetnames:
+    ws = wb[sheet_name]
+    all_rows = list(ws.values)
+
     header_row = -1
     for i, row in enumerate(all_rows[:3]):
-        if len(row) > 1 and row[1] is not None and str(row[1]).strip().upper() == 'CODE':
+        if len(row) > 1 and str(row[1] or "").strip().upper() == "CODE":
             header_row = i
             break
     if header_row < 0:
+        skipped.append(sheet_name)
         continue
-    sheet_count = 0
-    for i, row in enumerate(all_rows):
-        if i <= header_row or len(row) < 8:
+
+    cat_name = sheet_name.strip()
+    seen = {}   # (code, item) → entry dict
+
+    for row in all_rows[header_row + 1:]:
+        if len(row) < 8:
             continue
-        code = row[1]
-        if code is None:
+        code_str = safe_col(row, 1)
+        if not code_str:
             continue
-        try:
-            code_int = int(float(str(code)))
-        except:
+        code = int(parse_float(code_str))
+        if code == 0:
             continue
-        if code_int == 0:
-            continue
-        sp_excl = float(row[3]) if row[3] else 0
-        cp = float(row[6]) if row[6] else 0
-        qty = float(row[7]) if row[7] else 0
-        item_desc = str(row[11]).strip().upper() if row[11] else sname.upper()
-        if cp <= 0:
-            cp = sp_excl
-        if code_int in excel_map:
-            excel_map[code_int]['qty'] += qty
+
+        price_incl = parse_float(safe_col(row, 2))   # SP WITH GST → variants.price
+        price_excl = parse_float(safe_col(row, 3))   # SP without GST
+        cp         = parse_float(safe_col(row, 6))   # CP → variants.cost_price
+        qty        = parse_float(safe_col(row, 7))
+        item_desc  = safe_col(row, 11).strip().upper()
+        if not item_desc:
+            item_desc = cat_name.upper()
+
+        if price_incl <= 0:
+            price_incl = price_excl
+        cost_price = cp if cp > 0 else (price_excl if price_excl > 0 else price_incl)
+
+        k = (code, item_desc)
+        if k in seen:
+            seen[k]["qty"] += qty
         else:
-            excel_map[code_int] = {
-                'price': round(sp_excl, 2),
-                'cp': round(cp, 2),
-                'qty': qty,
-                'category': sname,
-                'item': item_desc
-            }
-        excel_total_qty += qty
-        sheet_count += 1
-    print(f'  Sheet: {sname} -> {sheet_count} rows')
+            seen[k] = {"price": price_incl, "cost_price": cost_price, "qty": qty}
+
+    sheet_total = 0
+    for (code, item_desc), data in seen.items():
+        vkey = (cat_name, item_desc, code)
+        if vkey in variant_map:
+            variant_map[vkey]["qty"] += data["qty"]
+        else:
+            variant_map[vkey] = {"price": data["price"], "cost_price": data["cost_price"], "qty": round(data["qty"]*100)/100}
+        sheet_total += 1
+
+    print(f"  Sheet {sheet_name!r:<35} → {sheet_total} unique codes")
 
 wb.close()
+if skipped:
+    print(f"  Skipped (no CODE header): {skipped}")
+print(f"  Total Excel variants: {len(variant_map)}")
 
-print(f'\nExcel unique codes: {len(excel_map)}')
-print(f'Excel total qty: {excel_total_qty}')
-print()
+# Per-category Excel summary
+cat_ex = defaultdict(lambda: {"v": 0, "qty": 0.0})
+for (cat, item, code), d in variant_map.items():
+    cat_ex[cat]["v"] += 1
+    cat_ex[cat]["qty"] += d["qty"]
+print("\n  Per-category (Excel):")
+for cat in sorted(cat_ex):
+    print(f"    {cat:<40} variants={cat_ex[cat]['v']:>5}  total_qty={cat_ex[cat]['qty']:>10.2f}")
 
-# Compare
-price_mismatches = []
-cp_mismatches = []
-qty_mismatches = []
-missing_in_db = []
-in_db_not_excel = []
+# ── DB Query ─────────────────────────────────────────────────────────────────
+print("\n[2] Querying DB...")
+conn = psycopg2.connect(**DB)
+cur = conn.cursor()
 
-for code, ex in excel_map.items():
-    if code not in db_map:
-        missing_in_db.append((code, ex['item'], ex['category']))
-    else:
-        db = db_map[code]
-        # Price check (allow 0.1 rounding tolerance)
-        if abs(ex['price'] - db['price']) > 0.1:
-            price_mismatches.append((code, ex['price'], db['price'], ex['item']))
-        if abs(ex['cp'] - db['cost_price']) > 0.1:
-            cp_mismatches.append((code, ex['cp'], db['cost_price'], ex['item']))
-        if abs(ex['qty'] - db['qty']) > 0.01:
-            qty_mismatches.append((code, ex['qty'], db['qty'], ex['item']))
+cur.execute("SELECT id FROM branches WHERE LOWER(name) = LOWER(%s)", (BRANCH_NAME,))
+row = cur.fetchone()
+if not row:
+    print(f"ERROR: Branch '{BRANCH_NAME}' not found"); sys.exit(1)
+branch_id = row[0]
+print(f"  Branch ID : {branch_id}")
 
-for code in db_map:
-    if code not in excel_map:
-        db = db_map[code]
-        in_db_not_excel.append((code, db['product'], db['category']))
+cur.execute("SELECT id FROM warehouses WHERE branch_id = %s", (branch_id,))
+row = cur.fetchone()
+if not row:
+    print(f"ERROR: No warehouse found"); sys.exit(1)
+wh_id = row[0]
+print(f"  Warehouse : {wh_id}")
 
-print('=' * 60)
-print(f'Missing in DB (in Excel but not in DB): {len(missing_in_db)}')
-print(f'Extra in DB (in DB but not in Excel): {len(in_db_not_excel)}')
-print(f'Price mismatches: {len(price_mismatches)}')
-print(f'CP mismatches: {len(cp_mismatches)}')
-print(f'QTY mismatches: {len(qty_mismatches)}')
-print('=' * 60)
+cur.execute("""
+    SELECT c.name, p.name, v.variant_code, v.price, v.cost_price, s.quantity
+    FROM variants v
+    JOIN products p ON p.id = v.product_id
+    JOIN categories c ON c.id = p.category_id
+    JOIN stocks s ON s.variant_id = v.id AND s.warehouse_id = %s
+    ORDER BY c.name, p.name, v.variant_code
+""", (wh_id,))
 
-if missing_in_db:
-    print('\nMissing in DB:')
-    for c, item, cat in missing_in_db[:20]:
-        print(f'  code={c}  item={item}  sheet={cat}')
-
-if in_db_not_excel:
-    print('\nExtra in DB (not in Excel):')
-    for c, prod, cat in in_db_not_excel[:20]:
-        print(f'  code={c}  product={prod}  category={cat}')
-
-if price_mismatches:
-    print('\nPrice mismatches (Excel vs DB):')
-    for c, ep, dp, item in price_mismatches[:20]:
-        print(f'  code={c}  item={item}  excel={ep}  db={dp}  diff={round(ep-dp,2)}')
-
-if cp_mismatches:
-    print('\nCP mismatches:')
-    for c, ep, dp, item in cp_mismatches[:20]:
-        print(f'  code={c}  item={item}  excel_cp={ep}  db_cp={dp}  diff={round(ep-dp,2)}')
-
-if qty_mismatches:
-    print('\nQTY mismatches:')
-    for c, eq, dq, item in qty_mismatches[:20]:
-        print(f'  code={c}  item={item}  excel_qty={eq}  db_qty={dq}  diff={round(eq-dq,2)}')
-
-# Summary
-all_good = (len(missing_in_db) == 0 and len(price_mismatches) == 0 and
-            len(cp_mismatches) == 0 and len(qty_mismatches) == 0)
-if all_good:
-    print('\n✅ ALL DATA MATCHES PERFECTLY!')
-else:
-    print(f'\n⚠️  Issues found — review above')
+db_map = {}
+for cat_name, item_name, code, price, cost_price, qty in cur.fetchall():
+    vkey = (cat_name.strip(), item_name.strip().upper(), int(code))
+    db_map[vkey] = {"price": float(price or 0), "cost_price": float(cost_price or 0), "qty": float(qty or 0)}
 
 cur.close()
 conn.close()
+print(f"  Total DB variants: {len(db_map)}")
+
+cat_db = defaultdict(lambda: {"v": 0, "qty": 0.0})
+for (cat, item, code), d in db_map.items():
+    cat_db[cat]["v"] += 1
+    cat_db[cat]["qty"] += d["qty"]
+print("\n  Per-category (DB):")
+for cat in sorted(cat_db):
+    print(f"    {cat:<40} variants={cat_db[cat]['v']:>5}  total_qty={cat_db[cat]['qty']:>10.2f}")
+
+# ── Compare ───────────────────────────────────────────────────────────────────
+print("\n[3] Comparing...")
+excel_keys = set(variant_map.keys())
+db_keys    = set(db_map.keys())
+
+missing_in_db  = sorted(excel_keys - db_keys)
+extra_in_db    = sorted(db_keys - excel_keys)
+mismatches     = []
+
+for k in sorted(excel_keys & db_keys):
+    e, d = variant_map[k], db_map[k]
+    diffs = []
+    if abs(e["price"] - d["price"]) > 0.05:
+        diffs.append(f"price: excel={e['price']:.2f}  db={d['price']:.2f}")
+    if abs(e["cost_price"] - d["cost_price"]) > 0.05:
+        diffs.append(f"cost_price: excel={e['cost_price']:.2f}  db={d['cost_price']:.2f}")
+    excel_qty = round(e["qty"]*100)/100
+    db_qty    = round(d["qty"]*100)/100
+    if abs(excel_qty - db_qty) > 0.01:
+        diffs.append(f"qty: excel={excel_qty:.2f}  db={db_qty:.2f}")
+    if diffs:
+        mismatches.append((k, diffs))
+
+# ── Report ────────────────────────────────────────────────────────────────────
+print()
+print("=" * 70)
+print("RESULTS")
+print("=" * 70)
+
+if missing_in_db:
+    print(f"\n[MISSING IN DB] {len(missing_in_db)} variants in Excel but not in DB:")
+    for (cat, item, code) in missing_in_db[:30]:
+        e = variant_map[(cat, item, code)]
+        print(f"  code={code:<6}  cat={cat!r:<30}  item={item!r:<40}  price={e['price']:.2f}  qty={e['qty']:.2f}")
+    if len(missing_in_db) > 30:
+        print(f"  ... and {len(missing_in_db)-30} more")
+
+if extra_in_db:
+    print(f"\n[EXTRA IN DB] {len(extra_in_db)} variants in DB but not in Excel:")
+    for (cat, item, code) in extra_in_db[:30]:
+        d = db_map[(cat, item, code)]
+        print(f"  code={code:<6}  cat={cat!r:<30}  item={item!r:<40}  price={d['price']:.2f}  qty={d['qty']:.2f}")
+    if len(extra_in_db) > 30:
+        print(f"  ... and {len(extra_in_db)-30} more")
+
+if mismatches:
+    print(f"\n[VALUE MISMATCHES] {len(mismatches)} variants with differing values:")
+    for (cat, item, code), diffs in mismatches[:30]:
+        print(f"  code={code:<6}  cat={cat!r:<30}  item={item!r}")
+        for diff in diffs:
+            print(f"      ↳ {diff}")
+    if len(mismatches) > 30:
+        print(f"  ... and {len(mismatches)-30} more")
+
+total_issues = len(missing_in_db) + len(extra_in_db) + len(mismatches)
+print()
+if total_issues == 0:
+    print("ALL OK — DB perfectly matches Excel.")
+else:
+    print(f"Issues found: {len(missing_in_db)} missing  |  {len(extra_in_db)} extra  |  {len(mismatches)} value mismatches")
+
+print(f"\nExcel: {len(variant_map)} variants | DB: {len(db_map)} variants | Issues: {total_issues}")
