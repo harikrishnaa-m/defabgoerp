@@ -38,8 +38,8 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	user := c.Locals("user").(*model.User)
 
 	branchID := c.Query("branch_id")
-	// StoreManager and SalesPerson are scoped to their own branch
-	if user.Role.Name == model.RoleStoreManager || user.Role.Name == model.RoleSalesPerson {
+	// SalesPerson is scoped to their own branch only
+	if user.Role.Name == model.RoleSalesPerson {
 		if user.BranchID != nil {
 			branchID = *user.BranchID
 		}
