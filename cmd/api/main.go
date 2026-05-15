@@ -327,6 +327,17 @@ func main() {
 		roleHandler,
 	)
 
+	branch.RegisterListRoute(
+		protected.Group("/branches",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		branchHandler,
+	)
+
 	branch.RegisterRoutes(
 		protected.Group("/branches",
 			middleware.RequireRole(model.RoleSuperAdmin, model.RoleAccountsManager),
@@ -350,6 +361,17 @@ func main() {
 			middleware.RequireRole(model.RoleSuperAdmin, model.RoleAccountsManager),
 		),
 		warehouseHandler,
+	)
+
+	user.RegisterListRoute(
+		protected.Group("/users",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		userHandler,
 	)
 
 	user.RegisterRoutes(
