@@ -16,6 +16,10 @@ build/
 go.work
 go.work.sum
 
+# Go local build cache
+.go-cache/
+.go-tmp/
+
 # ========================
 # Go modules cache (optional)
 # ========================
