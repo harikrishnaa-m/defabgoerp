@@ -11,7 +11,7 @@ type BillItemInput struct {
 }
 
 type PaymentInput struct {
-	Method    string  `json:"method"` // CASH, UPI, CARD, BANK_TRANSFER
+	Method    string  `json:"method"` // CASH, UPI, CARD, DEBIT_CARD, CREDIT_CARD, BANK_TRANSFER
 	Amount    float64 `json:"amount"`
 	Reference string  `json:"reference"`
 }

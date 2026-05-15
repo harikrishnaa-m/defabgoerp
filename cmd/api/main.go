@@ -70,8 +70,10 @@ import (
 
 	"defab-erp/internal/directgrn"
 	"defab-erp/internal/migration"
+	"defab-erp/internal/paymentreport"
 	"defab-erp/internal/purchasereport"
 	"defab-erp/internal/purchasereturn"
+	"defab-erp/internal/salesreport"
 	"defab-erp/internal/supplieraging"
 	"defab-erp/internal/supplieranalysis"
 	"defab-erp/internal/supplierstatement"
@@ -244,6 +246,12 @@ func main() {
 
 	purchaseReportStore := purchasereport.NewStore(database)
 	purchaseReportHandler := purchasereport.NewHandler(purchaseReportStore)
+
+	salesReportStore := salesreport.NewStore(database)
+	salesReportHandler := salesreport.NewHandler(salesReportStore)
+
+	paymentReportStore := paymentreport.NewStore(database)
+	paymentReportHandler := paymentreport.NewHandler(paymentReportStore)
 
 	supplierStatementStore := supplierstatement.NewStore(database)
 	supplierStatementHandler := supplierstatement.NewHandler(supplierStatementStore)
@@ -713,6 +721,30 @@ func main() {
 			),
 		),
 		purchaseReportHandler,
+	)
+
+	salesreport.RegisterRoutes(
+		protected.Group("/sales-report",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleSalesPerson,
+				model.RoleAccountsManager,
+			),
+		),
+		salesReportHandler,
+	)
+
+	paymentreport.RegisterRoutes(
+		protected.Group("/payment-report",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleSalesPerson,
+				model.RoleAccountsManager,
+			),
+		),
+		paymentReportHandler,
 	)
 
 	supplierstatement.RegisterRoutes(
