@@ -69,6 +69,7 @@ import (
 	ecomWishlist "defab-erp/internal/ecom/wishlist"
 
 	"defab-erp/internal/directgrn"
+	"defab-erp/internal/hsnreport"
 	"defab-erp/internal/migration"
 	"defab-erp/internal/paymentreport"
 	"defab-erp/internal/purchasereport"
@@ -252,6 +253,9 @@ func main() {
 
 	paymentReportStore := paymentreport.NewStore(database)
 	paymentReportHandler := paymentreport.NewHandler(paymentReportStore)
+
+	hsnReportStore := hsnreport.NewStore(database)
+	hsnReportHandler := hsnreport.NewHandler(hsnReportStore)
 
 	supplierStatementStore := supplierstatement.NewStore(database)
 	supplierStatementHandler := supplierstatement.NewHandler(supplierStatementStore)
@@ -767,6 +771,17 @@ func main() {
 			),
 		),
 		paymentReportHandler,
+	)
+
+	hsnreport.RegisterRoutes(
+		protected.Group("/hsn-report",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		hsnReportHandler,
 	)
 
 	supplierstatement.RegisterRoutes(
