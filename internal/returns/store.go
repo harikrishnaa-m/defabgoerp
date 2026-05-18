@@ -118,8 +118,11 @@ func (s *Store) CreateReturnOrder(in CreateReturnOrderInput, userID string) (str
 		if taxable < 0 {
 			taxable = 0
 		}
-		lineTax := round2(taxable * siItem.TaxPercent / 100)
-		lineReturnAmount := round2(lineTotal - itemDiscount - lineBillDisc + lineTax)
+		// Billing uses GST-inclusive (MRP) pricing: tax is extracted from the price,
+		// not added on top. Mirror the same extraction formula here.
+		lineTax := round2(taxable * siItem.TaxPercent / (100 + siItem.TaxPercent))
+		// Refund = net amount after discounts (tax is already inside the price, not added)
+		lineReturnAmount := round2(lineTotal - itemDiscount - lineBillDisc)
 
 		_, err := tx.Exec(`
 			INSERT INTO return_items
