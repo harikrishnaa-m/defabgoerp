@@ -140,7 +140,9 @@ func (s *Store) CreateReturnOrder(in CreateReturnOrderInput, userID string) (str
 		totalRefundAmount += lineReturnAmount
 	}
 
-	totalRefundAmount = round2(totalRefundAmount)
+	// Billing snaps net_amount to the nearest whole rupee (math.Round); apply the
+	// same rounding here so the refund amount always matches the billed total.
+	totalRefundAmount = math.Round(totalRefundAmount)
 	totalTax = round2(totalTax)
 	if err := tx.QueryRow(`
 		UPDATE return_orders
@@ -227,12 +229,14 @@ func (s *Store) CreateReturnOrder(in CreateReturnOrderInput, userID string) (str
 	}
 
 	invoiceStatus := "UNPAID"
-	if invoice.PaidAmount >= invoice.NetAmount && invoice.NetAmount > 0 {
-		invoiceStatus = "PAID"
-	} else if invoice.PaidAmount > 0 {
-		invoiceStatus = "PARTIAL"
-	} else if invoice.NetAmount == 0 {
+	if invoice.NetAmount == 0 {
 		invoiceStatus = "RETURNED"
+	} else if invoice.PaidAmount >= invoice.NetAmount {
+		// Partial return: some items returned, remaining balance is fully settled.
+		invoiceStatus = "PARTIAL_RETURN"
+	} else if invoice.PaidAmount > 0 {
+		// Still has an outstanding balance (partial payment or partial return not fully covered).
+		invoiceStatus = "PARTIAL"
 	}
 
 	_, err = tx.Exec(`
@@ -654,9 +658,21 @@ func (s *Store) CancelReturnOrder(id string) error {
 		ret.SalesInvoiceID).Scan(&netAmount, &paidAmount); err != nil {
 		return err
 	}
+	// Check if other active returns remain on this invoice.
+	var stillActiveReturns int
+	if err := tx.QueryRow(`
+		SELECT COUNT(*) FROM return_orders
+		WHERE sales_invoice_id = $1 AND status != $2 AND id != $3
+	`, ret.SalesInvoiceID, ReturnStatusCancelled, id).Scan(&stillActiveReturns); err != nil {
+		return err
+	}
 	invoiceStatus := "UNPAID"
 	if paidAmount >= netAmount && netAmount > 0 {
-		invoiceStatus = "PAID"
+		if stillActiveReturns > 0 {
+			invoiceStatus = "PARTIAL_RETURN" // still has other active returns, remaining paid
+		} else {
+			invoiceStatus = "PAID"
+		}
 	} else if paidAmount > 0 {
 		invoiceStatus = "PARTIAL"
 	}
@@ -666,15 +682,7 @@ func (s *Store) CancelReturnOrder(id string) error {
 	}
 
 	// Check if there are other active returns — if not, restore sales order status
-	var activeReturns int
-	err = tx.QueryRow(`
-		SELECT COUNT(*) FROM return_orders
-		WHERE sales_invoice_id = $1 AND status != $2 AND id != $3
-	`, ret.SalesInvoiceID, ReturnStatusCancelled, id).Scan(&activeReturns)
-	if err != nil {
-		return err
-	}
-	if activeReturns == 0 {
+	if stillActiveReturns == 0 {
 		_, err = tx.Exec(`
 			UPDATE sales_orders SET status = 'DELIVERED'
 			WHERE id = (SELECT sales_order_id FROM sales_invoices WHERE id = $1)
