@@ -381,7 +381,7 @@ func (s *Store) CountAllByBranch(branchID, variantCode string) (int, error) {
 }
 
 // GetAvailable returns stocks in the CENTRAL warehouse that are not in the given branch
-func (s *Store) GetAvailable(branchID string, limit, offset int) (*sql.Rows, error) {
+func (s *Store) GetAvailable(branchID string, limit, offset int, variantCode *int) (*sql.Rows, error) {
 	return s.db.Query(`
 		SELECT
 			s.id,
@@ -395,24 +395,27 @@ func (s *Store) GetAvailable(branchID string, limit, offset int) (*sql.Rows, err
 		JOIN warehouses w ON w.id = s.warehouse_id
 		WHERE w.type = 'CENTRAL'
 		  AND s.quantity > 0
+		  AND ($3::int IS NULL OR v.variant_code = $3)
 		ORDER BY p.name, v.name
 		LIMIT $1 OFFSET $2
-	`, limit, offset)
+	`, limit, offset, variantCode)
 }
 
-func (s *Store) CountAvailable(branchID string) (int, error) {
+func (s *Store) CountAvailable(branchID string, variantCode *int) (int, error) {
 	var total int
 	err := s.db.QueryRow(`
 		SELECT COUNT(*) FROM stocks s
+		JOIN variants v   ON v.id = s.variant_id
 		JOIN warehouses w ON w.id = s.warehouse_id
 		WHERE w.type = 'CENTRAL'
 		  AND s.quantity > 0
-	`).Scan(&total)
+		  AND ($1::int IS NULL OR v.variant_code = $1)
+	`, variantCode).Scan(&total)
 	return total, err
 }
 
 // GetAvailableNew returns central stocks whose variant does NOT exist in any warehouse belonging to the branch
-func (s *Store) GetAvailableNew(branchID string, limit, offset int) (*sql.Rows, error) {
+func (s *Store) GetAvailableNew(branchID string, limit, offset int, variantCode *int) (*sql.Rows, error) {
 	return s.db.Query(`
 		SELECT
 			s.id,
@@ -431,15 +434,17 @@ func (s *Store) GetAvailableNew(branchID string, limit, offset int) (*sql.Rows, 
 		      JOIN warehouses w2 ON w2.id = s2.warehouse_id
 		      WHERE w2.branch_id = $1 AND s2.quantity > 0
 		  )
+		  AND ($4::int IS NULL OR v.variant_code = $4)
 		ORDER BY p.name, v.name
 		LIMIT $2 OFFSET $3
-	`, branchID, limit, offset)
+	`, branchID, limit, offset, variantCode)
 }
 
-func (s *Store) CountAvailableNew(branchID string) (int, error) {
+func (s *Store) CountAvailableNew(branchID string, variantCode *int) (int, error) {
 	var total int
 	err := s.db.QueryRow(`
 		SELECT COUNT(*) FROM stocks s
+		JOIN variants v   ON v.id = s.variant_id
 		JOIN warehouses w ON w.id = s.warehouse_id
 		WHERE w.type = 'CENTRAL'
 		  AND s.quantity > 0
@@ -448,7 +453,8 @@ func (s *Store) CountAvailableNew(branchID string) (int, error) {
 		      JOIN warehouses w2 ON w2.id = s2.warehouse_id
 		      WHERE w2.branch_id = $1 AND s2.quantity > 0
 		  )
-	`, branchID).Scan(&total)
+		  AND ($2::int IS NULL OR v.variant_code = $2)
+	`, branchID, variantCode).Scan(&total)
 	return total, err
 }
 
