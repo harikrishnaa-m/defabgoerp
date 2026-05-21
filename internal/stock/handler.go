@@ -409,17 +409,24 @@ func (h *Handler) Available(c *fiber.Ctx) error {
 	limit := c.QueryInt("limit", 20)
 	offset := (page - 1) * limit
 
+	var variantCode *int
+	if vc := c.Query("variant_code"); vc != "" {
+		if n, err := strconv.Atoi(vc); err == nil {
+			variantCode = &n
+		}
+	}
+
 	// SuperAdmin sees everything — use All instead
 	if user.Role.Name == model.RoleSuperAdmin || user.BranchID == nil {
 		return h.All(c)
 	}
 
-	total, err := h.store.CountAvailable(*user.BranchID)
+	total, err := h.store.CountAvailable(*user.BranchID, variantCode)
 	if err != nil {
 		return httperr.Internal(c)
 	}
 
-	rows, err := h.store.GetAvailable(*user.BranchID, limit, offset)
+	rows, err := h.store.GetAvailable(*user.BranchID, limit, offset, variantCode)
 	if err != nil {
 		return httperr.Internal(c)
 	}
@@ -473,12 +480,19 @@ func (h *Handler) AvailableNew(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user has no branch assigned"})
 	}
 
-	total, err := h.store.CountAvailableNew(*user.BranchID)
+	var variantCode *int
+	if vc := c.Query("variant_code"); vc != "" {
+		if n, err := strconv.Atoi(vc); err == nil {
+			variantCode = &n
+		}
+	}
+
+	total, err := h.store.CountAvailableNew(*user.BranchID, variantCode)
 	if err != nil {
 		return httperr.Internal(c)
 	}
 
-	rows, err := h.store.GetAvailableNew(*user.BranchID, limit, offset)
+	rows, err := h.store.GetAvailableNew(*user.BranchID, limit, offset, variantCode)
 	if err != nil {
 		return httperr.Internal(c)
 	}
