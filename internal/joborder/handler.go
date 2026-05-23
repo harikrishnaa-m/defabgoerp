@@ -2,12 +2,14 @@ package joborder
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
 	"strings"
 
 	"defab-erp/internal/core/httperr"
 	"defab-erp/internal/core/model"
+	"defab-erp/internal/core/storage"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -22,9 +24,34 @@ func NewHandler(s *Store) *Handler {
 
 func (h *Handler) Create(c *fiber.Ctx) error {
 	var in CreateJobOrderInput
-	if err := c.BodyParser(&in); err != nil {
-		return httperr.BadRequest(c, "Invalid JSON body")
+
+	if strings.Contains(c.Get("Content-Type"), "multipart/form-data") {
+		payload := c.FormValue("payload")
+		if payload == "" {
+			return httperr.BadRequest(c, "payload field is required for multipart/form-data requests")
+		}
+		if err := json.Unmarshal([]byte(payload), &in); err != nil {
+			return httperr.BadRequest(c, "Invalid payload JSON")
+		}
+	} else {
+		if err := c.BodyParser(&in); err != nil {
+			return httperr.BadRequest(c, "Invalid JSON body")
+		}
 	}
+
+	if file, err := c.FormFile("job_order_image"); err == nil {
+		data, filename, procErr := storage.ProcessImage(file)
+		if procErr != nil {
+			return httperr.BadRequest(c, procErr.Error())
+		}
+		url, upErr := storage.UploadFile("job-orders/"+filename, data, file.Header.Get("Content-Type"))
+		if upErr != nil {
+			log.Println("upload job order image error:", upErr)
+			return httperr.Internal(c)
+		}
+		in.ImageURL = url
+	}
+
 	if in.CustomerID == "" && in.CustomerPhone == "" {
 		return httperr.BadRequest(c, "customer_id or customer_phone is required")
 	}
@@ -97,9 +124,34 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 func (h *Handler) Update(c *fiber.Ctx) error {
 	id := c.Params("id")
 	var in UpdateJobOrderInput
-	if err := c.BodyParser(&in); err != nil {
-		return httperr.BadRequest(c, "Invalid JSON body")
+
+	if strings.Contains(c.Get("Content-Type"), "multipart/form-data") {
+		payload := c.FormValue("payload")
+		if payload == "" {
+			return httperr.BadRequest(c, "payload field is required for multipart/form-data requests")
+		}
+		if err := json.Unmarshal([]byte(payload), &in); err != nil {
+			return httperr.BadRequest(c, "Invalid payload JSON")
+		}
+	} else {
+		if err := c.BodyParser(&in); err != nil {
+			return httperr.BadRequest(c, "Invalid JSON body")
+		}
 	}
+
+	if file, err := c.FormFile("job_order_image"); err == nil {
+		data, filename, procErr := storage.ProcessImage(file)
+		if procErr != nil {
+			return httperr.BadRequest(c, procErr.Error())
+		}
+		url, upErr := storage.UploadFile("job-orders/"+filename, data, file.Header.Get("Content-Type"))
+		if upErr != nil {
+			log.Println("upload job order image error:", upErr)
+			return httperr.Internal(c)
+		}
+		in.ImageURL = &url
+	}
+
 	if err := h.store.UpdateJobOrder(id, in); err != nil {
 		if err == sql.ErrNoRows {
 			return httperr.NotFound(c, "Job order not found")
@@ -107,7 +159,13 @@ func (h *Handler) Update(c *fiber.Ctx) error {
 		log.Println("update job order error:", err)
 		return httperr.Internal(c)
 	}
-	return c.JSON(fiber.Map{"message": "updated"})
+
+	result, err := h.store.GetByID(id)
+	if err != nil {
+		log.Println("fetch updated job order error:", err)
+		return c.JSON(fiber.Map{"message": "updated"})
+	}
+	return c.JSON(result)
 }
 
 func (h *Handler) PushStatus(c *fiber.Ctx) error {

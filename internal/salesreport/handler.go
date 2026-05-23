@@ -33,7 +33,7 @@ func NewHandler(store *Store) *Handler {
 //	limit            — results per page (default 50)
 func (h *Handler) List(c *fiber.Ctx) error {
 	page, _ := strconv.Atoi(c.Query("page", "1"))
-	limit, _ := strconv.Atoi(c.Query("limit", "50"))
+	limit, _ := strconv.Atoi(c.Query("limit", "0"))
 
 	user := c.Locals("user").(*model.User)
 

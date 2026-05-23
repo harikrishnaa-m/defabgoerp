@@ -83,14 +83,14 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 			 status, payment_status, expected_delivery_date,
 			 sub_amount, discount_amount, gst_amount, net_amount,
 			 notes, sample_provided, sample_description, measurement_bill_number,
-			 created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,'RECEIVED','UNPAID',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			 image_url, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,'RECEIVED','UNPAID',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 		RETURNING id
 	`, jobNumber, in.CustomerID, branchParam, whParam, in.JobType, in.MaterialSource,
 		in.ExpectedDeliveryDate,
 		round2(in.SubAmount), round2(in.DiscountAmount), round2(in.GSTAmount), round2(in.NetAmount),
 		in.Notes, in.SampleProvided, in.SampleDescription, in.MeasurementBillNumber,
-		userID).Scan(&jobID)
+		nilIfEmpty(in.ImageURL), userID).Scan(&jobID)
 	if err != nil {
 		return "", fmt.Errorf("create job order: %w", err)
 	}
@@ -327,6 +327,11 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 		n++
 		q += fmt.Sprintf(", measurement_bill_number = $%d", n)
 		args = append(args, *in.MeasurementBillNumber)
+	}
+	if in.ImageURL != nil {
+		n++
+		q += fmt.Sprintf(", image_url = $%d", n)
+		args = append(args, nilIfEmpty(*in.ImageURL))
 	}
 	if in.SubAmount != nil {
 		n++
@@ -681,6 +686,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 		       jo.received_date, jo.expected_delivery_date, jo.actual_delivery_date,
 		       jo.sub_amount, jo.discount_amount, jo.gst_amount, jo.net_amount,
 		       jo.notes, jo.sample_provided, jo.sample_description, jo.measurement_bill_number,
+		       COALESCE(jo.image_url, '') AS image_url,
 		       jo.created_by, jo.created_at,
 		       c.name AS customer_name, c.phone AS customer_phone,
 		       COALESCE(b.name, '') AS branch_name,
@@ -710,6 +716,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			createdBy, custName, custPhone                string
 			branchName, createdByName                     string
 			branchIDVal, whIDVal                          sql.NullString
+			imageURL                                      string
 			expectedDate                                  sql.NullString
 			actualDate                                    sql.NullTime
 			receivedDate, createdAt                       sql.NullTime
@@ -719,6 +726,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			&receivedDate, &expectedDate, &actualDate,
 			&subAmt, &discAmt, &gstAmt, &netAmt,
 			&notes, &sampleProvided, &sampleDesc, &measBillNum,
+			&imageURL,
 			&createdBy, &createdAt,
 			&custName, &custPhone, &branchName, &createdByName); err != nil {
 			return nil, 0, err
@@ -747,6 +755,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			"sample_provided":         sampleProvided,
 			"sample_description":      sampleDesc,
 			"measurement_bill_number": measBillNum,
+			"image_url":               imageURL,
 			"created_by":              createdBy,
 			"created_by_name":         createdByName,
 			"created_at":              createdAt.Time,
@@ -774,6 +783,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		sampleProvided                                   bool
 		createdBy                                        string
 		branchIDVal, whIDVal                             sql.NullString
+		imageURL                                         sql.NullString
 		expectedDate                                     sql.NullString
 		actualDate                                       sql.NullTime
 		receivedDate, createdAt, updatedAt               sql.NullTime
@@ -784,6 +794,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		       received_date, expected_delivery_date, actual_delivery_date,
 		       sub_amount, discount_amount, gst_amount, net_amount,
 		       notes, sample_provided, sample_description, measurement_bill_number,
+		       COALESCE(image_url, '') AS image_url,
 		       created_by, created_at, updated_at
 		FROM job_orders WHERE id = $1
 	`, id).Scan(&jobID, &jobNum, &custID, &branchIDVal, &whIDVal,
@@ -791,6 +802,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		&receivedDate, &expectedDate, &actualDate,
 		&subAmt, &discAmt, &gstAmt, &netAmt,
 		&notes, &sampleProvided, &sampleDesc, &measBillNum,
+		&imageURL,
 		&createdBy, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -817,6 +829,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"sample_provided":         sampleProvided,
 		"sample_description":      sampleDesc,
 		"measurement_bill_number": measBillNum,
+		"image_url":               imageURL.String,
 		"created_by":              createdBy,
 		"created_at":              createdAt.Time,
 		"updated_at":              updatedAt.Time,
