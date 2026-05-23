@@ -30,6 +30,7 @@ type CreateJobOrderInput struct {
 	SampleProvided        bool                          `json:"sample_provided"`
 	SampleDescription     string                        `json:"sample_description"`
 	MeasurementBillNumber string                        `json:"measurement_bill_number"`
+	ImageURL              string                        `json:"image_url"`
 	SubAmount             float64                       `json:"sub_amount"`
 	DiscountAmount        float64                       `json:"discount_amount"`
 	GSTAmount             float64                       `json:"gst_amount"`
@@ -51,6 +52,7 @@ type UpdateJobOrderInput struct {
 	SampleProvided        *bool                         `json:"sample_provided"`
 	SampleDescription     *string                       `json:"sample_description"`
 	MeasurementBillNumber *string                       `json:"measurement_bill_number"`
+	ImageURL              *string                       `json:"image_url"`
 	SubAmount             *float64                      `json:"sub_amount"`
 	DiscountAmount        *float64                      `json:"discount_amount"`
 	GSTAmount             *float64                      `json:"gst_amount"`

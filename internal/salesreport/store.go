@@ -91,7 +91,7 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 	}
 
 	totalPages := 1
-	if total > 0 {
+	if limit > 0 && total > 0 {
 		totalPages = (total + limit - 1) / limit
 	}
 
