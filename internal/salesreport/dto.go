@@ -1,12 +1,13 @@
 package salesreport
 
-// SalesReportRow is one row in the report.
+// SalesReportRow is one row in the report — one payment transaction.
 type SalesReportRow struct {
 	ID              string  `json:"id"`
 	InvoiceNumber   string  `json:"invoice_number"`
 	Date            string  `json:"date"`
 	CustomerName    string  `json:"customer_name"`
 	NetAmount       float64 `json:"net_amount"`
+	PaymentMethod   string  `json:"payment_method"`
 	Location        string  `json:"location"`
 	SalespersonName string  `json:"salesperson_name"`
 	CreatedByName   string  `json:"created_by_name"`

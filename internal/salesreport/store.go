@@ -26,10 +26,11 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 	}
 
 	base := `
-		FROM sales_invoices si
-		LEFT JOIN customers c     ON c.id  = si.customer_id
-		LEFT JOIN branches b      ON b.id  = si.branch_id
-		LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+		FROM sales_payments spm
+		JOIN sales_invoices si    ON si.id  = spm.sales_invoice_id
+		LEFT JOIN customers c     ON c.id   = si.customer_id
+		LEFT JOIN branches b      ON b.id   = si.branch_id
+		LEFT JOIN sales_orders so ON so.id  = si.sales_order_id
 		LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
 		LEFT JOIN users u         ON u.id::text = si.created_by::text
 	`
@@ -64,9 +65,14 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 		idx++
 	}
 	if f.PaymentType != "" {
-		conditions = append(conditions, fmt.Sprintf(
-			"EXISTS (SELECT 1 FROM sales_payments spm WHERE spm.sales_invoice_id = si.id AND spm.payment_method = $%d)", idx))
-		args = append(args, f.PaymentType)
+		if f.PaymentType == "CARD" {
+			// CARD covers CARD, DEBIT_CARD, and CREDIT_CARD
+			conditions = append(conditions, fmt.Sprintf("spm.payment_method = ANY($%d)", idx))
+			args = append(args, []string{"CARD", "DEBIT_CARD", "CREDIT_CARD"})
+		} else {
+			conditions = append(conditions, fmt.Sprintf("spm.payment_method = $%d", idx))
+			args = append(args, f.PaymentType)
+		}
 		idx++
 	}
 	if f.Channel != "" {
@@ -80,11 +86,11 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// Count + grand total net amount
+	// Count + grand total (sum of payment amounts)
 	var total int
 	var totalNetAmount float64
 	if err := s.db.QueryRow(
-		fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(si.net_amount), 0) %s %s`, base, where),
+		fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(spm.amount), 0) %s %s`, base, where),
 		args...,
 	).Scan(&total, &totalNetAmount); err != nil {
 		return nil, err
@@ -95,40 +101,24 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 		totalPages = (total + limit - 1) / limit
 	}
 
-	// Paginated list
-	var query string
+	select_ := `
+		SELECT
+			spm.id,
+			si.invoice_number,
+			TO_CHAR(si.invoice_date AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY') AS date,
+			COALESCE(c.name, '') AS customer_name,
+			spm.amount,
+			spm.payment_method,
+			COALESCE(b.name, '') AS location,
+			COALESCE(sp.name, '') AS salesperson_name,
+			COALESCE(u.name, '') AS created_by_name,
+			COALESCE(si.channel, '') AS channel
+	`
+
+	query := fmt.Sprintf(`%s %s %s ORDER BY si.invoice_date DESC, si.invoice_number DESC`, select_, base, where)
 	if limit > 0 {
-		query = fmt.Sprintf(`
-		SELECT
-			si.id,
-			si.invoice_number,
-			TO_CHAR(si.invoice_date AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY') AS date,
-			COALESCE(c.name, '') AS customer_name,
-			si.net_amount,
-			COALESCE(b.name, '') AS location,
-			COALESCE(sp.name, '') AS salesperson_name,
-			COALESCE(u.name, '') AS created_by_name,
-			COALESCE(si.channel, '') AS channel
-		%s %s
-		ORDER BY si.invoice_date DESC, si.invoice_number DESC
-		LIMIT $%d OFFSET $%d
-		`, base, where, idx, idx+1)
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
 		args = append(args, limit, offset)
-	} else {
-		query = fmt.Sprintf(`
-		SELECT
-			si.id,
-			si.invoice_number,
-			TO_CHAR(si.invoice_date AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY') AS date,
-			COALESCE(c.name, '') AS customer_name,
-			si.net_amount,
-			COALESCE(b.name, '') AS location,
-			COALESCE(sp.name, '') AS salesperson_name,
-			COALESCE(u.name, '') AS created_by_name,
-			COALESCE(si.channel, '') AS channel
-		%s %s
-		ORDER BY si.invoice_date DESC, si.invoice_number DESC
-		`, base, where)
 	}
 
 	rows, err := s.db.Query(query, args...)
@@ -146,6 +136,7 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 			&row.Date,
 			&row.CustomerName,
 			&row.NetAmount,
+			&row.PaymentMethod,
 			&row.Location,
 			&row.SalespersonName,
 			&row.CreatedByName,
