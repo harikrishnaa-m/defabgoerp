@@ -2,7 +2,6 @@ package storage
 
 import (
 	"bytes"
-	"errors"
 	"image"
 	"mime/multipart"
 	"path/filepath"
@@ -13,70 +12,52 @@ import (
 )
 
 const (
-	MaxImageSize = 5 << 20 // 5 MB
-	MaxWidth     = 1200
+	MaxWidth = 1200
 )
 
-var allowedTypes = map[string]bool{
-	"image/jpeg": true,
-	"image/png":  true,
-}
-
 func ProcessImage(file *multipart.FileHeader) ([]byte, string, error) {
-
-	// ✅ size check
-	if file.Size > MaxImageSize {
-		return nil, "", errors.New("file too large (max 5MB)")
-	}
-
-	// ✅ mime check
-	ct := file.Header.Get("Content-Type")
-	if !allowedTypes[ct] {
-		return nil, "", errors.New("invalid image type")
-	}
-
 	f, err := file.Open()
 	if err != nil {
 		return nil, "", err
 	}
 	defer f.Close()
 
-	img, _, err := image.Decode(f)
-	if err != nil {
-		return nil, "", errors.New("invalid image data")
-	}
-
-	// ✅ resize
-	img = imaging.Resize(img, MaxWidth, 0, imaging.Lanczos)
-
-	buf := new(bytes.Buffer)
-
-	ext := extFromMime(ct)
-
-	switch ext {
-	case ".jpg":
-		err = imaging.Encode(buf, img, imaging.JPEG)
-	case ".png":
-		err = imaging.Encode(buf, img, imaging.PNG)
-	}
-
-	if err != nil {
+	// Read raw bytes
+	raw := new(bytes.Buffer)
+	if _, err = raw.ReadFrom(f); err != nil {
 		return nil, "", err
 	}
 
-	// ✅ unique filename
-	filename := uuid.New().String() + ext
-
-	return buf.Bytes(), filename, nil
-}
-
-func extFromMime(ct string) string {
-	switch ct {
-	case "image/jpeg":
-		return ".jpg"
-	case "image/png":
-		return ".png"
-	default:
-		return filepath.Ext(strings.ToLower(ct))
+	// Derive extension from original filename
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext == "" {
+		ext = ".jpg"
 	}
+
+	// Attempt decode + resize for supported formats; fall back to raw bytes if not
+	img, _, decErr := image.Decode(bytes.NewReader(raw.Bytes()))
+	if decErr == nil {
+		img = imaging.Resize(img, MaxWidth, 0, imaging.Lanczos)
+		buf := new(bytes.Buffer)
+		var encErr error
+		switch ext {
+		case ".png":
+			encErr = imaging.Encode(buf, img, imaging.PNG)
+		case ".gif":
+			encErr = imaging.Encode(buf, img, imaging.GIF)
+		case ".tiff", ".tif":
+			encErr = imaging.Encode(buf, img, imaging.TIFF)
+		case ".bmp":
+			encErr = imaging.Encode(buf, img, imaging.BMP)
+		default: // .jpg, .jpeg, .webp, and anything else → encode as JPEG
+			ext = ".jpg"
+			encErr = imaging.Encode(buf, img, imaging.JPEG)
+		}
+		if encErr == nil {
+			return buf.Bytes(), uuid.New().String() + ext, nil
+		}
+	}
+
+	// Format not decodable by imaging (e.g. HEIC, AVIF) — store raw
+	return raw.Bytes(), uuid.New().String() + ext, nil
 }
