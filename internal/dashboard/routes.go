@@ -14,6 +14,8 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	// Rankings
 	r.Get("/top-products", h.TopProducts)
 	r.Get("/top-customers", h.TopCustomers)
+	r.Get("/top-products-by-category", h.TopProductsByCategory)
+	r.Get("/top-suppliers", h.TopSuppliers)
 	r.Get("/salesperson-performance", h.SalespersonPerformance)
 
 	// Breakdowns (pie / donut)

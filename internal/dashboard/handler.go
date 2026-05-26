@@ -61,12 +61,39 @@ func (h *Handler) TopProducts(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"data": data})
 }
 
-// GET /api/dashboard/top-customers?from=&to=&limit=10
+// GET /api/dashboard/top-customers?from=&to=&branch_id=&limit=10
 func (h *Handler) TopCustomers(c *fiber.Ctx) error {
 	from := c.Query("from")
 	to := c.Query("to")
-	limit := intQuery(c, "limit", 10)
-	data, err := h.store.TopCustomers(from, to, limit)
+	branchID := c.Query("branch_id")
+	limit := intQuery(c, "limit", 0)
+	data, err := h.store.TopCustomers(from, to, branchID, limit)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"data": data})
+}
+
+// GET /api/dashboard/top-products-by-category?from=&to=&branch_id=&limit=5
+func (h *Handler) TopProductsByCategory(c *fiber.Ctx) error {
+	from := c.Query("from")
+	to := c.Query("to")
+	branchID := c.Query("branch_id")
+	limit := intQuery(c, "limit", 0)
+	data, err := h.store.TopProductsPerCategory(from, to, branchID, limit)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"data": data})
+}
+
+// GET /api/dashboard/top-suppliers?from=&to=&branch_id=&limit=5
+func (h *Handler) TopSuppliers(c *fiber.Ctx) error {
+	from := c.Query("from")
+	to := c.Query("to")
+	branchID := c.Query("branch_id")
+	limit := intQuery(c, "limit", 0)
+	data, err := h.store.TopSuppliersBySales(from, to, branchID, limit)
 	if err != nil {
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 	}

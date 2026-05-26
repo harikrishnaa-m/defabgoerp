@@ -3,6 +3,7 @@ package dashboard
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -266,38 +267,90 @@ func (s *Store) TopSellingProducts(from, to string, limit int) ([]TopProduct, er
 // ════════════════════════════════════════════
 
 type TopCustomer struct {
-	CustomerID   string  `json:"customer_id"`
-	CustomerName string  `json:"customer_name"`
-	Phone        string  `json:"phone"`
-	InvoiceCount int     `json:"invoice_count"`
-	TotalAmount  float64 `json:"total_amount"`
+	CustomerID        string  `json:"customer_id"`
+	CustomerName      string  `json:"customer_name"`
+	Phone             string  `json:"phone"`
+	InvoiceCount      int     `json:"invoice_count"`
+	TotalAmount       float64 `json:"total_amount"`
+	FavouriteProduct  string  `json:"favourite_product"`
+	FavouriteVariant  string  `json:"favourite_variant"`
+	FavouriteBuyCount int     `json:"favourite_buy_count"`
 }
 
-func (s *Store) TopCustomers(from, to string, limit int) ([]TopCustomer, error) {
-	query := `
-		SELECT c.id, c.name, COALESCE(c.phone,''), COUNT(si.id), COALESCE(SUM(si.net_amount), 0)
-		FROM sales_invoices si
-		JOIN customers c ON c.id = si.customer_id
-		WHERE si.status != 'CANCELLED'
-	`
-	args := []interface{}{}
+func (s *Store) TopCustomers(from, to, branchID string, limit int) ([]TopCustomer, error) {
+	var outerConds []string
+	var args []interface{}
 	idx := 1
+
+	outerConds = append(outerConds, "si.status != 'CANCELLED'")
 	if from != "" {
-		query += fmt.Sprintf(" AND si.invoice_date >= $%d", idx)
+		outerConds = append(outerConds, fmt.Sprintf("si.invoice_date >= $%d", idx))
 		args = append(args, from)
 		idx++
 	}
 	if to != "" {
-		query += fmt.Sprintf(" AND si.invoice_date <= $%d", idx)
+		outerConds = append(outerConds, fmt.Sprintf("si.invoice_date <= $%d", idx))
 		args = append(args, to)
 		idx++
 	}
-	query += fmt.Sprintf(`
-		GROUP BY c.id, c.name, c.phone
+	if branchID != "" {
+		outerConds = append(outerConds, fmt.Sprintf("si.branch_id = $%d", idx))
+		args = append(args, branchID)
+		idx++
+	}
+
+	// Same conditions for the LATERAL subquery (separate param slots)
+	var latConds []string
+	latConds = append(latConds, "si2.status != 'CANCELLED'")
+	if from != "" {
+		latConds = append(latConds, fmt.Sprintf("si2.invoice_date >= $%d", idx))
+		args = append(args, from)
+		idx++
+	}
+	if to != "" {
+		latConds = append(latConds, fmt.Sprintf("si2.invoice_date <= $%d", idx))
+		args = append(args, to)
+		idx++
+	}
+	if branchID != "" {
+		latConds = append(latConds, fmt.Sprintf("si2.branch_id = $%d", idx))
+		args = append(args, branchID)
+		idx++
+	}
+
+	outerWhere := strings.Join(outerConds, " AND ")
+	latWhere := strings.Join(latConds, " AND ")
+
+	limitClause := ""
+	if limit > 0 {
+		limitClause = fmt.Sprintf("LIMIT $%d", idx)
+		args = append(args, limit)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT c.id, c.name, COALESCE(c.phone,''),
+		       COUNT(si.id), COALESCE(SUM(si.net_amount), 0),
+		       COALESCE(fav.product_name, ''),
+		       COALESCE(fav.variant_name, ''),
+		       COALESCE(fav.buy_count, 0)
+		FROM sales_invoices si
+		JOIN customers c ON c.id = si.customer_id
+		LEFT JOIN LATERAL (
+			SELECT p.name AS product_name, v.name AS variant_name, COUNT(*) AS buy_count
+			FROM sales_invoice_items sii
+			JOIN variants v     ON v.id  = sii.variant_id
+			JOIN products p     ON p.id  = v.product_id
+			JOIN sales_invoices si2 ON si2.id = sii.sales_invoice_id
+			WHERE si2.customer_id = c.id AND %s
+			GROUP BY p.name, v.name
+			ORDER BY COUNT(*) DESC
+			LIMIT 1
+		) fav ON true
+		WHERE %s
+		GROUP BY c.id, c.name, c.phone, fav.product_name, fav.variant_name, fav.buy_count
 		ORDER BY SUM(si.net_amount) DESC
-		LIMIT $%d
-	`, idx)
-	args = append(args, limit)
+		%s
+	`, latWhere, outerWhere, limitClause)
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -308,11 +361,17 @@ func (s *Store) TopCustomers(from, to string, limit int) ([]TopCustomer, error) 
 	var customers []TopCustomer
 	for rows.Next() {
 		var tc TopCustomer
-		if err := rows.Scan(&tc.CustomerID, &tc.CustomerName, &tc.Phone,
-			&tc.InvoiceCount, &tc.TotalAmount); err != nil {
+		if err := rows.Scan(
+			&tc.CustomerID, &tc.CustomerName, &tc.Phone,
+			&tc.InvoiceCount, &tc.TotalAmount,
+			&tc.FavouriteProduct, &tc.FavouriteVariant, &tc.FavouriteBuyCount,
+		); err != nil {
 			return nil, err
 		}
 		customers = append(customers, tc)
+	}
+	if customers == nil {
+		customers = []TopCustomer{}
 	}
 	return customers, nil
 }
@@ -735,6 +794,187 @@ type SalespersonPerf struct {
 	SalespersonName string  `json:"salesperson_name"`
 	InvoiceCount    int     `json:"invoice_count"`
 	TotalSales      float64 `json:"total_sales"`
+}
+
+// ════════════════════════════════════════════
+// Top Products Per Category
+// ════════════════════════════════════════════
+
+type TopCategoryProduct struct {
+	CategoryID   string  `json:"category_id"`
+	CategoryName string  `json:"category_name"`
+	ProductID    string  `json:"product_id"`
+	ProductName  string  `json:"product_name"`
+	TotalQty     float64 `json:"total_qty"`
+	TotalAmount  float64 `json:"total_amount"`
+	Rank         int     `json:"rank"`
+}
+
+func (s *Store) TopProductsPerCategory(from, to, branchID string, limit int) ([]TopCategoryProduct, error) {
+	var conds []string
+	var args []interface{}
+	idx := 1
+
+	conds = append(conds, "si.status != 'CANCELLED'")
+	conds = append(conds, "p.category_id IS NOT NULL")
+	if from != "" {
+		conds = append(conds, fmt.Sprintf("si.invoice_date >= $%d", idx))
+		args = append(args, from)
+		idx++
+	}
+	if to != "" {
+		conds = append(conds, fmt.Sprintf("si.invoice_date <= $%d", idx))
+		args = append(args, to)
+		idx++
+	}
+	if branchID != "" {
+		conds = append(conds, fmt.Sprintf("si.branch_id = $%d", idx))
+		args = append(args, branchID)
+		idx++
+	}
+
+	where := strings.Join(conds, " AND ")
+
+	rankFilter := "1=1"
+	if limit > 0 {
+		rankFilter = fmt.Sprintf("rank <= $%d", idx)
+		args = append(args, limit)
+	}
+
+	query := fmt.Sprintf(`
+		WITH ranked AS (
+			SELECT
+				cat.id   AS category_id,
+				cat.name AS category_name,
+				p.id     AS product_id,
+				p.name   AS product_name,
+				COALESCE(SUM(sii.quantity), 0)    AS total_qty,
+				COALESCE(SUM(sii.total_price), 0) AS total_amount,
+				ROW_NUMBER() OVER (
+					PARTITION BY cat.id
+					ORDER BY COALESCE(SUM(sii.quantity), 0) DESC
+				) AS rank
+			FROM sales_invoice_items sii
+			JOIN sales_invoices si ON si.id  = sii.sales_invoice_id
+			JOIN variants v        ON v.id   = sii.variant_id
+			JOIN products p        ON p.id   = v.product_id
+			JOIN categories cat    ON cat.id = p.category_id
+			WHERE %s
+			GROUP BY cat.id, cat.name, p.id, p.name
+		)
+		SELECT category_id, category_name, product_id, product_name,
+		       total_qty, total_amount, rank
+		FROM ranked
+		WHERE %s
+		ORDER BY category_name, rank
+	`, where, rankFilter)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []TopCategoryProduct
+	for rows.Next() {
+		var item TopCategoryProduct
+		if err := rows.Scan(
+			&item.CategoryID, &item.CategoryName,
+			&item.ProductID, &item.ProductName,
+			&item.TotalQty, &item.TotalAmount, &item.Rank,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if items == nil {
+		items = []TopCategoryProduct{}
+	}
+	return items, nil
+}
+
+// ════════════════════════════════════════════
+// Top Suppliers by Products Sold
+// ════════════════════════════════════════════
+
+type TopSupplier struct {
+	SupplierID   string  `json:"supplier_id"`
+	SupplierName string  `json:"supplier_name"`
+	TotalQtySold float64 `json:"total_qty_sold"`
+	TotalAmount  float64 `json:"total_amount"`
+	ProductCount int     `json:"product_count"`
+}
+
+func (s *Store) TopSuppliersBySales(from, to, branchID string, limit int) ([]TopSupplier, error) {
+	var conds []string
+	var args []interface{}
+	idx := 1
+
+	conds = append(conds, "si.status != 'CANCELLED'")
+	if from != "" {
+		conds = append(conds, fmt.Sprintf("si.invoice_date >= $%d", idx))
+		args = append(args, from)
+		idx++
+	}
+	if to != "" {
+		conds = append(conds, fmt.Sprintf("si.invoice_date <= $%d", idx))
+		args = append(args, to)
+		idx++
+	}
+	if branchID != "" {
+		conds = append(conds, fmt.Sprintf("si.branch_id = $%d", idx))
+		args = append(args, branchID)
+		idx++
+	}
+
+	where := strings.Join(conds, " AND ")
+
+	limitClause := ""
+	if limit > 0 {
+		limitClause = fmt.Sprintf("LIMIT $%d", idx)
+		args = append(args, limit)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			sup.id   AS supplier_id,
+			sup.name AS supplier_name,
+			COALESCE(SUM(sii.quantity), 0)    AS total_qty_sold,
+			COALESCE(SUM(sii.total_price), 0) AS total_amount,
+			COUNT(DISTINCT sii.variant_id)    AS product_count
+		FROM suppliers sup
+		JOIN purchase_orders po  ON po.supplier_id  = sup.id
+		JOIN stock_movements sm  ON sm.purchase_order_id = po.id
+		                        AND sm.movement_type = 'PURCHASE_IN'
+		JOIN sales_invoice_items sii ON sii.variant_id = sm.variant_id
+		JOIN sales_invoices si       ON si.id = sii.sales_invoice_id
+		WHERE %s
+		GROUP BY sup.id, sup.name
+		ORDER BY COALESCE(SUM(sii.quantity), 0) DESC
+		%s
+	`, where, limitClause)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var items []TopSupplier
+	for rows.Next() {
+		var item TopSupplier
+		if err := rows.Scan(
+			&item.SupplierID, &item.SupplierName,
+			&item.TotalQtySold, &item.TotalAmount, &item.ProductCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if items == nil {
+		items = []TopSupplier{}
+	}
+	return items, nil
 }
 
 func (s *Store) SalespersonPerformance(from, to string, limit int) ([]SalespersonPerf, error) {
