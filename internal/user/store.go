@@ -121,6 +121,28 @@ func (s *Store) SetActive(id string, active bool) error {
 	return err
 }
 
+func (s *Store) ListAll(role string) (*sql.Rows, error) {
+	if role != "" {
+		return s.db.Query(`
+		SELECT u.id, u.name, u.email, u.role_id,
+		  r.id, r.name, COALESCE(r.permissions, ''),
+		  u.branch_id, u.is_active, u.created_at
+		FROM users u
+		JOIN roles r ON u.role_id = r.id
+		WHERE r.name = $1
+		ORDER BY u.created_at DESC
+		`, role)
+	}
+	return s.db.Query(`
+	SELECT u.id, u.name, u.email, u.role_id,
+	  r.id, r.name, COALESCE(r.permissions, ''),
+	  u.branch_id, u.is_active, u.created_at
+	FROM users u
+	JOIN roles r ON u.role_id = r.id
+	ORDER BY u.created_at DESC
+	`)
+}
+
 func (s *Store) ListActive(limit, offset int, role string) (*sql.Rows, error) {
 	if role != "" {
 		return s.db.Query(`
