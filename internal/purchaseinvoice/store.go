@@ -221,8 +221,10 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	itemRows, err := s.db.Query(`
 		SELECT pii.id, pii.purchase_order_item_id, pii.item_name, pii.hsn_code,
 		       pii.unit, pii.quantity, pii.unit_price, pii.tax_percent,
-		       pii.tax_amount, pii.total_amount
+		       pii.tax_amount, pii.total_amount,
+		       COALESCE(poi.selling_price, 0), COALESCE(poi.wholesale_price, 0)
 		FROM purchase_invoice_items pii
+		LEFT JOIN purchase_order_items poi ON poi.id = pii.purchase_order_item_id
 		WHERE pii.purchase_invoice_id = $1
 	`, id)
 	if err != nil {
@@ -234,9 +236,10 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	for itemRows.Next() {
 		var iID, poItemID, iName string
 		var hsnCode, unit sql.NullString
-		var qty, unitPrice, taxPct, taxAmt, totalAmt float64
+		var qty, unitPrice, taxPct, taxAmt, totalAmt, sellingPrice, wholesalePrice float64
 		if err := itemRows.Scan(&iID, &poItemID, &iName, &hsnCode,
-			&unit, &qty, &unitPrice, &taxPct, &taxAmt, &totalAmt); err != nil {
+			&unit, &qty, &unitPrice, &taxPct, &taxAmt, &totalAmt,
+			&sellingPrice, &wholesalePrice); err != nil {
 			return nil, err
 		}
 		item := map[string]interface{}{
@@ -245,6 +248,8 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 			"item_name":              iName,
 			"quantity":               qty,
 			"unit_price":             unitPrice,
+			"selling_price":          sellingPrice,
+			"wholesale_price":        wholesalePrice,
 			"tax_percent":            taxPct,
 			"tax_amount":             taxAmt,
 			"total_amount":           totalAmt,

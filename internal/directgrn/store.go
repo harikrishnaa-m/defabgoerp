@@ -21,14 +21,16 @@ func NewStore(db *sql.DB) *Store {
 
 // poItemRecord holds the data needed for GRN + invoice creation after PO items are inserted.
 type poItemRecord struct {
-	id          string
-	itemName    string
-	productCode string
-	hsnCode     string
-	unit        string
-	qty         float64
-	unitPrice   float64
-	gstPercent  float64
+	id             string
+	itemName       string
+	productCode    string
+	hsnCode        string
+	unit           string
+	qty            float64
+	unitPrice      float64
+	gstPercent     float64
+	sellingPrice   float64
+	wholesalePrice float64
 	// variant-creation fields
 	category      string
 	categoryID    string
@@ -109,21 +111,24 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 		_, err = tx.Exec(`
 			INSERT INTO purchase_order_items
 				(id, purchase_order_id, item_name, description, hsn_code, unit,
-				 quantity, unit_price, gst_percent, gst_amount, total_price,
+				 quantity, unit_price, selling_price, wholesale_price,
+				 gst_percent, gst_amount, total_price,
 				 product_code, category, free_qty,
 				 additional_work, additional_work_amount,
 				 paid_by_user_id, paid_to_supplier_id, cash_amount, credit_amount,
 				 tax_inclusive)
 			VALUES
 				($1, $2, $3, $4, $5, $6,
-				 $7, $8, $9, $10, $11,
-				 $12, $13, $14,
-				 $15, $16,
-				 NULLIF($17,'')::uuid, NULLIF($18,'')::uuid, $19, $20,
-				 $21)
+				 $7, $8, $9, $10,
+				 $11, $12, $13,
+				 $14, $15, $16,
+				 $17, $18,
+				 NULLIF($19,'')::uuid, NULLIF($20,'')::uuid, $21, $22,
+				 $23)
 		`,
 			itemID, poID, item.ItemName, item.Description, item.HSNCode, item.Unit,
-			item.Quantity, item.UnitPrice, item.GSTPercent, gstAmt, lineTotal,
+			item.Quantity, item.UnitPrice, item.SellingPrice, item.WholesalePrice,
+			item.GSTPercent, gstAmt, lineTotal,
 			item.ProductCode, item.Category, item.FreeQty,
 			item.AdditionalWork, item.AdditionalWorkAmount,
 			item.PaidByUserID, item.PaidToSupplierID, item.CashAmount, item.CreditAmount,
@@ -134,18 +139,20 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 		}
 
 		poItems = append(poItems, poItemRecord{
-			id:            itemID,
-			itemName:      item.ItemName,
-			productCode:   item.ProductCode,
-			hsnCode:       item.HSNCode,
-			unit:          item.Unit,
-			qty:           item.Quantity,
-			unitPrice:     item.UnitPrice,
-			gstPercent:    item.GSTPercent,
-			category:      item.Category,
-			categoryID:    item.CategoryID,
-			productID:     item.ProductID,
-			createVariant: item.CreateVariant,
+			id:             itemID,
+			itemName:       item.ItemName,
+			productCode:    item.ProductCode,
+			hsnCode:        item.HSNCode,
+			unit:           item.Unit,
+			qty:            item.Quantity,
+			unitPrice:      item.UnitPrice,
+			sellingPrice:   item.SellingPrice,
+			wholesalePrice: item.WholesalePrice,
+			gstPercent:     item.GSTPercent,
+			category:       item.Category,
+			categoryID:     item.CategoryID,
+			productID:      item.ProductID,
+			createVariant:  item.CreateVariant,
 		})
 	}
 
@@ -272,10 +279,10 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 				variantName := fmt.Sprintf("%s %s", it.productCode, it.itemName)
 				err = tx.QueryRow(`
 					INSERT INTO variants
-						(product_id, variant_code, name, sku, price, cost_price, hsn_code, is_active, created_at, updated_at)
-					VALUES ($1, $2, $3, $4, $5, $5, $6, true, NOW(), NOW())
+						(product_id, variant_code, name, sku, price, cost_price, wholesale_price, hsn_code, is_active, created_at, updated_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NOW(), NOW())
 					RETURNING id::text
-				`, productID, vc, variantName, sku, it.unitPrice, it.hsnCode).Scan(&variantID)
+				`, productID, vc, variantName, sku, it.sellingPrice, it.unitPrice, it.wholesalePrice, it.hsnCode).Scan(&variantID)
 			} else {
 				// Fetch nextval first so we can include it in the name
 				var nextVC int64
@@ -285,10 +292,10 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 				variantName := fmt.Sprintf("%d %s", nextVC, it.itemName)
 				err = tx.QueryRow(`
 					INSERT INTO variants
-						(product_id, variant_code, name, sku, price, cost_price, hsn_code, is_active, created_at, updated_at)
-					VALUES ($1, $2, $3, $4, $5, $5, $6, true, NOW(), NOW())
+						(product_id, variant_code, name, sku, price, cost_price, wholesale_price, hsn_code, is_active, created_at, updated_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NOW(), NOW())
 					RETURNING id::text
-				`, productID, nextVC, variantName, sku, it.unitPrice, it.hsnCode).Scan(&variantID)
+				`, productID, nextVC, variantName, sku, it.sellingPrice, it.unitPrice, it.wholesalePrice, it.hsnCode).Scan(&variantID)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("insert variant for %q: %w", it.itemName, err)
@@ -659,6 +666,7 @@ func (s *Store) GetByID(grnID string) (*DirectGRNDetail, error) {
 			COALESCE(poi.product_code, ''), COALESCE(poi.category, ''),
 			COALESCE(poi.hsn_code, ''), COALESCE(poi.unit, ''),
 			poi.quantity, poi.free_qty, poi.unit_price,
+			COALESCE(poi.selling_price, 0), COALESCE(poi.wholesale_price, 0),
 			poi.gst_percent, poi.gst_amount, poi.total_price,
 			COALESCE(poi.additional_work, ''), poi.additional_work_amount,
 			COALESCE(poi.paid_by_user_id::text, ''), COALESCE(u.name, ''),
@@ -683,6 +691,7 @@ func (s *Store) GetByID(grnID string) (*DirectGRNDetail, error) {
 			&it.ProductCode, &it.Category,
 			&it.HSNCode, &it.Unit,
 			&it.Quantity, &it.FreeQty, &it.UnitPrice,
+			&it.SellingPrice, &it.WholesalePrice,
 			&it.GSTPercent, &it.GSTAmount, &it.TotalPrice,
 			&it.AdditionalWork, &it.AdditionalWorkAmount,
 			&it.PaidByUserID, &it.PaidByUserName,
