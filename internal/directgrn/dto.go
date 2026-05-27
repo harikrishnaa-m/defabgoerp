@@ -19,6 +19,8 @@ type DirectGRNItem struct {
 	Quantity             float64 `json:"quantity"`
 	FreeQty              float64 `json:"free_qty"`
 	UnitPrice            float64 `json:"unit_price"`
+	SellingPrice         float64 `json:"selling_price"`
+	WholesalePrice       float64 `json:"wholesale_price"`
 	GSTPercent           float64 `json:"gst_percent"`
 	AdditionalWork       string  `json:"additional_work"`
 	AdditionalWorkAmount float64 `json:"additional_work_amount"`
@@ -112,6 +114,8 @@ type DirectGRNDetailItem struct {
 	Quantity             float64 `json:"quantity"`
 	FreeQty              float64 `json:"free_qty"`
 	UnitPrice            float64 `json:"unit_price"`
+	SellingPrice         float64 `json:"selling_price"`
+	WholesalePrice       float64 `json:"wholesale_price"`
 	GSTPercent           float64 `json:"gst_percent"`
 	GSTAmount            float64 `json:"gst_amount"`
 	TotalPrice           float64 `json:"total_price"`
