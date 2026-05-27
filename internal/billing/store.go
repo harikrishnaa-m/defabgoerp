@@ -229,19 +229,29 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		salesPersonParam = in.SalesPersonID
 	}
 
+	// Resolve optional return number to its UUID
+	var returnOrderIDParam interface{}
+	if in.ReturnNumber != "" {
+		var rid string
+		if err := tx.QueryRow(`SELECT id FROM return_orders WHERE return_number = $1`, in.ReturnNumber).Scan(&rid); err != nil {
+			return nil, fmt.Errorf("return order not found: %s", in.ReturnNumber)
+		}
+		returnOrderIDParam = rid
+	}
+
 	var salesOrderID string
 	err = tx.QueryRow(`
 		INSERT INTO sales_orders
 			(so_number, channel, branch_id, customer_id, salesperson_id,
 			 warehouse_id, created_by, order_date,
 			 subtotal, tax_total, discount_total, bill_discount, grand_total,
-			 status, payment_status, notes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'CONFIRMED', $14, $15)
+			 status, payment_status, notes, return_order_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'CONFIRMED', $14, $15, $16)
 		RETURNING id
 	`, soNumber, channel, branchIDParam, customerID, salesPersonParam,
 		in.WarehouseID, userID, now,
 		round2(subtotal), round2(taxTotal), round2(discountTotal), round2(billDiscount), round2(grandTotal),
-		paymentStatus, in.Notes).Scan(&salesOrderID)
+		paymentStatus, in.Notes, returnOrderIDParam).Scan(&salesOrderID)
 	if err != nil {
 		return nil, fmt.Errorf("create sales order: %w", err)
 	}
@@ -337,13 +347,13 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 			(sales_order_id, customer_id, warehouse_id, channel, branch_id,
 			 invoice_number, invoice_date,
 			 sub_amount, discount_amount, bill_discount, gst_amount, round_off,
-			 net_amount, paid_amount, status, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+			 net_amount, paid_amount, status, created_by, return_order_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		RETURNING id
 	`, salesOrderID, customerID, in.WarehouseID, channel, branchIDParam,
 		invoiceNumber, now,
 		round2(subtotal), round2(discountTotal), round2(billDiscount), round2(gstAmount), roundOff,
-		round2(netAmount), totalPaid, invoiceStatus, userID).Scan(&salesInvoiceID)
+		round2(netAmount), totalPaid, invoiceStatus, userID, returnOrderIDParam).Scan(&salesInvoiceID)
 	if err != nil {
 		return nil, fmt.Errorf("create sales invoice: %w", err)
 	}

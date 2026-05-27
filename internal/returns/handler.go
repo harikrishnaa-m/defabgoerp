@@ -41,6 +41,24 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	return c.Status(http.StatusCreated).JSON(fiber.Map{"return_order_id": id})
 }
 
+// Lookup handles GET /returns/lookup?return_number=RET-001
+// Returns the return total so billing can apply it as a discount.
+func (h *Handler) Lookup(c *fiber.Ctx) error {
+	num := c.Query("return_number")
+	if num == "" {
+		return httperr.BadRequest(c, "return_number query param is required")
+	}
+	result, err := h.store.GetByReturnNumber(num)
+	if err == sql.ErrNoRows {
+		return httperr.NotFound(c, "No return found for this return number")
+	}
+	if err != nil {
+		log.Println("return lookup error:", err)
+		return httperr.Internal(c)
+	}
+	return c.JSON(result)
+}
+
 func (h *Handler) List(c *fiber.Ctx) error {
 	filter := ReturnListFilter{Limit: 0, Offset: 0}
 	if bid := c.Query("branch_id"); bid != "" {

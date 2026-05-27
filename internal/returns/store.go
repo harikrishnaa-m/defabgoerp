@@ -385,6 +385,36 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 	return out, total, nil
 }
 
+func (s *Store) GetByReturnNumber(returnNumber string) (map[string]interface{}, error) {
+	var id, customerID, customerName, customerPhone, invoiceNumber, status string
+	var totalAmount float64
+	if err := s.db.QueryRow(`
+		SELECT ro.id, ro.return_number, ro.customer_id, ro.status, ro.total_amount,
+		       COALESCE(c.name, '') AS customer_name,
+		       COALESCE(c.phone, '') AS customer_phone,
+		       si.invoice_number
+		FROM return_orders ro
+		JOIN sales_invoices si ON si.id = ro.sales_invoice_id
+		LEFT JOIN customers c ON c.id = ro.customer_id
+		WHERE ro.return_number = $1
+	`, returnNumber).Scan(&id, &returnNumber, &customerID, &status, &totalAmount,
+		&customerName, &customerPhone, &invoiceNumber); err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"id":             id,
+		"return_number":  returnNumber,
+		"status":         status,
+		"total_amount":   totalAmount,
+		"invoice_number": invoiceNumber,
+		"customer": map[string]interface{}{
+			"id":    customerID,
+			"name":  customerName,
+			"phone": customerPhone,
+		},
+	}, nil
+}
+
 func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	order := make(map[string]interface{})
 	var branchID, warehouseID, customerID, status, refundType, refundMethod, refundReference, notes, returnNumber, salesInvoiceID, invoiceNumber string

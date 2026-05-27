@@ -39,6 +39,10 @@ type CreateBillInput struct {
 
 	Notes string `json:"notes"`
 
+	// Optional: link this bill to a completed return order (for exchange/credit flows).
+	// The return_order_id will be stored on both the sales_order and sales_invoice.
+	ReturnNumber string `json:"return_number"`
+
 	// Optional: override invoice/order date. Format: "2006-01-02". Defaults to today.
 	Date string `json:"date"`
 }
