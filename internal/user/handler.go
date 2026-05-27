@@ -58,21 +58,46 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 //
 
 func (h *Handler) List(c *fiber.Ctx) error {
+	roleFilter := c.Query("role")
 
-	// defaults
+	// If neither page nor limit is provided, return all users unpaginated.
+	if c.Query("page") == "" && c.Query("limit") == "" {
+		rows, err := h.store.ListAll(roleFilter)
+		if err != nil {
+			return c.Status(500).SendString(err.Error())
+		}
+		defer rows.Close()
+
+		var out []model.User
+		for rows.Next() {
+			var u model.User
+			if err := rows.Scan(
+				&u.ID, &u.Name, &u.Email, &u.RoleID,
+				&u.Role.ID, &u.Role.Name, &u.Role.Permissions,
+				&u.BranchID, &u.IsActive, &u.CreatedAt,
+			); err != nil {
+				return c.Status(500).SendString(err.Error())
+			}
+			u.PasswordHash = ""
+			out = append(out, u)
+		}
+		total, err := h.store.CountActive(roleFilter)
+		if err != nil {
+			return c.Status(500).SendString(err.Error())
+		}
+		return c.JSON(fiber.Map{"data": out, "total": total})
+	}
+
+	// Paginated path
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 10)
-
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 || limit > 100 {
 		limit = 10
 	}
-
 	offset := (page - 1) * limit
-
-	roleFilter := c.Query("role")
 
 	rows, err := h.store.ListActive(limit, offset, roleFilter)
 	if err != nil {
@@ -81,26 +106,15 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	defer rows.Close()
 
 	var out []model.User
-
 	for rows.Next() {
 		var u model.User
-
-		err := rows.Scan(
-			&u.ID,
-			&u.Name,
-			&u.Email,
-			&u.RoleID,
-			&u.Role.ID,
-			&u.Role.Name,
-			&u.Role.Permissions,
-			&u.BranchID,
-			&u.IsActive,
-			&u.CreatedAt,
-		)
-		if err != nil {
+		if err := rows.Scan(
+			&u.ID, &u.Name, &u.Email, &u.RoleID,
+			&u.Role.ID, &u.Role.Name, &u.Role.Permissions,
+			&u.BranchID, &u.IsActive, &u.CreatedAt,
+		); err != nil {
 			return c.Status(500).SendString(err.Error())
 		}
-
 		u.PasswordHash = ""
 		out = append(out, u)
 	}
