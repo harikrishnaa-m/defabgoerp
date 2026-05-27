@@ -58,13 +58,15 @@ func (s *Store) List(branchID *string, status, paymentStatus string, limit, offs
 			COALESCE(si.invoice_number, '') AS invoice_number,
 			COALESCE(si.net_amount, 0) AS net_amount,
 			COALESCE(si.paid_amount, 0) AS paid_amount,
-			COALESCE(si.status, '') AS invoice_status
+			COALESCE(si.status, '') AS invoice_status,
+			COALESCE(ro.return_number, '') AS return_number
 		FROM sales_orders so
 		LEFT JOIN customers c ON c.id = so.customer_id
 		LEFT JOIN branches b ON b.id = so.branch_id
 		LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
 		LEFT JOIN warehouses w ON w.id = so.warehouse_id
 		LEFT JOIN sales_invoices si ON si.sales_order_id = so.id
+		LEFT JOIN return_orders ro ON ro.id = so.return_order_id
 		%s
 		ORDER BY so.created_at DESC
 		LIMIT $%d OFFSET $%d
@@ -82,7 +84,7 @@ func (s *Store) List(branchID *string, status, paymentStatus string, limit, offs
 	for rows.Next() {
 		var id, soNumber, channel, status, paymentStatus, notes string
 		var customerName, customerPhone, branchName, spName, whName string
-		var invoiceNumber, invoiceStatus string
+		var invoiceNumber, invoiceStatus, returnNumber string
 		var orderDate, createdAt interface{}
 		var subtotal, taxTotal, discountTotal, billDiscount, grandTotal float64
 		var netAmount, paidAmount float64
@@ -95,8 +97,14 @@ func (s *Store) List(branchID *string, status, paymentStatus string, limit, offs
 			&customerName, &customerPhone,
 			&branchName, &spName, &whName,
 			&invoiceNumber, &netAmount, &paidAmount, &invoiceStatus,
+			&returnNumber,
 		); err != nil {
 			return nil, 0, err
+		}
+
+		var returnNumVal interface{}
+		if returnNumber != "" {
+			returnNumVal = returnNumber
 		}
 
 		row := map[string]interface{}{
@@ -120,6 +128,7 @@ func (s *Store) List(branchID *string, status, paymentStatus string, limit, offs
 			"salesperson_name": spName,
 			"warehouse_name":   whName,
 			"created_at":       createdAt,
+			"return_number":    returnNumVal,
 		}
 
 		if invoiceNumber != "" {
@@ -146,6 +155,8 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var orderDate, createdAt, updatedAt interface{}
 	var subtotal, taxTotal, discountTotal, billDiscount, grandTotal float64
 
+	var returnNumber string
+
 	err := s.db.QueryRow(`
 		SELECT
 			so.id, so.so_number, so.channel, so.order_date,
@@ -156,13 +167,15 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 			COALESCE(b.name, '') AS branch_name,
 			COALESCE(sp.name, '') AS salesperson_name,
 			COALESCE(w.name, '') AS warehouse_name,
-			COALESCE(u.name, '') AS created_by_name
+			COALESCE(u.name, '') AS created_by_name,
+			COALESCE(ro.return_number, '') AS return_number
 		FROM sales_orders so
 		JOIN customers c ON c.id = so.customer_id
 		LEFT JOIN branches b ON b.id = so.branch_id
 		LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
 		LEFT JOIN warehouses w ON w.id = so.warehouse_id
 		LEFT JOIN users u ON u.id = so.created_by
+		LEFT JOIN return_orders ro ON ro.id = so.return_order_id
 		WHERE so.id = $1
 	`, id).Scan(
 		&soID, &soNumber, &channel, &orderDate,
@@ -171,6 +184,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		&createdAt, &updatedAt,
 		&customerID, &customerCode, &customerName, &customerPhone, &customerEmail,
 		&branchName, &spName, &whName, &createdByName,
+		&returnNumber,
 	)
 	if err != nil {
 		return nil, err
@@ -197,6 +211,12 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"created_by":       createdByName,
 		"created_at":       createdAt,
 		"updated_at":       updatedAt,
+		"return_number": func() interface{} {
+			if returnNumber != "" {
+				return returnNumber
+			}
+			return nil
+		}(),
 		"customer": map[string]interface{}{
 			"id":            customerID,
 			"customer_code": customerCode,
