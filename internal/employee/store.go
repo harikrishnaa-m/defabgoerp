@@ -95,11 +95,20 @@ func (s *Store) List(branchID *string, search string, limit, offset int) ([]map[
 		return nil, 0, err
 	}
 
-	n++
-	limitP := n
-	n++
-	offsetP := n
-	args = append(args, limit, offset)
+	var pagingClause string
+	if limit >= 0 {
+		n++
+		limitP := n
+		n++
+		offsetP := n
+		args = append(args, limit, offset)
+		pagingClause = fmt.Sprintf("LIMIT $%d OFFSET $%d", limitP, offsetP)
+	} else {
+		n++
+		offsetP := n
+		args = append(args, offset)
+		pagingClause = fmt.Sprintf("OFFSET $%d", offsetP)
+	}
 
 	q := fmt.Sprintf(`
 		SELECT u.id, u.name, u.email, u.branch_id, COALESCE(b.name,'') AS branch_name,
@@ -108,8 +117,8 @@ func (s *Store) List(branchID *string, search string, limit, offset int) ([]map[
 		LEFT JOIN branches b ON b.id = u.branch_id
 		%s
 		ORDER BY u.created_at DESC
-		LIMIT $%d OFFSET $%d
-	`, where, limitP, offsetP)
+		%s
+	`, where, pagingClause)
 
 	rows, err := s.db.Query(q, args...)
 	if err != nil {

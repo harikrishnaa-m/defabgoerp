@@ -18,10 +18,12 @@ type PaymentInput struct {
 
 type CreateBillInput struct {
 	// Customer
-	CustomerPhone string `json:"customer_phone"`
-	CustomerName  string `json:"customer_name"`
-	CustomerEmail string `json:"customer_email"`
-	GSTNumber     string `json:"gst_number"` // optional; saved to customer record
+	CustomerPhone      string `json:"customer_phone"`
+	CustomerName       string `json:"customer_name"`
+	CustomerEmail      string `json:"customer_email"`
+	GSTNumber          string `json:"gst_number"`           // optional; saved to customer record
+	CustomerBirthDay   *int   `json:"customer_birth_day"`   // 1-31, optional
+	CustomerBirthMonth *int   `json:"customer_birth_month"` // 1-12, optional
 
 	// Sale context
 	Channel       string `json:"channel"`        // STORE or ONLINE (defaults to STORE)

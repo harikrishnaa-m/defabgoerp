@@ -130,8 +130,11 @@ func (s *Store) PunchOut(userID, notes string) (map[string]interface{}, error) {
 // List — today's attendance for all users (aggregated across sessions)
 // ──────────────────────────────────────────
 
-func (s *Store) List(userID *string, branchID *string, search string, limit, offset int) ([]map[string]interface{}, int, error) {
-	today := time.Now().Format("2006-01-02")
+func (s *Store) List(userID *string, branchID *string, search string, date string, limit, offset int) ([]map[string]interface{}, int, error) {
+	today := date
+	if today == "" {
+		today = time.Now().Format("2006-01-02")
+	}
 
 	where := "WHERE 1=1"
 	args := []interface{}{}
@@ -163,11 +166,20 @@ func (s *Store) List(userID *string, branchID *string, search string, limit, off
 	datePH := n
 	args = append(args, today)
 
-	n++
-	limitP := n
-	n++
-	offsetP := n
-	args = append(args, limit, offset)
+	var pagingClause string
+	if limit >= 0 {
+		n++
+		limitP := n
+		n++
+		offsetP := n
+		args = append(args, limit, offset)
+		pagingClause = fmt.Sprintf("LIMIT $%d OFFSET $%d", limitP, offsetP)
+	} else {
+		n++
+		offsetP := n
+		args = append(args, offset)
+		pagingClause = fmt.Sprintf("OFFSET $%d", offsetP)
+	}
 
 	q := fmt.Sprintf(`
 		SELECT u.id, u.name, u.branch_id, COALESCE(b.name,'') AS branch_name,
@@ -194,8 +206,8 @@ func (s *Store) List(userID *string, branchID *string, search string, limit, off
 		) att ON true
 		%s
 		ORDER BY u.name
-		LIMIT $%d OFFSET $%d
-	`, datePH, where, limitP, offsetP)
+		%s
+	`, datePH, where, pagingClause)
 
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
