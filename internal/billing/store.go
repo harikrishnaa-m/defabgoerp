@@ -78,23 +78,32 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		code := fmt.Sprintf("CUS%04d", next)
 
 		err = tx.QueryRow(`
-			INSERT INTO customers (customer_code, name, phone, email, gst_number)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO customers (customer_code, name, phone, email, gst_number, birth_day, birth_month)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 			RETURNING id
-		`, code, in.CustomerName, in.CustomerPhone, in.CustomerEmail, in.GSTNumber).Scan(&customerID)
+		`, code, in.CustomerName, in.CustomerPhone, in.CustomerEmail, in.GSTNumber, in.CustomerBirthDay, in.CustomerBirthMonth).Scan(&customerID)
 		if err != nil {
 			return nil, fmt.Errorf("create customer: %w", err)
 		}
 		customerGST = in.GSTNumber
 	} else if err != nil {
 		return nil, fmt.Errorf("find customer: %w", err)
-	} else if in.GSTNumber != "" {
-		// Update GST number on existing customer if provided
-		_, err = tx.Exec(`UPDATE customers SET gst_number = $1, updated_at = NOW() WHERE id = $2`, in.GSTNumber, customerID)
-		if err != nil {
-			return nil, fmt.Errorf("update customer gst: %w", err)
+	} else {
+		// Update GST and/or birth fields on existing customer if provided
+		if in.GSTNumber != "" {
+			_, err = tx.Exec(`UPDATE customers SET gst_number = $1, updated_at = NOW() WHERE id = $2`, in.GSTNumber, customerID)
+			if err != nil {
+				return nil, fmt.Errorf("update customer gst: %w", err)
+			}
+			customerGST = in.GSTNumber
 		}
-		customerGST = in.GSTNumber
+		if in.CustomerBirthDay != nil || in.CustomerBirthMonth != nil {
+			_, err = tx.Exec(`UPDATE customers SET birth_day = COALESCE($1, birth_day), birth_month = COALESCE($2, birth_month), updated_at = NOW() WHERE id = $3`,
+				in.CustomerBirthDay, in.CustomerBirthMonth, customerID)
+			if err != nil {
+				return nil, fmt.Errorf("update customer birth: %w", err)
+			}
+		}
 	}
 
 	// ──────────────────────────────────────────
@@ -797,17 +806,19 @@ func (s *Store) GetCustomerByPhone(phone string) (map[string]interface{}, error)
 	var ph sql.NullString
 	var totalPurchases float64
 	var createdAt string
+	var birthDay, birthMonth sql.NullInt64
 
 	err := s.db.QueryRow(`
 		SELECT id, customer_code, name, COALESCE(phone, ''), COALESCE(email, ''),
-		       COALESCE(gst_number, ''), total_purchases, created_at::text
+		       COALESCE(gst_number, ''), total_purchases, created_at::text,
+		       birth_day, birth_month
 		FROM customers WHERE phone = $1 AND is_active = true
-	`, phone).Scan(&id, &code, &name, &ph, &email, &gstNumber, &totalPurchases, &createdAt)
+	`, phone).Scan(&id, &code, &name, &ph, &email, &gstNumber, &totalPurchases, &createdAt, &birthDay, &birthMonth)
 	if err != nil {
 		return nil, err
 	}
 
-	return map[string]interface{}{
+	result := map[string]interface{}{
 		"id":              id,
 		"customer_code":   code,
 		"name":            name,
@@ -816,7 +827,16 @@ func (s *Store) GetCustomerByPhone(phone string) (map[string]interface{}, error)
 		"gst_number":      gstNumber,
 		"total_purchases": round2(totalPurchases),
 		"created_at":      createdAt,
-	}, nil
+		"birth_day":       nil,
+		"birth_month":     nil,
+	}
+	if birthDay.Valid {
+		result["birth_day"] = birthDay.Int64
+	}
+	if birthMonth.Valid {
+		result["birth_month"] = birthMonth.Int64
+	}
+	return result, nil
 }
 
 // AddPayment adds a payment to an existing invoice and updates status.

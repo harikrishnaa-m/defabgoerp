@@ -1,0 +1,3 @@
+ALTER TABLE customers
+    ADD COLUMN IF NOT EXISTS birth_day   SMALLINT CHECK (birth_day BETWEEN 1 AND 31),
+    ADD COLUMN IF NOT EXISTS birth_month SMALLINT CHECK (birth_month BETWEEN 1 AND 12);

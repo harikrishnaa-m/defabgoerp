@@ -54,17 +54,15 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	limit := c.QueryInt("limit", 20)
+	limit := -1
+	if c.Query("limit") != "" {
+		limit = c.QueryInt("limit", -1)
+	}
 	offset := c.QueryInt("offset", 0)
 	search := c.Query("search")
 
-	user := c.Locals("user").(*model.User)
 	var branchID *string
-	if user.Role.Name == model.RoleStoreManager {
-		if user.BranchID != nil {
-			branchID = user.BranchID
-		}
-	} else if bid := c.Query("branch_id"); bid != "" {
+	if bid := c.Query("branch_id"); bid != "" {
 		branchID = &bid
 	}
 

@@ -60,9 +60,13 @@ func (h *Handler) PunchOut(c *fiber.Ctx) error {
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
-	limit := c.QueryInt("limit", 20)
+	limit := -1
+	if c.Query("limit") != "" {
+		limit = c.QueryInt("limit", -1)
+	}
 	offset := c.QueryInt("offset", 0)
 	search := c.Query("search")
+	date := c.Query("date") // optional; defaults to today in store
 
 	user := c.Locals("user").(*model.User)
 
@@ -75,9 +79,9 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		uid := user.ID.String()
 		userID = &uid
 	case model.RoleStoreManager:
-		// StoreManagers see all users in their branch
-		if user.BranchID != nil {
-			branchID = user.BranchID
+		// StoreManagers see all employees across all branches
+		if bid := c.Query("branch_id"); bid != "" {
+			branchID = &bid
 		}
 	default:
 		// SuperAdmin / AccountsManager — can filter by branch
@@ -86,7 +90,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		}
 	}
 
-	list, total, err := h.store.List(userID, branchID, search, limit, offset)
+	list, total, err := h.store.List(userID, branchID, search, date, limit, offset)
 	if err != nil {
 		log.Println("list attendance error:", err)
 		return httperr.Internal(c)
