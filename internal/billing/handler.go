@@ -48,7 +48,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if len(in.Items) == 0 {
 		return httperr.BadRequest(c, "at least one item is required")
 	}
-	if len(in.Payments) == 0 {
+	if len(in.Payments) == 0 && in.ReturnNumber == "" {
 		return httperr.BadRequest(c, "at least one payment is required")
 	}
 
@@ -62,7 +62,10 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	}
 
 	for i, p := range in.Payments {
-		if p.Amount <= 0 {
+		if p.Amount < 0 {
+			return httperr.BadRequest(c, "payments["+strconv.Itoa(i)+"].amount must be >= 0")
+		}
+		if p.Amount == 0 && in.ReturnNumber == "" {
 			return httperr.BadRequest(c, "payments["+strconv.Itoa(i)+"].amount must be > 0")
 		}
 		if p.Method == "" {
