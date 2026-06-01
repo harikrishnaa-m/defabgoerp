@@ -105,6 +105,22 @@ func (s *Store) GetLedgerAccount(id string) (*LedgerAccount, error) {
 	return &a, nil
 }
 
+func (s *Store) UpdateLedgerAccount(id string, in CreateLedgerAccountInput) error {
+	res, err := s.db.Exec(`
+		UPDATE ledger_accounts
+		SET code = $1, name = $2, account_group_id = $3, nature = $4, description = $5, updated_at = NOW()
+		WHERE id = $6 AND is_system = FALSE
+	`, in.Code, in.Name, in.AccountGroupID, in.Nature, in.Description, id)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // ════════════════════════════════════════════
 // Financial Years
 // ════════════════════════════════════════════
@@ -282,6 +298,70 @@ func (s *Store) VoucherExistsForRef(refType, refID string) (bool, error) {
 		SELECT EXISTS(SELECT 1 FROM vouchers WHERE ref_type=$1 AND ref_id=$2 AND is_cancelled=FALSE)
 	`, refType, refID).Scan(&exists)
 	return exists, err
+}
+
+// UpdateVoucher updates the header fields and replaces all lines of an existing non-cancelled voucher.
+func (s *Store) UpdateVoucher(id string, v Voucher) error {
+	var totalDebit, totalCredit float64
+	for _, l := range v.Lines {
+		totalDebit += l.Debit
+		totalCredit += l.Credit
+	}
+	if math.Abs(totalDebit-totalCredit) > 0.01 {
+		return fmt.Errorf("voucher unbalanced: debit=%.2f credit=%.2f", totalDebit, totalCredit)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var isCancelled bool
+	err = tx.QueryRow(`SELECT is_cancelled FROM vouchers WHERE id = $1`, id).Scan(&isCancelled)
+	if err == sql.ErrNoRows {
+		return sql.ErrNoRows
+	}
+	if err != nil {
+		return err
+	}
+	if isCancelled {
+		return fmt.Errorf("cannot edit a cancelled voucher")
+	}
+
+	var branchParam interface{}
+	if v.BranchID != "" {
+		branchParam = v.BranchID
+	}
+
+	_, err = tx.Exec(`
+		UPDATE vouchers
+		SET voucher_type = $1, voucher_date = $2, narration = $3, branch_id = $4, updated_at = NOW()
+		WHERE id = $5
+	`, v.VoucherType, v.VoucherDate, v.Narration, branchParam, id)
+	if err != nil {
+		return fmt.Errorf("update voucher: %w", err)
+	}
+
+	_, err = tx.Exec(`DELETE FROM voucher_lines WHERE voucher_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete voucher lines: %w", err)
+	}
+
+	for _, l := range v.Lines {
+		if l.Debit == 0 && l.Credit == 0 {
+			continue
+		}
+		_, err = tx.Exec(`
+			INSERT INTO voucher_lines (voucher_id, ledger_account_id, debit, credit, narration)
+			VALUES ($1, $2, $3, $4, $5)
+		`, id, l.LedgerAccountID, l.Debit, l.Credit, l.Narration)
+		if err != nil {
+			return fmt.Errorf("insert voucher line: %w", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
 // GetVoucher returns a single voucher with all its lines.

@@ -94,6 +94,26 @@ func (h *Handler) GetLedgerAccount(c *fiber.Ctx) error {
 	return c.JSON(account)
 }
 
+func (h *Handler) UpdateLedgerAccount(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var in CreateLedgerAccountInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON body")
+	}
+	if in.Name == "" || in.AccountGroupID == "" || in.Nature == "" {
+		return httperr.BadRequest(c, "name, account_group_id, and nature are required")
+	}
+	err := h.store.UpdateLedgerAccount(id, in)
+	if err == sql.ErrNoRows {
+		return httperr.NotFound(c, "Ledger account not found or is a system account")
+	}
+	if err != nil {
+		log.Println("update ledger account error:", err)
+		return httperr.Internal(c)
+	}
+	return c.JSON(fiber.Map{"message": "Ledger account updated"})
+}
+
 // ════════════════════════════════════════════
 // Financial Years
 // ════════════════════════════════════════════
@@ -170,6 +190,56 @@ func (h *Handler) CreateVoucher(c *fiber.Ctx) error {
 		return httperr.Internal(c)
 	}
 	return c.Status(201).JSON(fiber.Map{"message": "Voucher created"})
+}
+
+func (h *Handler) UpdateVoucher(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var in CreateVoucherInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON body")
+	}
+	if in.VoucherType == "" || in.VoucherDate == "" {
+		return httperr.BadRequest(c, "voucher_type and voucher_date are required")
+	}
+	if len(in.Lines) < 2 {
+		return httperr.BadRequest(c, "at least 2 lines (debit + credit) are required")
+	}
+
+	var lines []VoucherLine
+	for _, l := range in.Lines {
+		if l.LedgerAccountID == "" {
+			return httperr.BadRequest(c, "ledger_account_id is required for all lines")
+		}
+		lines = append(lines, VoucherLine{
+			LedgerAccountID: l.LedgerAccountID,
+			Debit:           l.Debit,
+			Credit:          l.Credit,
+			Narration:       l.Narration,
+		})
+	}
+
+	err := h.store.UpdateVoucher(id, Voucher{
+		VoucherType: in.VoucherType,
+		VoucherDate: in.VoucherDate,
+		Narration:   in.Narration,
+		BranchID:    in.BranchID,
+		Lines:       lines,
+	})
+	if err == sql.ErrNoRows {
+		return httperr.NotFound(c, "Voucher not found")
+	}
+	if err != nil {
+		log.Println("update voucher error:", err)
+		msg := err.Error()
+		if len(msg) >= 18 && msg[:18] == "voucher unbalanced" {
+			return httperr.BadRequest(c, msg)
+		}
+		if msg == "cannot edit a cancelled voucher" {
+			return httperr.BadRequest(c, msg)
+		}
+		return httperr.Internal(c)
+	}
+	return c.JSON(fiber.Map{"message": "Voucher updated"})
 }
 
 func (h *Handler) GetVoucher(c *fiber.Ctx) error {

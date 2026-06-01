@@ -174,7 +174,6 @@ func main() {
 	salesOrderHandler := salesorder.NewHandler(salesOrderStore)
 
 	salesInvoiceStore := salesinvoice.NewStore(database)
-	salesInvoiceHandler := salesinvoice.NewHandler(salesInvoiceStore)
 
 	billingStore := billing.NewStore(database, redisClient)
 	billingHandler := billing.NewHandler(billingStore)
@@ -182,6 +181,8 @@ func main() {
 	accountingStore := accounting.NewStore(database)
 	accountingRecorder := accounting.NewRecorder(database, accountingStore)
 	accountingHandler := accounting.NewHandler(accountingStore, accountingRecorder)
+
+	salesInvoiceHandler := salesinvoice.NewHandler(salesInvoiceStore, accountingRecorder)
 
 	returnStore := returns.NewStore(database)
 	returnHandler := returns.NewHandler(returnStore, accountingRecorder)

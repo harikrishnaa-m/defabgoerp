@@ -1,19 +1,22 @@
 package salesinvoice
 
 import (
+	"database/sql"
 	"log"
 
+	"defab-erp/internal/accounting"
 	"defab-erp/internal/core/model"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 type Handler struct {
-	store *Store
+	store    *Store
+	recorder *accounting.Recorder
 }
 
-func NewHandler(s *Store) *Handler {
-	return &Handler{store: s}
+func NewHandler(s *Store, r *accounting.Recorder) *Handler {
+	return &Handler{store: s, recorder: r}
 }
 
 func (h *Handler) List(c *fiber.Ctx) error {
@@ -86,4 +89,57 @@ func (h *Handler) GetByInvoiceNumber(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(invoice)
+}
+
+func (h *Handler) UpdateSalesperson(c *fiber.Ctx) error {
+	id := c.Params("id")
+	var body struct {
+		SalespersonID string `json:"salesperson_id"`
+	}
+	if err := c.BodyParser(&body); err != nil || body.SalespersonID == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "salesperson_id is required"})
+	}
+	err := h.store.UpdateSalesperson(id, body.SalespersonID)
+	if err == sql.ErrNoRows {
+		return c.Status(404).JSON(fiber.Map{"error": "sales invoice not found"})
+	}
+	if err != nil {
+		if err.Error() == "cannot update a cancelled invoice" {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		}
+		log.Println("update salesperson error:", err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to update salesperson"})
+	}
+	return c.JSON(fiber.Map{"message": "Salesperson updated"})
+}
+
+func (h *Handler) CancelInvoice(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	paymentIDs, err := h.store.CancelInvoice(id)
+	if err == sql.ErrNoRows {
+		return c.Status(404).JSON(fiber.Map{"error": "sales invoice not found"})
+	}
+	if err != nil {
+		msg := err.Error()
+		if msg == "invoice is already cancelled" || msg == "cannot cancel a returned invoice" {
+			return c.Status(400).JSON(fiber.Map{"error": msg})
+		}
+		log.Println("cancel invoice error:", err)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to cancel invoice"})
+	}
+
+	// Cancel accounting vouchers (best-effort — DB is already committed)
+	if h.recorder != nil {
+		if err := h.recorder.CancelVoucherByRef("sales_invoice", id); err != nil {
+			log.Println("cancel sales_invoice voucher error:", err)
+		}
+		for _, pid := range paymentIDs {
+			if err := h.recorder.CancelVoucherByRef("sales_payment", pid); err != nil {
+				log.Println("cancel sales_payment voucher error:", pid, err)
+			}
+		}
+	}
+
+	return c.JSON(fiber.Map{"message": "Invoice cancelled successfully"})
 }

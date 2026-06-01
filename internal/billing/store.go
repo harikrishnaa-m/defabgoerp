@@ -1228,10 +1228,10 @@ func (s *Store) searchFromDB(query, warehouseID string, limit int) ([]map[string
 		rows, err = s.db.Query(`
 			SELECT v.id, v.variant_code, v.sku, COALESCE(v.barcode, ''), v.name, p.name,
 			       v.price, COALESCE(v.cost_price, 0),
-			       COALESCE(st.quantity, 0)
+			       st.quantity
 			FROM variants v
 			JOIN products p ON p.id = v.product_id
-			LEFT JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
+			INNER JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
 			WHERE v.is_active = true AND v.variant_code = $2
 			LIMIT $3
 		`, warehouseID, code, limit)
@@ -1241,10 +1241,10 @@ func (s *Store) searchFromDB(query, warehouseID string, limit int) ([]map[string
 		rows, err = s.db.Query(`
 			SELECT v.id, v.variant_code, v.sku, COALESCE(v.barcode, ''), v.name, p.name,
 			       v.price, COALESCE(v.cost_price, 0),
-			       COALESCE(st.quantity, 0)
+			       st.quantity
 			FROM variants v
 			JOIN products p ON p.id = v.product_id
-			LEFT JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
+			INNER JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
 			WHERE v.is_active = true
 			  AND (v.sku ILIKE $2 OR v.barcode ILIKE $2 OR p.name ILIKE $2 OR v.name ILIKE $2)
 			LIMIT $3

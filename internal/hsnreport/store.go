@@ -43,7 +43,7 @@ func (s *Store) ListSales(f Filter) (*HSNSalesResult, error) {
 	base := `
 		FROM sales_invoice_items sii
 		JOIN variants v         ON v.id  = sii.variant_id
-		JOIN sales_invoices si  ON si.id = sii.sales_invoice_id
+		JOIN sales_invoices si  ON si.id = sii.sales_invoice_id AND si.status != 'CANCELLED'
 		LEFT JOIN customers c   ON c.id  = si.customer_id
 		LEFT JOIN branches b    ON b.id  = si.branch_id
 	`
