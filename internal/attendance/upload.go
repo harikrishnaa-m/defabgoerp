@@ -327,7 +327,7 @@ func cellVal(row []string, col int) string {
 	return row[col]
 }
 
-// timeOfDay parses "HH:MM" and combines it with the report date.
+// timeOfDay parses "HH:MM" and combines it with the report date in IST.
 func timeOfDay(date time.Time, s string) time.Time {
 	s = strings.TrimSpace(s)
 	parts := strings.Split(s, ":")
@@ -344,5 +344,9 @@ func timeOfDay(date time.Time, s string) time.Time {
 	if h < 0 || h > 23 || m < 0 || m > 59 {
 		return time.Time{}
 	}
-	return time.Date(date.Year(), date.Month(), date.Day(), h, m, 0, 0, time.Local)
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		ist = time.FixedZone("IST", 5*60*60+30*60)
+	}
+	return time.Date(date.Year(), date.Month(), date.Day(), h, m, 0, 0, ist)
 }

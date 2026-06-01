@@ -27,7 +27,7 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 
 	base := `
 		FROM sales_payments spm
-		JOIN sales_invoices si    ON si.id  = spm.sales_invoice_id AND si.status != 'RETURNED'
+		JOIN sales_invoices si    ON si.id  = spm.sales_invoice_id AND si.status NOT IN ('RETURNED','CANCELLED')
 		LEFT JOIN customers c     ON c.id   = si.customer_id
 		LEFT JOIN branches b      ON b.id   = si.branch_id
 		LEFT JOIN sales_orders so ON so.id  = si.sales_order_id

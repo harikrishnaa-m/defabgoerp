@@ -10,6 +10,7 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	r.Get("/accounts", h.ListLedgerAccounts)
 	r.Post("/accounts", h.CreateLedgerAccount)
 	r.Get("/accounts/:id", h.GetLedgerAccount)
+	r.Put("/accounts/:id", h.UpdateLedgerAccount)
 
 	// ── Financial Years ──
 	r.Get("/financial-years", h.ListFinancialYears)
@@ -19,6 +20,7 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	r.Get("/vouchers", h.ListVouchers)
 	r.Post("/vouchers", h.CreateVoucher)
 	r.Get("/vouchers/:id", h.GetVoucher)
+	r.Put("/vouchers/:id", h.UpdateVoucher)
 	r.Delete("/vouchers/:id", h.CancelVoucher)
 
 	// ── Auto-record from existing transactions ──
