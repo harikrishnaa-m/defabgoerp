@@ -27,7 +27,7 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 
 	base := `
 		FROM sales_payments spm
-		JOIN sales_invoices si    ON si.id  = spm.sales_invoice_id AND si.status NOT IN ('RETURNED','CANCELLED')
+		JOIN sales_invoices si    ON si.id  = spm.sales_invoice_id AND si.status NOT IN ('CANCELLED')
 		LEFT JOIN customers c     ON c.id   = si.customer_id
 		LEFT JOIN branches b      ON b.id   = si.branch_id
 		LEFT JOIN sales_orders so ON so.id  = si.sales_order_id
@@ -124,7 +124,15 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 			COALESCE(b.name, '') AS location,
 			COALESCE(sp.name, '') AS salesperson_name,
 			COALESCE(u.name, '') AS created_by_name,
-			COALESCE(si.channel, '') AS channel
+			COALESCE(si.channel, '') AS channel,
+			(si.status = 'RETURNED') AS is_returned,
+			COALESCE((
+				SELECT si2.invoice_number
+				FROM return_orders ro2
+				JOIN sales_invoices si2 ON si2.return_order_id = ro2.id
+				WHERE ro2.sales_invoice_id = si.id AND ro2.status != 'CANCELLED'
+				LIMIT 1
+			), '') AS exchange_invoice_number
 	`
 
 	query := fmt.Sprintf(`%s %s %s ORDER BY si.invoice_date DESC, si.invoice_number DESC`, select_, base, where)
@@ -153,6 +161,8 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 			&row.SalespersonName,
 			&row.CreatedByName,
 			&row.Channel,
+			&row.IsReturned,
+			&row.ExchangeInvoiceNumber,
 		); err != nil {
 			return nil, err
 		}
