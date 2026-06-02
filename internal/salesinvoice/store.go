@@ -142,6 +142,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var invID, invNumber, channel, status, soNumber, soID string
 	var customerID, customerCode, customerName, customerPhone, customerEmail string
 	var branchName, spName, whName, createdByName string
+	var spID sql.NullString
 	var returnNumber string
 	var invoiceDate, createdAt, updatedAt interface{}
 	var subAmount, discountAmount, billDiscount, gstAmount, roundOff, netAmount, paidAmount float64
@@ -155,6 +156,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 			so.id, so.so_number,
 			c.id, COALESCE(c.customer_code, ''), c.name, COALESCE(c.phone, ''), COALESCE(c.email, ''),
 			COALESCE(b.name, '') AS branch_name,
+			so.salesperson_id,
 			COALESCE(sp.name, '') AS salesperson_name,
 			COALESCE(w.name, '') AS warehouse_name,
 			COALESCE(u.name, '') AS created_by_name,
@@ -175,7 +177,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		&createdAt, &updatedAt,
 		&soID, &soNumber,
 		&customerID, &customerCode, &customerName, &customerPhone, &customerEmail,
-		&branchName, &spName, &whName, &createdByName,
+		&branchName, &spID, &spName, &whName, &createdByName,
 		&returnNumber,
 	)
 	if err != nil {
@@ -219,6 +221,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 			"email":         customerEmail,
 		},
 		"branch_name":      branchName,
+		"salesperson_id":   spID.String,
 		"salesperson_name": spName,
 		"warehouse_name":   whName,
 	}
