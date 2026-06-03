@@ -47,14 +47,17 @@ func (s *Store) CreateBill(in CreateBillInput, userID, branchID string) (map[str
 		ist = time.FixedZone("IST", 5*60*60+30*60) // fallback
 	}
 	var now time.Time
+	currentIST := time.Now().In(ist)
 	if in.Date != "" {
 		parsed, parseErr := time.ParseInLocation("2006-01-02", in.Date, ist)
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid date format, expected YYYY-MM-DD: %w", parseErr)
 		}
-		now = parsed
+		now = time.Date(parsed.Year(), parsed.Month(), parsed.Day(),
+			currentIST.Hour(), currentIST.Minute(), currentIST.Second(),
+			currentIST.Nanosecond(), ist)
 	} else {
-		now = time.Now().In(ist)
+		now = currentIST
 	}
 
 	// ──────────────────────────────────────────
