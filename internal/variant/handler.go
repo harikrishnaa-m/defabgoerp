@@ -1,6 +1,7 @@
 package variant
 
 import (
+	"defab-erp/internal/core/model"
 	"defab-erp/internal/core/storage"
 	"fmt"
 	"strconv"
@@ -357,4 +358,54 @@ func (h *Handler) GetByCode(c *fiber.Ctx) error {
 		return c.Status(404).JSON(fiber.Map{"error": "no active variant found with code " + code})
 	}
 	return c.JSON(result)
+}
+
+func (h *Handler) ItemMaster(c *fiber.Ctx) error {
+	user := c.Locals("user").(*model.User)
+
+	// Determine warehouse scope
+	warehouseID := ""
+	if user.Role.Name == model.RoleStoreManager {
+		if user.BranchID == nil {
+			return c.Status(403).JSON(fiber.Map{"error": "Your account has no branch assigned"})
+		}
+		err := h.store.db.QueryRow(
+			`SELECT id FROM warehouses WHERE branch_id = $1 LIMIT 1`, *user.BranchID,
+		).Scan(&warehouseID)
+		if err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "No warehouse found for your branch"})
+		}
+	}
+
+	// Pagination: if limit param absent/empty → return all (limit=0)
+	limitStr := c.Query("limit")
+	offsetStr := c.Query("offset")
+	limit := 0
+	offset := 0
+	if limitStr != "" {
+		limit, _ = strconv.Atoi(limitStr)
+		if limit < 0 {
+			limit = 0
+		}
+	}
+	if offsetStr != "" {
+		offset, _ = strconv.Atoi(offsetStr)
+		if offset < 0 {
+			offset = 0
+		}
+	}
+
+	variantCode := c.Query("variant_code")
+
+	items, total, err := h.store.ItemMaster(warehouseID, variantCode, limit, offset)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
 }

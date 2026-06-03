@@ -541,6 +541,201 @@ func cartesian(groups [][]string) [][]string {
 	return result
 }
 
+// ItemMaster returns variants with stock info.
+// warehouseID = "" → SuperAdmin: one flat row per variant per warehouse.
+// warehouseID set → StoreManager: only variants with stock in that warehouse.
+// variantCode = "" → no filter; set to search by variant code prefix.
+// limit = 0 → no pagination, return everything.
+func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) ([]map[string]interface{}, int, error) {
+	var total int
+	var countQ string
+	var countArgs []interface{}
+
+	if warehouseID != "" {
+		if variantCode != "" {
+			countQ = `
+				SELECT COUNT(DISTINCT v.id)
+				FROM variants v
+				INNER JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
+				WHERE v.variant_code::text LIKE $2
+			`
+			countArgs = []interface{}{warehouseID, variantCode + "%"}
+		} else {
+			countQ = `
+				SELECT COUNT(DISTINCT v.id)
+				FROM variants v
+				INNER JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
+			`
+			countArgs = []interface{}{warehouseID}
+		}
+	} else {
+		if variantCode != "" {
+			countQ = `
+				SELECT COUNT(*)
+				FROM variants v
+				JOIN products p ON p.id = v.product_id
+				LEFT JOIN stocks st ON st.variant_id = v.id
+				LEFT JOIN warehouses w ON w.id = st.warehouse_id
+				WHERE v.variant_code::text LIKE $1
+			`
+			countArgs = []interface{}{variantCode + "%"}
+		} else {
+			// count flat rows (one per variant-warehouse pair)
+			countQ = `
+				SELECT COUNT(*)
+				FROM variants v
+				JOIN products p ON p.id = v.product_id
+				LEFT JOIN stocks st ON st.variant_id = v.id
+				LEFT JOIN warehouses w ON w.id = st.warehouse_id
+			`
+		}
+	}
+	if err := s.db.QueryRow(countQ, countArgs...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	var rows *sql.Rows
+	var err error
+
+	if warehouseID != "" {
+		// Store manager: one row per variant, quantity from their warehouse only
+		args := []interface{}{warehouseID}
+		idx := 2
+		wherePart := ""
+		if variantCode != "" {
+			wherePart = fmt.Sprintf(" AND v.variant_code::text LIKE $%d", idx)
+			args = append(args, variantCode+"%")
+			idx++
+		}
+		baseQ := fmt.Sprintf(`
+			SELECT v.id, v.variant_code, v.name, v.sku, COALESCE(v.barcode,''),
+			       v.price, COALESCE(v.cost_price, 0), COALESCE(v.hsn_code,''),
+			       p.id, p.name, COALESCE(c.name,''), v.is_active,
+			       COALESCE(st.quantity, 0),
+			       COALESCE(w.id::text,''), COALESCE(w.name,''), COALESCE(b.name,'')
+			FROM variants v
+			JOIN products p ON p.id = v.product_id
+			LEFT JOIN categories c ON c.id = p.category_id
+			INNER JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
+			LEFT JOIN warehouses w ON w.id = st.warehouse_id
+			LEFT JOIN branches b ON b.id = w.branch_id
+			WHERE 1=1%s
+			ORDER BY v.variant_code
+		`, wherePart)
+		if limit > 0 {
+			baseQ += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
+			args = append(args, limit, offset)
+		}
+		rows, err = s.db.Query(baseQ, args...)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer rows.Close()
+
+		var out []map[string]interface{}
+		for rows.Next() {
+			var id, name, sku, barcode, hsnCode, productID, productName, categoryName string
+			var warehouseID2, warehouseName, branchName string
+			var variantCode int
+			var price, costPrice, qty float64
+			var isActive bool
+			if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode,
+				&price, &costPrice, &hsnCode,
+				&productID, &productName, &categoryName, &isActive, &qty,
+				&warehouseID2, &warehouseName, &branchName); err != nil {
+				return nil, 0, err
+			}
+			out = append(out, map[string]interface{}{
+				"id":             id,
+				"variant_code":   variantCode,
+				"name":           name,
+				"sku":            sku,
+				"barcode":        barcode,
+				"price":          price,
+				"cost_price":     costPrice,
+				"hsn_code":       hsnCode,
+				"product_id":     productID,
+				"product_name":   productName,
+				"category_name":  categoryName,
+				"is_active":      isActive,
+				"quantity":       qty,
+				"warehouse_id":   warehouseID2,
+				"warehouse_name": warehouseName,
+				"branch_name":    branchName,
+			})
+		}
+		return out, total, nil
+	}
+
+	// Admin: flat rows — one entry per variant per warehouse
+	adminArgs := []interface{}{}
+	idx := 1
+	wherePart := ""
+	if variantCode != "" {
+		wherePart = fmt.Sprintf(" WHERE v.variant_code::text LIKE $%d", idx)
+		adminArgs = append(adminArgs, variantCode+"%")
+		idx++
+	}
+	baseQ := fmt.Sprintf(`
+		SELECT v.id, v.variant_code, v.name, v.sku, COALESCE(v.barcode,''),
+		       v.price, COALESCE(v.cost_price, 0), COALESCE(v.hsn_code,''),
+		       p.id, p.name, COALESCE(c.name,''), v.is_active,
+		       COALESCE(w.id::text,''), COALESCE(w.name,''),
+		       COALESCE(b.name,''), COALESCE(st.quantity, 0)
+		FROM variants v
+		JOIN products p ON p.id = v.product_id
+		LEFT JOIN categories c ON c.id = p.category_id
+		LEFT JOIN stocks st ON st.variant_id = v.id
+		LEFT JOIN warehouses w ON w.id = st.warehouse_id
+		LEFT JOIN branches b ON b.id = w.branch_id
+		%s
+		ORDER BY v.variant_code, w.name
+	`, wherePart)
+	if limit > 0 {
+		baseQ += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
+		adminArgs = append(adminArgs, limit, offset)
+	}
+	rows, err = s.db.Query(baseQ, adminArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var out []map[string]interface{}
+	for rows.Next() {
+		var id, name, sku, barcode, hsnCode, productID, productName, categoryName string
+		var warehouseID2, warehouseName, branchName string
+		var variantCode int
+		var price, costPrice, qty float64
+		var isActive bool
+		if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode,
+			&price, &costPrice, &hsnCode,
+			&productID, &productName, &categoryName, &isActive,
+			&warehouseID2, &warehouseName, &branchName, &qty); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, map[string]interface{}{
+			"id":             id,
+			"variant_code":   variantCode,
+			"name":           name,
+			"sku":            sku,
+			"barcode":        barcode,
+			"price":          price,
+			"cost_price":     costPrice,
+			"hsn_code":       hsnCode,
+			"product_id":     productID,
+			"product_name":   productName,
+			"category_name":  categoryName,
+			"is_active":      isActive,
+			"warehouse_id":   warehouseID2,
+			"warehouse_name": warehouseName,
+			"branch_name":    branchName,
+			"quantity":       qty,
+		})
+	}
+	return out, total, nil
+}
+
 func (s *Store) getProductPrefix(productID string) (string, error) {
 	var name string
 	err := s.db.QueryRow(
