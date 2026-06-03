@@ -6,6 +6,7 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	r.Post("/", h.Create)
 	r.Post("/generate", h.Generate)
 
+	r.Get("/item-master", h.ItemMaster)
 	r.Get("/search", h.Search)
 	r.Get("/by-code/:code", h.GetByCode)
 	r.Get("/product/:productId", h.ListByProduct)
