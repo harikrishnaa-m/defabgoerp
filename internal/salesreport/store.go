@@ -86,18 +86,11 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 		where = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
-	// Count + grand total (sum of payment amounts minus any refunds)
+	// Count + grand total (sum of actual payments collected; returns are exchanges so no cash leaves the store)
 	var total int
 	var totalNetAmount float64
 	if err := s.db.QueryRow(
-		fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(
-			spm.amount - COALESCE((
-				SELECT SUM(rp.amount)
-				FROM return_orders ro
-				JOIN return_payments rp ON rp.return_order_id = ro.id
-				WHERE ro.sales_invoice_id = si.id AND ro.status != 'CANCELLED'
-			), 0)
-		), 0) %s %s`, base, where),
+		fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(spm.amount), 0) %s %s`, base, where),
 		args...,
 	).Scan(&total, &totalNetAmount); err != nil {
 		return nil, err
@@ -114,12 +107,7 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 			si.invoice_number,
 			TO_CHAR(si.invoice_date AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY') AS date,
 			COALESCE(c.name, '') AS customer_name,
-			spm.amount - COALESCE((
-				SELECT SUM(rp.amount)
-				FROM return_orders ro
-				JOIN return_payments rp ON rp.return_order_id = ro.id
-				WHERE ro.sales_invoice_id = si.id AND ro.status != 'CANCELLED'
-			), 0) AS amount,
+			spm.amount AS amount,
 			spm.payment_method,
 			COALESCE(b.name, '') AS location,
 			COALESCE(sp.name, '') AS salesperson_name,
