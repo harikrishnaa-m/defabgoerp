@@ -311,9 +311,9 @@ func (s *Store) List(branchID *string, status, search string, limit, offset int)
 
 	query := fmt.Sprintf(`
 		SELECT ro.id, ro.return_number, ro.sales_invoice_id, si.invoice_number,
-		       ro.branch_id, ro.warehouse_id, ro.customer_id, ro.status,
+		       COALESCE(ro.branch_id::text, ''), COALESCE(ro.warehouse_id::text, ''), COALESCE(ro.customer_id::text, ''), ro.status,
 		       ro.total_amount, ro.gst_amount, ro.refund_amount, ro.refund_type,
-		       ro.refund_method, ro.refund_reference, ro.created_at, ro.processed_at, ro.notes,
+		       COALESCE(ro.refund_method, ''), COALESCE(ro.refund_reference, ''), ro.created_at, ro.processed_at, COALESCE(ro.notes, ''),
 		       COALESCE(b.name, '') AS branch_name,
 		       COALESCE(w.name, '') AS warehouse_name,
 		       COALESCE(c.name, '') AS customer_name,
