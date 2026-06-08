@@ -780,7 +780,9 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		SELECT eio.id, eio.sales_invoice_item_id, eio.variant_id, eio.quantity,
 		       eio.unit_price, eio.discount, eio.bill_discount_share,
 		       eio.tax_percent, eio.tax_amount, eio.total_price, eio.reason,
-		       COALESCE(v.sku, p.name) AS variant_label
+		       COALESCE(v.sku, p.name) AS variant_label,
+		       COALESCE(v.name, '') AS variant_name,
+		       COALESCE(p.name, '') AS product_name
 		FROM exchange_items_out eio
 		LEFT JOIN variants v ON v.id = eio.variant_id
 		LEFT JOIN products p ON p.id = v.product_id
@@ -793,15 +795,16 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var itemsOut []map[string]interface{}
 	for outRows.Next() {
 		var (
-			rowID, siItemID, varID, varLabel, reason    string
-			qty, up, disc, bdShare, txPct, txAmt, total float64
+			rowID, siItemID, varID, varLabel, varName, productName, reason string
+			qty, up, disc, bdShare, txPct, txAmt, total                   float64
 		)
-		if err := outRows.Scan(&rowID, &siItemID, &varID, &qty, &up, &disc, &bdShare, &txPct, &txAmt, &total, &reason, &varLabel); err != nil {
+		if err := outRows.Scan(&rowID, &siItemID, &varID, &qty, &up, &disc, &bdShare, &txPct, &txAmt, &total, &reason, &varLabel, &varName, &productName); err != nil {
 			return nil, err
 		}
 		itemsOut = append(itemsOut, map[string]interface{}{
 			"id": rowID, "sales_invoice_item_id": siItemID,
 			"variant_id": varID, "variant_label": varLabel,
+			"variant_name": varName, "product_name": productName,
 			"quantity": qty, "unit_price": up, "discount": disc,
 			"bill_discount_share": bdShare, "tax_percent": txPct,
 			"tax_amount": txAmt, "total_price": total, "reason": reason,
@@ -813,7 +816,9 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		SELECT eii.id, eii.variant_id, eii.quantity,
 		       eii.unit_price, eii.discount,
 		       eii.tax_percent, eii.tax_amount, eii.total_price,
-		       COALESCE(v.sku, p.name) AS variant_label
+		       COALESCE(v.sku, p.name) AS variant_label,
+		       COALESCE(v.name, '') AS variant_name,
+		       COALESCE(p.name, '') AS product_name
 		FROM exchange_items_in eii
 		LEFT JOIN variants v ON v.id = eii.variant_id
 		LEFT JOIN products p ON p.id = v.product_id
@@ -826,14 +831,15 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	var itemsIn []map[string]interface{}
 	for inRows.Next() {
 		var (
-			rowID, varID, varLabel             string
-			qty, up, disc, txPct, txAmt, total float64
+			rowID, varID, varLabel, varName, productName string
+			qty, up, disc, txPct, txAmt, total          float64
 		)
-		if err := inRows.Scan(&rowID, &varID, &qty, &up, &disc, &txPct, &txAmt, &total, &varLabel); err != nil {
+		if err := inRows.Scan(&rowID, &varID, &qty, &up, &disc, &txPct, &txAmt, &total, &varLabel, &varName, &productName); err != nil {
 			return nil, err
 		}
 		itemsIn = append(itemsIn, map[string]interface{}{
 			"id": rowID, "variant_id": varID, "variant_label": varLabel,
+			"variant_name": varName, "product_name": productName,
 			"quantity": qty, "unit_price": up, "discount": disc,
 			"tax_percent": txPct, "tax_amount": txAmt, "total_price": total,
 		})
