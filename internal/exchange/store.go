@@ -58,14 +58,19 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 		BillDiscount   float64
 		GSTAmount      float64
 		NetAmount      float64
+		SalespersonID  sql.NullString
 	}
 	if err := tx.QueryRow(`
-		SELECT id, customer_id, branch_id, warehouse_id, status,
-		       sub_amount, discount_amount, bill_discount, gst_amount, net_amount
-		FROM sales_invoices WHERE id = $1
+		SELECT si.id, si.customer_id, si.branch_id, si.warehouse_id, si.status,
+		       si.sub_amount, si.discount_amount, si.bill_discount, si.gst_amount, si.net_amount,
+		       so.salesperson_id
+		FROM sales_invoices si
+		LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+		WHERE si.id = $1
 	`, in.OriginalSalesInvoiceID).Scan(
 		&inv.ID, &inv.CustomerID, &inv.BranchID, &inv.WarehouseID, &inv.Status,
 		&inv.SubAmount, &inv.DiscountAmount, &inv.BillDiscount, &inv.GSTAmount, &inv.NetAmount,
+		&inv.SalespersonID,
 	); err != nil {
 		return "", fmt.Errorf("original invoice not found: %w", err)
 	}
@@ -358,14 +363,14 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 			(so_number, channel, branch_id, customer_id, warehouse_id,
 			 created_by, order_date,
 			 subtotal, tax_total, discount_total, bill_discount, grand_total,
-			 status, payment_status, notes)
+			 status, payment_status, notes, salesperson_id)
 		VALUES ($1, 'EXCHANGE', $2, $3, $4, $5, NOW(),
 		        $6, $7, $8, 0, $9,
-		        'CONFIRMED', 'PAID', $10)
+		        'CONFIRMED', 'PAID', $10, $11)
 		RETURNING id
 	`, soNumber, inv.BranchID, inv.CustomerID, inv.WarehouseID, userID,
 		subAmtIn, gstAmtIn, discAmtIn, totalInAmount,
-		"Exchange "+exchangeNumber).Scan(&newSalesOrderID); err != nil {
+		"Exchange "+exchangeNumber, inv.SalespersonID).Scan(&newSalesOrderID); err != nil {
 		return "", fmt.Errorf("create exchange sales order: %w", err)
 	}
 
