@@ -86,6 +86,31 @@ func (h *Handler) UpsertXlsx(c *fiber.Ctx) error {
 	})
 }
 
+// UpsertDryRun handles GET /api/migration/upsert-dry-run
+// Same params as UpsertXlsx (folder + branch not required — read-only).
+// Shows how many variants would be updated vs inserted with no DB writes.
+func (h *Handler) UpsertDryRun(c *fiber.Ctx) error {
+	folder := c.Query("folder")
+	if folder == "" {
+		return c.Status(400).JSON(fiber.Map{"error": "query param required: folder"})
+	}
+
+	basePath := filepath.Join("internal", "migration", folder)
+	if _, err := os.Stat(basePath); os.IsNotExist(err) {
+		return c.Status(400).JSON(fiber.Map{"error": fmt.Sprintf("folder not found: %s", basePath)})
+	}
+
+	result, err := h.store.DryRunUpsertMRP(basePath)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{
+		"dry_run": true,
+		"folder":  folder,
+		"result":  result,
+	})
+}
+
 // DryRun handles GET /api/migration/dry-run
 // Same params as ImportXlsx but only parses and summarises — no DB writes.
 func (h *Handler) DryRun(c *fiber.Ctx) error {
@@ -268,3 +293,44 @@ func (h *Handler) ImportVyttilaStock(c *fiber.Ctx) error {
 
 // ensure model import is used (imported for auth in ImportSales)
 var _ = (*model.User)(nil)
+
+// MapHSNFromXlsx handles POST /api/migration/map-hsn-from-xlsx
+// Accepts a multipart file upload (field: "file") with two columns: CODE, HSN CODE.
+// Updates hsn_code on ALL variants whose variant_code matches each CODE row.
+func (h *Handler) MapHSNFromXlsx(c *fiber.Ctx) error {
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "multipart field 'file' is required",
+		})
+	}
+
+	f, err := fileHeader.Open()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to open uploaded file: " + err.Error(),
+		})
+	}
+	defer f.Close()
+
+	fileBytes, err := io.ReadAll(f)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to read uploaded file: " + err.Error(),
+		})
+	}
+
+	codesProcessed, variantsUpdated, err := h.store.BulkMapHSNCodes(fileBytes)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "hsn mapping failed",
+			"details": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message":          "hsn mapping completed",
+		"codes_processed":  codesProcessed,
+		"variants_updated": variantsUpdated,
+	})
+}

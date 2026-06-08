@@ -69,6 +69,7 @@ import (
 	ecomWishlist "defab-erp/internal/ecom/wishlist"
 
 	"defab-erp/internal/directgrn"
+	"defab-erp/internal/exchange"
 	"defab-erp/internal/hsnreport"
 	"defab-erp/internal/migration"
 	"defab-erp/internal/paymentreport"
@@ -186,6 +187,9 @@ func main() {
 
 	returnStore := returns.NewStore(database)
 	returnHandler := returns.NewHandler(returnStore, accountingRecorder)
+
+	exchangeStore := exchange.NewStore(database)
+	exchangeHandler := exchange.NewHandler(exchangeStore, accountingRecorder)
 
 	dashboardStore := dashboard.NewStore(database)
 	dashboardHandler := dashboard.NewHandler(dashboardStore)
@@ -517,6 +521,18 @@ func main() {
 			),
 		),
 		returnHandler,
+	)
+
+	exchange.RegisterRoutes(
+		protected.Group("/exchanges",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleSalesPerson,
+				model.RoleAccountsManager,
+			),
+		),
+		exchangeHandler,
 	)
 
 	purchase.RegisterRoutes(

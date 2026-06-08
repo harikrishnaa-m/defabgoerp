@@ -50,6 +50,25 @@ type CategoryResult struct {
 	TotalQty float64 `json:"total_qty"`
 }
 
+// UpsertDryRunResult is returned by DryRunUpsertMRP — no DB writes are made.
+type UpsertDryRunResult struct {
+	TotalVariantsInFiles int                    `json:"total_variants_in_files"`
+	VariantsToUpdate     int                    `json:"variants_to_update"`
+	VariantsToInsert     int                    `json:"variants_to_insert"`
+	ProductsToCreate     int                    `json:"products_to_create"`
+	CategoriesToCreate   int                    `json:"categories_to_create"`
+	PerCategory          []UpsertDryRunCategory `json:"per_category"`
+}
+
+type UpsertDryRunCategory struct {
+	Name             string  `json:"name"`
+	ExistsInDB       bool    `json:"exists_in_db"`
+	VariantsToUpdate int     `json:"variants_to_update"`
+	VariantsToInsert int     `json:"variants_to_insert"`
+	ProductsToCreate int     `json:"products_to_create"`
+	TotalQty         float64 `json:"total_qty"`
+}
+
 // ── Public entry point ───────────────────────────────────────
 
 // ImportFolder reads every .xlsx inside folderPath, maps:
@@ -743,6 +762,211 @@ func (s *Store) UpsertFolderMRP(folderPath, branchName string) (*ImportResult, e
 	}
 
 	return result, tx.Commit()
+}
+
+// ── DryRunUpsertMRP ──────────────────────────────────────────────────────────
+//
+// Read-only preview of what UpsertFolderMRP would do:
+//   - Parses all xlsx files in folderPath
+//   - Queries the DB (no writes) to classify each variant as update vs insert
+//   - Returns per-category breakdown
+func (s *Store) DryRunUpsertMRP(folderPath string) (*UpsertDryRunResult, error) {
+	files, err := filepath.Glob(filepath.Join(folderPath, "*.xlsx"))
+	if err != nil || len(files) == 0 {
+		return nil, fmt.Errorf("no .xlsx files found in %s", folderPath)
+	}
+
+	// ── Parse all files (no DB) ──
+	type parsedFile struct {
+		catName string
+		rows    []XlsxRow
+	}
+	var parsed []parsedFile
+	for _, file := range files {
+		catName := categoryNameFromFile(file)
+		rows, err := parseXlsx(file, catName)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", filepath.Base(file), err)
+		}
+		parsed = append(parsed, parsedFile{catName: catName, rows: rows})
+	}
+
+	// ── Build dedup maps ──
+	type variantKey struct {
+		catName  string
+		itemName string
+		code     int
+	}
+	type productKey struct {
+		catName  string
+		itemName string
+	}
+	catNames := make(map[string]bool)
+	prodKeys := make(map[productKey]bool)
+	variantQty := make(map[variantKey]float64)
+
+	for _, pf := range parsed {
+		catNames[pf.catName] = true
+		for _, r := range pf.rows {
+			prodKeys[productKey{catName: pf.catName, itemName: r.ItemName}] = true
+			vk := variantKey{catName: pf.catName, itemName: r.ItemName, code: r.Code}
+			variantQty[vk] += r.Qty
+		}
+	}
+
+	// ── Read-only DB lookups ──
+
+	// 1. Which categories already exist?
+	catNameSlice := make([]string, 0, len(catNames))
+	for cn := range catNames {
+		catNameSlice = append(catNameSlice, cn)
+	}
+	existingCatIDs := make(map[string]uuid.UUID) // catName → id
+	{
+		var sb strings.Builder
+		args := make([]interface{}, len(catNameSlice))
+		for i, cn := range catNameSlice {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "$%d", i+1)
+			args[i] = cn
+		}
+		rows, err := s.db.Query(`SELECT id, name FROM categories WHERE name IN (`+sb.String()+`)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("category lookup: %w", err)
+		}
+		for rows.Next() {
+			var id uuid.UUID
+			var name string
+			if err := rows.Scan(&id, &name); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan category: %w", err)
+			}
+			existingCatIDs[name] = id
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("category rows: %w", err)
+		}
+	}
+
+	// 2. Which products already exist (in the existing categories)?
+	existingProdIDs := make(map[string]uuid.UUID) // "catName|lowerItemName" → id
+	catIDToCatName := make(map[uuid.UUID]string)
+	if len(existingCatIDs) > 0 {
+		catIDSlice := make([]interface{}, 0, len(existingCatIDs))
+		for cn, id := range existingCatIDs {
+			catIDSlice = append(catIDSlice, id)
+			catIDToCatName[id] = cn
+		}
+		var sb strings.Builder
+		for i := range catIDSlice {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "$%d", i+1)
+		}
+		rows, err := s.db.Query(
+			`SELECT id, LOWER(name), category_id FROM products WHERE category_id IN (`+sb.String()+`)`,
+			catIDSlice...,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("product lookup: %w", err)
+		}
+		for rows.Next() {
+			var id, catID uuid.UUID
+			var lowerName string
+			if err := rows.Scan(&id, &lowerName, &catID); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan product: %w", err)
+			}
+			existingProdIDs[catIDToCatName[catID]+"|"+lowerName] = id
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("product rows: %w", err)
+		}
+	}
+
+	// 3. Which variants already exist (in the existing products)?
+	existingVariants := make(map[string]bool) // "catName|lowerItemName|code" → true
+	if len(existingProdIDs) > 0 {
+		prodIDSlice := make([]interface{}, 0, len(existingProdIDs))
+		prodIDToKey := make(map[uuid.UUID]string)
+		for key, id := range existingProdIDs {
+			prodIDSlice = append(prodIDSlice, id)
+			prodIDToKey[id] = key
+		}
+		var sb strings.Builder
+		for i := range prodIDSlice {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "$%d", i+1)
+		}
+		rows, err := s.db.Query(
+			`SELECT product_id, variant_code FROM variants WHERE product_id IN (`+sb.String()+`)`,
+			prodIDSlice...,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("variant lookup: %w", err)
+		}
+		for rows.Next() {
+			var prodID uuid.UUID
+			var code int
+			if err := rows.Scan(&prodID, &code); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan variant: %w", err)
+			}
+			existingVariants[fmt.Sprintf("%s|%d", prodIDToKey[prodID], code)] = true
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("variant rows: %w", err)
+		}
+	}
+
+	// ── Classify ──
+	result := &UpsertDryRunResult{}
+	perCat := make(map[string]*UpsertDryRunCategory)
+
+	for cn := range catNames {
+		_, exists := existingCatIDs[cn]
+		perCat[cn] = &UpsertDryRunCategory{Name: cn, ExistsInDB: exists}
+		if !exists {
+			result.CategoriesToCreate++
+		}
+	}
+
+	for pk := range prodKeys {
+		prodLookupKey := pk.catName + "|" + strings.ToLower(pk.itemName)
+		if _, exists := existingProdIDs[prodLookupKey]; !exists {
+			result.ProductsToCreate++
+			perCat[pk.catName].ProductsToCreate++
+		}
+	}
+
+	for vk, qty := range variantQty {
+		prodLookupKey := vk.catName + "|" + strings.ToLower(vk.itemName)
+		varLookupKey := fmt.Sprintf("%s|%d", prodLookupKey, vk.code)
+		cat := perCat[vk.catName]
+		cat.TotalQty += qty
+		result.TotalVariantsInFiles++
+		if existingVariants[varLookupKey] {
+			result.VariantsToUpdate++
+			cat.VariantsToUpdate++
+		} else {
+			result.VariantsToInsert++
+			cat.VariantsToInsert++
+		}
+	}
+
+	for _, cat := range perCat {
+		result.PerCategory = append(result.PerCategory, *cat)
+	}
+
+	return result, nil
 }
 
 // ── Parse xlsx ───────────────────────────────────────────────
@@ -2145,4 +2369,55 @@ func (s *Store) ImportVyttilaStock(fileBytes []byte, branchName string, dryRun b
 	}
 
 	return result, nil
+}
+
+// BulkMapHSNCodes parses an xlsx with columns CODE and HSN CODE (header in row 1),
+// then updates variants.hsn_code for every variant whose variant_code matches each CODE.
+// Returns (codesProcessed, totalVariantsUpdated, error).
+func (s *Store) BulkMapHSNCodes(fileBytes []byte) (int, int, error) {
+xl, err := excelize.OpenReader(bytes.NewReader(fileBytes))
+if err != nil {
+return 0, 0, fmt.Errorf("open xlsx: %w", err)
+}
+defer xl.Close()
+
+// Parse all sheets - normally just one, but handle multiple gracefully
+codeToHSN := make(map[string]string) // variant_code (string) ? hsn_code
+for _, sheet := range xl.GetSheetList() {
+rows, err := xl.GetRows(sheet)
+if err != nil || len(rows) < 2 {
+continue
+}
+// Row 0 is header (CODE, HSN CODE) - skip it
+for _, row := range rows[1:] {
+if len(row) < 2 {
+continue
+}
+code := strings.TrimSpace(row[0])
+hsn := strings.TrimSpace(row[1])
+if code == "" || hsn == "" {
+continue
+}
+codeToHSN[code] = hsn
+}
+}
+
+if len(codeToHSN) == 0 {
+return 0, 0, fmt.Errorf("no valid CODE/HSN rows found in file")
+}
+
+totalUpdated := 0
+for code, hsn := range codeToHSN {
+res, err := s.db.Exec(
+`UPDATE variants SET hsn_code = $1 WHERE variant_code::text = $2`,
+hsn, code,
+)
+if err != nil {
+return 0, 0, fmt.Errorf("update variants for code %s: %w", code, err)
+}
+n, _ := res.RowsAffected()
+totalUpdated += int(n)
+}
+
+return len(codeToHSN), totalUpdated, nil
 }

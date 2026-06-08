@@ -42,6 +42,13 @@ func (r *Recorder) RecordSalesInvoice(salesInvoiceID, userID string) error {
 		return nil // idempotent
 	}
 
+	// Exchange-generated invoices are accounted for by RecordExchange — skip them.
+	var channel string
+	r.db.QueryRow(`SELECT channel FROM sales_invoices WHERE id = $1`, salesInvoiceID).Scan(&channel)
+	if channel == "EXCHANGE" {
+		return nil
+	}
+
 	var inv struct {
 		ID, InvoiceNumber                       string
 		BranchID                                sql.NullString
@@ -138,6 +145,13 @@ func (r *Recorder) RecordSalesReturn(returnOrderID, userID string) error {
 		return fmt.Errorf("check existing voucher: %w", err)
 	}
 	if exists {
+		return nil
+	}
+
+	// Exchange-generated credit notes are accounted for by RecordExchange — skip them.
+	var source string
+	r.db.QueryRow(`SELECT source FROM return_orders WHERE id = $1`, returnOrderID).Scan(&source)
+	if source == "EXCHANGE" {
 		return nil
 	}
 
@@ -517,6 +531,140 @@ func (r *Recorder) BackfillSalesReturns(userID string) (int, error) {
 // CancelVoucherByRef cancels the voucher linked to a specific ref_type + ref_id.
 func (r *Recorder) CancelVoucherByRef(refType, refID string) error {
 	return r.store.CancelVoucherByRef(refType, refID)
+}
+
+// ════════════════════════════════════════════
+// Exchange Order → EXCHANGE (JOURNAL) voucher
+// ════════════════════════════════════════════
+//
+// A single net journal that captures both sides of the exchange:
+//
+//   DR  Sales Returns A/c         items_out (excl GST)   ← revenue reversal for returned items
+//   DR  GST Payable               items_out GST          ← output GST reversal
+//   CR  Sales Revenue A/c         items_in  (excl GST)   ← revenue for new items
+//   CR  GST Payable               items_in  GST          ← output GST on new items
+//
+//   If customer pays net difference (COLLECT):
+//   DR  Cash / Card / UPI         net_amount
+//
+//   If store refunds net difference (REFUND):
+//   CR  Cash / Card / UPI         |net_amount|
+//
+// The credit note (return_order, source='EXCHANGE') and the new sales invoice
+// (channel='EXCHANGE') exist in the DB for GST compliance but are NOT recorded
+// separately — RecordSalesReturn and RecordSalesInvoice skip them.
+
+func (r *Recorder) RecordExchange(exchangeOrderID, userID string) error {
+	exists, err := r.store.VoucherExistsForRef(RefExchange, exchangeOrderID)
+	if err != nil {
+		return fmt.Errorf("check existing exchange voucher: %w", err)
+	}
+	if exists {
+		return nil // idempotent
+	}
+
+	var exc struct {
+		ExchangeNumber string
+		BranchID       sql.NullString
+		ItemsOutTotal  float64
+		ItemsInTotal   float64
+		NetAmount      float64
+		CreatedAt      string
+	}
+	if err := r.db.QueryRow(`
+		SELECT exchange_number, branch_id,
+		       items_out_total, items_in_total, net_amount,
+		       created_at::date
+		FROM exchange_orders WHERE id = $1
+	`, exchangeOrderID).Scan(
+		&exc.ExchangeNumber, &exc.BranchID,
+		&exc.ItemsOutTotal, &exc.ItemsInTotal, &exc.NetAmount,
+		&exc.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("read exchange order: %w", err)
+	}
+
+	// Aggregate GST from the two sides
+	var gstOut, gstIn float64
+	r.db.QueryRow(`SELECT COALESCE(SUM(tax_amount),0) FROM exchange_items_out WHERE exchange_order_id = $1`, exchangeOrderID).Scan(&gstOut)
+	r.db.QueryRow(`SELECT COALESCE(SUM(tax_amount),0) FROM exchange_items_in  WHERE exchange_order_id = $1`, exchangeOrderID).Scan(&gstIn)
+
+	gstOut = math.Round(gstOut*100) / 100
+	gstIn = math.Round(gstIn*100) / 100
+	revenueOut := math.Round((exc.ItemsOutTotal-gstOut)*100) / 100
+	revenueIn := math.Round((exc.ItemsInTotal-gstIn)*100) / 100
+	if revenueOut < 0 {
+		revenueOut = 0
+	}
+	if revenueIn < 0 {
+		revenueIn = 0
+	}
+
+	lines := []VoucherLine{
+		{LedgerAccountID: LedgerSalesRevenue, Debit: revenueOut, Narration: "Exchange: revenue reversal for returned items"},
+	}
+	if gstOut > 0 {
+		lines = append(lines, VoucherLine{
+			LedgerAccountID: LedgerGSTPayable, Debit: gstOut, Narration: "Exchange: GST reversal on returned items",
+		})
+	}
+	lines = append(lines, VoucherLine{
+		LedgerAccountID: LedgerSalesRevenue, Credit: revenueIn, Narration: "Exchange: revenue for new items",
+	})
+	if gstIn > 0 {
+		lines = append(lines, VoucherLine{
+			LedgerAccountID: LedgerGSTPayable, Credit: gstIn, Narration: "Exchange: GST on new items",
+		})
+	}
+
+	// Settlement cash movements
+	if exc.NetAmount != 0 {
+		rows, err := r.db.Query(`
+			SELECT payment_method, SUM(amount), direction
+			FROM exchange_settlements
+			WHERE exchange_order_id = $1
+			GROUP BY payment_method, direction
+		`, exchangeOrderID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var method, direction string
+				var amt float64
+				if err := rows.Scan(&method, &amt, &direction); err != nil {
+					continue
+				}
+				ledgerID := PaymentLedgerMap(method)
+				if direction == "COLLECT" {
+					lines = append(lines, VoucherLine{
+						LedgerAccountID: ledgerID, Debit: amt,
+						Narration: "Exchange: cash collected from customer (" + method + ")",
+					})
+				} else {
+					lines = append(lines, VoucherLine{
+						LedgerAccountID: ledgerID, Credit: amt,
+						Narration: "Exchange: cash refunded to customer (" + method + ")",
+					})
+				}
+			}
+		}
+	}
+
+	branchID := ""
+	if exc.BranchID.Valid {
+		branchID = exc.BranchID.String
+	}
+
+	_ = time.Now() // satisfy import
+	return r.store.CreateVoucher(Voucher{
+		VoucherType: VoucherTypeExchange,
+		VoucherDate: exc.CreatedAt,
+		Narration:   "Exchange " + exc.ExchangeNumber,
+		RefType:     RefExchange,
+		RefID:       exchangeOrderID,
+		BranchID:    branchID,
+		CreatedBy:   userID,
+		Lines:       lines,
+	})
 }
 
 // PatchPurchaseBranchIDs back-fills branch_id on existing purchase vouchers
