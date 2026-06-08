@@ -29,6 +29,7 @@ const (
 	VoucherTypeJournal     = "JOURNAL"
 	VoucherTypeContra      = "CONTRA"
 	VoucherTypeSalesReturn = "SALES_RETURN"
+	VoucherTypeExchange    = "EXCHANGE"
 )
 
 // Ref types — link vouchers back to source records
@@ -38,6 +39,7 @@ const (
 	RefPurchaseInvoice = "purchase_invoice"
 	RefSupplierPayment = "supplier_payment"
 	RefSalesReturn     = "sales_return"
+	RefExchange        = "exchange_order"
 )
 
 // AccountGroup represents a node in the chart-of-accounts tree.

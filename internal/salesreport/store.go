@@ -14,8 +14,24 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+// List dispatches to the correct query mode:
+//   - PaymentType set → payment-filtered (net_amount = matched payment amount)
+//   - PaymentType empty → invoice-based (net_amount = invoice value, credit notes as negative rows)
 func (s *Store) List(f Filter) (*ReportResult, error) {
-	limit := f.Limit // 0 means no pagination — return all
+	if f.PaymentType != "" {
+		return s.listByPayment(f)
+	}
+	return s.listByInvoice(f)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listByInvoice — invoice-driven, one row per invoice.
+// Exchange credit notes appear as negative rows (channel = CREDIT_NOTE).
+// Payment columns (cash/card/upi/bank_transfer/exchange_credit) show the
+// amount collected per method on each invoice.
+// ─────────────────────────────────────────────────────────────────────────────
+func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
+	limit := f.Limit
 	page := f.Page
 	if page <= 0 {
 		page = 1
@@ -25,20 +41,188 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 		offset = (page - 1) * limit
 	}
 
-	base := `
-		FROM sales_payments spm
-		JOIN sales_invoices si    ON si.id  = spm.sales_invoice_id AND si.status NOT IN ('CANCELLED')
-		LEFT JOIN customers c     ON c.id   = si.customer_id
-		LEFT JOIN branches b      ON b.id   = si.branch_id
-		LEFT JOIN sales_orders so ON so.id  = si.sales_order_id
-		LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
-		LEFT JOIN users u         ON u.id::text = si.created_by::text
-	`
+	var invConds []string
+	var cnConds []string
+	var args []interface{}
+	idx := 1
+	// When salesperson or channel filter is active, credit notes are excluded
+	// because they carry no salesperson and their channel is always CREDIT_NOTE.
+	includeCreditNotes := true
 
-	var conditions []string
+	if f.BranchID != "" {
+		invConds = append(invConds, fmt.Sprintf("si.branch_id = $%d", idx))
+		cnConds = append(cnConds, fmt.Sprintf("ro.branch_id = $%d", idx))
+		args = append(args, f.BranchID)
+		idx++
+	}
+	if f.FromDate != "" {
+		invConds = append(invConds, fmt.Sprintf("(si.invoice_date AT TIME ZONE 'Asia/Kolkata')::date >= $%d::date", idx))
+		cnConds = append(cnConds, fmt.Sprintf("(ro.created_at AT TIME ZONE 'Asia/Kolkata')::date >= $%d::date", idx))
+		args = append(args, f.FromDate)
+		idx++
+	}
+	if f.ToDate != "" {
+		invConds = append(invConds, fmt.Sprintf("(si.invoice_date AT TIME ZONE 'Asia/Kolkata')::date <= $%d::date", idx))
+		cnConds = append(cnConds, fmt.Sprintf("(ro.created_at AT TIME ZONE 'Asia/Kolkata')::date <= $%d::date", idx))
+		args = append(args, f.ToDate)
+		idx++
+	}
+	if f.SalespersonID != "" {
+		invConds = append(invConds, fmt.Sprintf("so.salesperson_id = $%d", idx))
+		args = append(args, f.SalespersonID)
+		idx++
+		includeCreditNotes = false
+	}
+	if f.CreatedByID != "" {
+		invConds = append(invConds, fmt.Sprintf("si.created_by::text = $%d", idx))
+		cnConds = append(cnConds, fmt.Sprintf("ro.created_by::text = $%d", idx))
+		args = append(args, f.CreatedByID)
+		idx++
+	}
+	if f.Channel != "" {
+		invConds = append(invConds, fmt.Sprintf("si.channel = $%d", idx))
+		args = append(args, f.Channel)
+		idx++
+		includeCreditNotes = false
+	}
+
+	invWhere := "WHERE si.status NOT IN ('CANCELLED')"
+	if len(invConds) > 0 {
+		invWhere += " AND " + strings.Join(invConds, " AND ")
+	}
+
+	creditNoteUnion := ""
+	if includeCreditNotes {
+		cnWhere := "WHERE ro.source = 'EXCHANGE' AND ro.status != 'CANCELLED'"
+		if len(cnConds) > 0 {
+			cnWhere += " AND " + strings.Join(cnConds, " AND ")
+		}
+		creditNoteUnion = fmt.Sprintf(`
+    UNION ALL
+    SELECT
+        ro.id,
+        ro.return_number            AS invoice_number,
+        TO_CHAR(ro.created_at AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY') AS date,
+        COALESCE(c.name, '')        AS customer_name,
+        'CREDIT_NOTE'               AS channel,
+        -ro.total_amount            AS net_amount,
+        -ro.gst_amount              AS gst_amount,
+        NULL::NUMERIC               AS cash,
+        NULL::NUMERIC               AS card,
+        NULL::NUMERIC               AS upi,
+        NULL::NUMERIC               AS bank_transfer,
+        NULL::NUMERIC               AS exchange_credit,
+        COALESCE(b.name, '')        AS location,
+        ''                          AS salesperson_name,
+        COALESCE(u.name, '')        AS created_by_name,
+        ro.created_at               AS sort_date
+    FROM return_orders ro
+    LEFT JOIN customers c ON c.id = ro.customer_id
+    LEFT JOIN branches  b ON b.id = ro.branch_id
+    LEFT JOIN users     u ON u.id::text = ro.created_by::text
+    %s`, cnWhere)
+	}
+
+	query := fmt.Sprintf(`
+WITH combined AS (
+    SELECT
+        si.id,
+        si.invoice_number,
+        TO_CHAR(si.invoice_date AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY') AS date,
+        COALESCE(c.name,  '')       AS customer_name,
+        COALESCE(si.channel, '')    AS channel,
+        si.net_amount + COALESCE((
+            SELECT SUM(ro.total_amount)
+            FROM return_orders ro
+            WHERE ro.sales_invoice_id = si.id
+              AND ro.source != 'EXCHANGE'
+              AND ro.status  != 'CANCELLED'
+        ), 0) AS net_amount,
+        si.gst_amount + COALESCE((
+            SELECT SUM(ro.gst_amount)
+            FROM return_orders ro
+            WHERE ro.sales_invoice_id = si.id
+              AND ro.source != 'EXCHANGE'
+              AND ro.status  != 'CANCELLED'
+        ), 0) AS gst_amount,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'CASH'                                         THEN spm.amount ELSE 0 END), 0), 0) AS cash,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method IN ('CARD','DEBIT_CARD','CREDIT_CARD')           THEN spm.amount ELSE 0 END), 0), 0) AS card,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'UPI'                                          THEN spm.amount ELSE 0 END), 0), 0) AS upi,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'BANK_TRANSFER'                               THEN spm.amount ELSE 0 END), 0), 0) AS bank_transfer,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'EXCHANGE_CREDIT'                             THEN spm.amount ELSE 0 END), 0), 0) AS exchange_credit,
+        COALESCE(b.name,  '')       AS location,
+        COALESCE(sp.name, '')       AS salesperson_name,
+        COALESCE(u.name,  '')       AS created_by_name,
+        si.invoice_date             AS sort_date
+    FROM sales_invoices si
+    LEFT JOIN customers    c  ON c.id  = si.customer_id
+    LEFT JOIN branches     b  ON b.id  = si.branch_id
+    LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+    LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
+    LEFT JOIN users        u  ON u.id::text = si.created_by::text
+    LEFT JOIN sales_payments spm ON spm.sales_invoice_id = si.id
+    %s
+    GROUP BY si.id, si.invoice_number, si.invoice_date, si.net_amount, si.gst_amount,
+             c.name, b.name, sp.name, u.name, si.channel
+    %s
+)
+SELECT
+    id, invoice_number, date, customer_name, channel,
+    net_amount, gst_amount,
+    cash, card, upi, bank_transfer, exchange_credit,
+    location, salesperson_name, created_by_name,
+    COUNT(*)                             OVER ()  AS total_count,
+    COALESCE(SUM(net_amount)             OVER (), 0) AS total_net,
+    COALESCE(SUM(gst_amount)             OVER (), 0) AS total_gst,
+    COALESCE(SUM(cash)                   OVER (), 0) AS total_cash,
+    COALESCE(SUM(card)                   OVER (), 0) AS total_card,
+    COALESCE(SUM(upi)                    OVER (), 0) AS total_upi,
+    COALESCE(SUM(bank_transfer)          OVER (), 0) AS total_bank_transfer,
+    COALESCE(SUM(exchange_credit)        OVER (), 0) AS total_exchange_credit
+FROM combined
+ORDER BY sort_date DESC, invoice_number DESC`, invWhere, creditNoteUnion)
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
+		args = append(args, limit, offset)
+	}
+
+	return s.scanRows(query, args, page, limit)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listByPayment — payment-filtered view.
+// One row per invoice; net_amount = amount collected by the filtered method.
+// Only invoices that have at least one payment of that type are shown.
+// Credit notes (no cash payments) are excluded.
+// ─────────────────────────────────────────────────────────────────────────────
+func (s *Store) listByPayment(f Filter) (*ReportResult, error) {
+	limit := f.Limit
+	page := f.Page
+	if page <= 0 {
+		page = 1
+	}
+	offset := 0
+	if limit > 0 {
+		offset = (page - 1) * limit
+	}
+
 	var args []interface{}
 	idx := 1
 
+	// Build payment-filter CASE expression (reused in SELECT and HAVING)
+	var payExpr string
+	if f.PaymentType == "CARD" {
+		args = append(args, []string{"CARD", "DEBIT_CARD", "CREDIT_CARD"})
+		payExpr = fmt.Sprintf("CASE WHEN spm.payment_method = ANY($%d) THEN spm.amount ELSE 0 END", idx)
+		idx++
+	} else {
+		args = append(args, f.PaymentType)
+		payExpr = fmt.Sprintf("CASE WHEN spm.payment_method = $%d THEN spm.amount ELSE 0 END", idx)
+		idx++
+	}
+
+	var conditions []string
 	if f.BranchID != "" {
 		conditions = append(conditions, fmt.Sprintf("si.branch_id = $%d", idx))
 		args = append(args, f.BranchID)
@@ -64,71 +248,78 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 		args = append(args, f.CreatedByID)
 		idx++
 	}
-	if f.PaymentType != "" {
-		if f.PaymentType == "CARD" {
-			// CARD covers CARD, DEBIT_CARD, and CREDIT_CARD
-			conditions = append(conditions, fmt.Sprintf("spm.payment_method = ANY($%d)", idx))
-			args = append(args, []string{"CARD", "DEBIT_CARD", "CREDIT_CARD"})
-		} else {
-			conditions = append(conditions, fmt.Sprintf("spm.payment_method = $%d", idx))
-			args = append(args, f.PaymentType)
-		}
-		idx++
-	}
 	if f.Channel != "" {
 		conditions = append(conditions, fmt.Sprintf("si.channel = $%d", idx))
 		args = append(args, f.Channel)
 		idx++
 	}
 
-	where := ""
+	where := "WHERE si.status NOT IN ('CANCELLED')"
 	if len(conditions) > 0 {
-		where = "WHERE " + strings.Join(conditions, " AND ")
+		where += " AND " + strings.Join(conditions, " AND ")
 	}
 
-	// Count + grand total (sum of actual payments collected; returns are exchanges so no cash leaves the store)
-	var total int
-	var totalNetAmount float64
-	if err := s.db.QueryRow(
-		fmt.Sprintf(`SELECT COUNT(*), COALESCE(SUM(spm.amount), 0) %s %s`, base, where),
-		args...,
-	).Scan(&total, &totalNetAmount); err != nil {
-		return nil, err
-	}
+	query := fmt.Sprintf(`
+WITH base AS (
+    SELECT
+        si.id,
+        si.invoice_number,
+        TO_CHAR(si.invoice_date AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY') AS date,
+        COALESCE(c.name,  '')    AS customer_name,
+        COALESCE(si.channel, '') AS channel,
+        SUM(%s)                  AS net_amount,
+        si.gst_amount,
+        NULLIF(SUM(CASE WHEN spm.payment_method = 'CASH'                                        THEN spm.amount ELSE 0 END), 0) AS cash,
+        NULLIF(SUM(CASE WHEN spm.payment_method IN ('CARD','DEBIT_CARD','CREDIT_CARD')          THEN spm.amount ELSE 0 END), 0) AS card,
+        NULLIF(SUM(CASE WHEN spm.payment_method = 'UPI'                                         THEN spm.amount ELSE 0 END), 0) AS upi,
+        NULLIF(SUM(CASE WHEN spm.payment_method = 'BANK_TRANSFER'                              THEN spm.amount ELSE 0 END), 0) AS bank_transfer,
+        NULL::NUMERIC            AS exchange_credit,
+        COALESCE(b.name,  '')    AS location,
+        COALESCE(sp.name, '')    AS salesperson_name,
+        COALESCE(u.name,  '')    AS created_by_name,
+        si.invoice_date          AS sort_date
+    FROM sales_invoices si
+    JOIN  sales_payments   spm ON spm.sales_invoice_id = si.id
+                               AND spm.payment_method != 'EXCHANGE_CREDIT'
+    LEFT JOIN customers    c  ON c.id  = si.customer_id
+    LEFT JOIN branches     b  ON b.id  = si.branch_id
+    LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+    LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
+    LEFT JOIN users        u  ON u.id::text = si.created_by::text
+    %s
+    GROUP BY si.id, si.invoice_number, si.invoice_date, si.gst_amount,
+             c.name, b.name, sp.name, u.name, si.channel
+    HAVING SUM(%s) > 0
+)
+SELECT
+    id, invoice_number, date, customer_name, channel,
+    net_amount, gst_amount,
+    cash, card, upi, bank_transfer, exchange_credit,
+    location, salesperson_name, created_by_name,
+    COUNT(*)                             OVER ()  AS total_count,
+    COALESCE(SUM(net_amount)             OVER (), 0) AS total_net,
+    COALESCE(SUM(gst_amount)             OVER (), 0) AS total_gst,
+    COALESCE(SUM(cash)                   OVER (), 0) AS total_cash,
+    COALESCE(SUM(card)                   OVER (), 0) AS total_card,
+    COALESCE(SUM(upi)                    OVER (), 0) AS total_upi,
+    COALESCE(SUM(bank_transfer)          OVER (), 0) AS total_bank_transfer,
+    0::NUMERIC                                       AS total_exchange_credit
+FROM base
+ORDER BY sort_date DESC, invoice_number DESC`, payExpr, where, payExpr)
 
-	totalPages := 1
-	if limit > 0 && total > 0 {
-		totalPages = (total + limit - 1) / limit
-	}
-
-	select_ := `
-		SELECT
-			spm.id,
-			si.invoice_number,
-			TO_CHAR(si.invoice_date AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY') AS date,
-			COALESCE(c.name, '') AS customer_name,
-			spm.amount AS amount,
-			spm.payment_method,
-			COALESCE(b.name, '') AS location,
-			COALESCE(sp.name, '') AS salesperson_name,
-			COALESCE(u.name, '') AS created_by_name,
-			COALESCE(si.channel, '') AS channel,
-			(si.status = 'RETURNED') AS is_returned,
-			COALESCE((
-				SELECT si2.invoice_number
-				FROM return_orders ro2
-				JOIN sales_invoices si2 ON si2.return_order_id = ro2.id
-				WHERE ro2.sales_invoice_id = si.id AND ro2.status != 'CANCELLED'
-				LIMIT 1
-			), '') AS exchange_invoice_number
-	`
-
-	query := fmt.Sprintf(`%s %s %s ORDER BY si.invoice_date DESC, si.invoice_number DESC`, select_, base, where)
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
 		args = append(args, limit, offset)
 	}
 
+	return s.scanRows(query, args, page, limit)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// scanRows is shared by both query modes — scans the standard column set
+// including window-function totals appended to every row.
+// ─────────────────────────────────────────────────────────────────────────────
+func (s *Store) scanRows(query string, args []interface{}, page, limit int) (*ReportResult, error) {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -136,36 +327,79 @@ func (s *Store) List(f Filter) (*ReportResult, error) {
 	defer rows.Close()
 
 	var data []SalesReportRow
+	var totalCount int
+	var totalNet, totalGST, totalCash, totalCard, totalUPI, totalBank, totalExchange float64
+
 	for rows.Next() {
 		var row SalesReportRow
+		var cash, card, upi, bank, exchange sql.NullFloat64
 		if err := rows.Scan(
-			&row.ID,
-			&row.InvoiceNumber,
-			&row.Date,
-			&row.CustomerName,
-			&row.NetAmount,
-			&row.PaymentMethod,
-			&row.Location,
-			&row.SalespersonName,
-			&row.CreatedByName,
-			&row.Channel,
-			&row.IsReturned,
-			&row.ExchangeInvoiceNumber,
+			&row.ID, &row.InvoiceNumber, &row.Date, &row.CustomerName, &row.Channel,
+			&row.NetAmount, &row.GSTAmount,
+			&cash, &card, &upi, &bank, &exchange,
+			&row.Location, &row.SalespersonName, &row.CreatedByName,
+			&totalCount, &totalNet, &totalGST,
+			&totalCash, &totalCard, &totalUPI, &totalBank, &totalExchange,
 		); err != nil {
 			return nil, err
 		}
+		row.CGSTAmount = row.GSTAmount / 2
+		row.SGSTAmount = row.GSTAmount / 2
+		if cash.Valid {
+			row.Cash = &cash.Float64
+		}
+		if card.Valid {
+			row.Card = &card.Float64
+		}
+		if upi.Valid {
+			row.UPI = &upi.Float64
+		}
+		if bank.Valid {
+			row.BankTransfer = &bank.Float64
+		}
+		if exchange.Valid {
+			row.ExchangeCredit = &exchange.Float64
+		}
 		data = append(data, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	if data == nil {
 		data = []SalesReportRow{}
 	}
 
+	totalPages := 1
+	if limit > 0 && totalCount > 0 {
+		totalPages = (totalCount + limit - 1) / limit
+	}
+
+	ptrOrNil := func(v float64) *float64 {
+		if v == 0 {
+			return nil
+		}
+		return &v
+	}
+
+	totals := ReportTotals{
+		NetAmount:      totalNet,
+		GSTAmount:      totalGST,
+		CGSTAmount:     totalGST / 2,
+		SGSTAmount:     totalGST / 2,
+		Cash:           ptrOrNil(totalCash),
+		Card:           ptrOrNil(totalCard),
+		UPI:            ptrOrNil(totalUPI),
+		BankTransfer:   ptrOrNil(totalBank),
+		ExchangeCredit: ptrOrNil(totalExchange),
+	}
+
 	return &ReportResult{
 		Data:           data,
-		Total:          total,
+		Total:          totalCount,
 		Page:           page,
 		Limit:          limit,
 		TotalPages:     totalPages,
-		TotalNetAmount: totalNetAmount,
+		TotalNetAmount: totalNet,
+		Totals:         totals,
 	}, nil
 }
