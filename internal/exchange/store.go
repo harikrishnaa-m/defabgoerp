@@ -793,21 +793,24 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	}
 	defer outRows.Close()
 	var itemsOut []map[string]interface{}
+	var totalGSTOut float64
 	for outRows.Next() {
 		var (
 			rowID, siItemID, varID, varLabel, varName, productName, reason string
-			qty, up, disc, bdShare, txPct, txAmt, total                   float64
+			qty, up, disc, bdShare, txPct, txAmt, total                    float64
 		)
 		if err := outRows.Scan(&rowID, &siItemID, &varID, &qty, &up, &disc, &bdShare, &txPct, &txAmt, &total, &reason, &varLabel, &varName, &productName); err != nil {
 			return nil, err
 		}
+		totalGSTOut = round2(totalGSTOut + txAmt)
 		itemsOut = append(itemsOut, map[string]interface{}{
 			"id": rowID, "sales_invoice_item_id": siItemID,
 			"variant_id": varID, "variant_label": varLabel,
 			"variant_name": varName, "product_name": productName,
 			"quantity": qty, "unit_price": up, "discount": disc,
 			"bill_discount_share": bdShare, "tax_percent": txPct,
-			"tax_amount": txAmt, "total_price": total, "reason": reason,
+			"tax_amount": txAmt, "cgst": round2(txAmt / 2), "sgst": round2(txAmt / 2),
+			"total_price": total, "reason": reason,
 		})
 	}
 
@@ -829,19 +832,22 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	}
 	defer inRows.Close()
 	var itemsIn []map[string]interface{}
+	var totalGSTIn float64
 	for inRows.Next() {
 		var (
 			rowID, varID, varLabel, varName, productName string
-			qty, up, disc, txPct, txAmt, total          float64
+			qty, up, disc, txPct, txAmt, total           float64
 		)
 		if err := inRows.Scan(&rowID, &varID, &qty, &up, &disc, &txPct, &txAmt, &total, &varLabel, &varName, &productName); err != nil {
 			return nil, err
 		}
+		totalGSTIn = round2(totalGSTIn + txAmt)
 		itemsIn = append(itemsIn, map[string]interface{}{
 			"id": rowID, "variant_id": varID, "variant_label": varLabel,
 			"variant_name": varName, "product_name": productName,
 			"quantity": qty, "unit_price": up, "discount": disc,
-			"tax_percent": txPct, "tax_amount": txAmt, "total_price": total,
+			"tax_percent": txPct, "tax_amount": txAmt, "cgst": round2(txAmt / 2), "sgst": round2(txAmt / 2),
+			"total_price": total,
 		})
 	}
 
@@ -884,6 +890,12 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"items_out_total":         exc.ItemsOutTotal,
 		"items_in_total":          exc.ItemsInTotal,
 		"net_amount":              exc.NetAmt,
+		"gst_amount_out":          totalGSTOut,
+		"cgst_out":                round2(totalGSTOut / 2),
+		"sgst_out":                round2(totalGSTOut / 2),
+		"gst_amount_in":           totalGSTIn,
+		"cgst_in":                 round2(totalGSTIn / 2),
+		"sgst_in":                 round2(totalGSTIn / 2),
 		"notes":                   exc.Notes.String,
 		"created_by":              exc.CreatedBy,
 		"created_at":              exc.CreatedAt,
