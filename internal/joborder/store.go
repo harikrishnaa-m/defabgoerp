@@ -703,7 +703,8 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 		       jo.created_by, jo.created_at,
 		       c.name AS customer_name, c.phone AS customer_phone,
 		       COALESCE(b.name, '') AS branch_name,
-		       COALESCE(u.name, '') AS created_by_name
+		       COALESCE(u.name, '') AS created_by_name,
+		       COALESCE((SELECT ji.invoice_number FROM job_invoices ji WHERE ji.job_order_id = jo.id LIMIT 1), '') AS invoice_number
 		FROM job_orders jo
 		LEFT JOIN customers c ON c.id = jo.customer_id
 		LEFT JOIN branches b ON b.id = jo.branch_id
@@ -730,6 +731,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			branchName, createdByName                     string
 			branchIDVal, whIDVal                          sql.NullString
 			imageURL, designImageURL                      string
+			invoiceNumber                                 string
 			expectedDate                                  sql.NullString
 			actualDate                                    sql.NullTime
 			receivedDate, createdAt                       sql.NullTime
@@ -741,7 +743,8 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			&notes, &sampleProvided, &sampleDesc, &measBillNum,
 			&imageURL, &designImageURL,
 			&createdBy, &createdAt,
-			&custName, &custPhone, &branchName, &createdByName); err != nil {
+			&custName, &custPhone, &branchName, &createdByName,
+			&invoiceNumber); err != nil {
 			return nil, 0, err
 		}
 		item := map[string]interface{}{
@@ -770,6 +773,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			"measurement_bill_number": measBillNum,
 			"image_url":               imageURL,
 			"design_image_url":        designImageURL,
+			"invoice_number":          invoiceNumber,
 			"created_by":              createdBy,
 			"created_by_name":         createdByName,
 			"created_at":              createdAt.Time,
@@ -1057,18 +1061,23 @@ func (s *Store) Cancel(id, userID string) error {
 
 	// Reverse stock if materials were from store
 	if matSrc == MaterialSourceStore {
-		matRows, err := tx.Query(`SELECT raw_material_stock_id, quantity_used FROM job_order_materials WHERE job_order_id = $1`, id)
+		type matItem struct {
+			stockID   sql.NullString
+			variantID sql.NullString
+			whID      sql.NullString
+			qty       float64
+		}
+		matRows, err := tx.Query(`
+			SELECT raw_material_stock_id, variant_id, variant_warehouse_id, quantity_used
+			FROM job_order_materials WHERE job_order_id = $1
+		`, id)
 		if err != nil {
 			return err
-		}
-		type matItem struct {
-			stockID string
-			qty     float64
 		}
 		var mats []matItem
 		for matRows.Next() {
 			var m matItem
-			if err := matRows.Scan(&m.stockID, &m.qty); err != nil {
+			if err := matRows.Scan(&m.stockID, &m.variantID, &m.whID, &m.qty); err != nil {
 				matRows.Close()
 				return err
 			}
@@ -1077,32 +1086,62 @@ func (s *Store) Cancel(id, userID string) error {
 		matRows.Close()
 
 		for _, m := range mats {
-			// Look up item_name and warehouse_id
-			var itemName, rmWhID string
-			err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, m.stockID).Scan(&itemName, &rmWhID)
-			if err != nil {
-				return fmt.Errorf("raw material stock lookup: %w", err)
-			}
-
-			_, err = tx.Exec(`
-				UPDATE raw_material_stocks SET quantity = quantity + $1, updated_at = NOW()
-				WHERE id = $2
-			`, m.qty, m.stockID)
-			if err != nil {
-				return err
-			}
-			_, err = tx.Exec(`
-				INSERT INTO raw_material_movements
-					(item_name, warehouse_id, quantity, movement_type, reference)
-				VALUES ($1,$2,$3,'IN',$4)
-			`, itemName, rmWhID, m.qty, "JOB_CANCEL:"+id)
-			if err != nil {
-				return err
+			if m.variantID.Valid && m.variantID.String != "" {
+				// Variant-based: restore stock
+				_, err = tx.Exec(`
+					UPDATE stocks SET quantity = quantity + $1, updated_at = NOW()
+					WHERE variant_id = $2 AND warehouse_id = $3
+				`, m.qty, m.variantID.String, m.whID.String)
+				if err != nil {
+					return fmt.Errorf("restore variant stock: %w", err)
+				}
+				_, err = tx.Exec(`
+					INSERT INTO stock_movements
+						(variant_id, to_warehouse_id, quantity, movement_type, reference, status)
+					VALUES ($1,$2,$3,'JOB_CANCEL',$4,'COMPLETED')
+				`, m.variantID.String, m.whID.String, m.qty, "JOB_CANCEL:"+id)
+				if err != nil {
+					return fmt.Errorf("insert stock_movements for cancel: %w", err)
+				}
+			} else if m.stockID.Valid && m.stockID.String != "" {
+				// Legacy raw material path
+				var itemName, rmWhID string
+				err = tx.QueryRow(`SELECT item_name, warehouse_id FROM raw_material_stocks WHERE id = $1`, m.stockID.String).Scan(&itemName, &rmWhID)
+				if err != nil {
+					return fmt.Errorf("raw material stock lookup: %w", err)
+				}
+				_, err = tx.Exec(`
+					UPDATE raw_material_stocks SET quantity = quantity + $1, updated_at = NOW()
+					WHERE id = $2
+				`, m.qty, m.stockID.String)
+				if err != nil {
+					return err
+				}
+				_, err = tx.Exec(`
+					INSERT INTO raw_material_movements
+						(item_name, warehouse_id, quantity, movement_type, reference)
+					VALUES ($1,$2,$3,'IN',$4)
+				`, itemName, rmWhID, m.qty, "JOB_CANCEL:"+id)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
 
-	_, err = tx.Exec(`UPDATE job_orders SET status = 'CANCELLED', updated_at = NOW() WHERE id = $1`, id)
+	// Cancel linked job invoice (if any)
+	_, err = tx.Exec(`UPDATE job_invoices SET payment_status = 'CANCELLED' WHERE job_order_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("cancel job invoice: %w", err)
+	}
+
+	// Delete advance payment records (to be physically refunded to customer)
+	_, err = tx.Exec(`DELETE FROM job_order_payments WHERE job_order_id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete payments: %w", err)
+	}
+
+	_, err = tx.Exec(`UPDATE job_orders SET status = 'CANCELLED', payment_status = 'UNPAID', updated_at = NOW() WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
