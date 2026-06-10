@@ -1,14 +1,48 @@
 package joborder
 
+// WorkEntry describes a single unit of work on a garment piece.
+// type values: DYING | STITCHING | MACHINE | LINING | OTHER
+// Fields used per type:
+//
+//	DYING    → color_code (required), notes (optional)
+//	STITCHING→ notes (optional)
+//	MACHINE  → notes (optional)
+//	LINING   → material (required), notes (optional)
+//	OTHER    → description (required)
+type WorkEntry struct {
+	Type        string `json:"type"`
+	ColorCode   string `json:"color_code,omitempty"`
+	Material    string `json:"material,omitempty"`
+	Notes       string `json:"notes,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// PieceEntry describes one component of a garment item.
+// For sets (Churidar, Salwar etc.) — include one entry per piece (TOP, BOTTOM, PALAZZO).
+// For single-piece garments (Blouse, Kurthi) — include exactly one entry with piece_type = "".
+type PieceEntry struct {
+	PieceType  string      `json:"piece_type"` // "TOP" | "BOTTOM" | "PALAZZO" | "" for single pieces
+	WithLining bool        `json:"with_lining"`
+	Works      []WorkEntry `json:"works"`
+}
+
+// CreateJobOrderItemInput represents one garment item in a job order.
+// Sets (Churidar, Salwar etc.) are expressed as a single item with multiple pieces.
+// sub_category is optional — send empty string if not applicable.
 type CreateJobOrderItemInput struct {
-	Description string  `json:"description"`
-	Quantity    float64 `json:"quantity"`
-	UnitPrice   float64 `json:"unit_price"`
-	Discount    float64 `json:"discount"`
-	TaxPercent  float64 `json:"tax_percent"`
-	CGST        float64 `json:"cgst"`
-	SGST        float64 `json:"sgst"`
-	TotalPrice  float64 `json:"total_price"`
+	// Garment structure
+	Category    string       `json:"category"`     // e.g. "CHURIDAR SET", "BLOUSE", "KURTHI"
+	SubCategory string       `json:"sub_category"` // e.g. "NORMAL with L", "PRINCESS CUT without L" (optional)
+	Pieces      []PieceEntry `json:"pieces"`       // one per component; single-piece → one entry, piece_type=""
+
+	// Pricing — fully decided by client/frontend
+	Quantity   float64 `json:"quantity"`
+	UnitPrice  float64 `json:"unit_price"`
+	Discount   float64 `json:"discount"`
+	TaxPercent float64 `json:"tax_percent"`
+	CGST       float64 `json:"cgst"`
+	SGST       float64 `json:"sgst"`
+	TotalPrice float64 `json:"total_price"`
 }
 
 type CreateJobOrderMaterialInput struct {
@@ -31,6 +65,7 @@ type CreateJobOrderInput struct {
 	SampleDescription     string                        `json:"sample_description"`
 	MeasurementBillNumber string                        `json:"measurement_bill_number"`
 	ImageURL              string                        `json:"image_url"`
+	DesignImageURL        string                        `json:"design_image_url"`
 	SubAmount             float64                       `json:"sub_amount"`
 	DiscountAmount        float64                       `json:"discount_amount"`
 	GSTAmount             float64                       `json:"gst_amount"`
@@ -53,6 +88,7 @@ type UpdateJobOrderInput struct {
 	SampleDescription     *string                       `json:"sample_description"`
 	MeasurementBillNumber *string                       `json:"measurement_bill_number"`
 	ImageURL              *string                       `json:"image_url"`
+	DesignImageURL        *string                       `json:"design_image_url"`
 	SubAmount             *float64                      `json:"sub_amount"`
 	DiscountAmount        *float64                      `json:"discount_amount"`
 	GSTAmount             *float64                      `json:"gst_amount"`

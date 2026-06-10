@@ -39,17 +39,30 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		}
 	}
 
-	if file, err := c.FormFile("job_order_image"); err == nil {
+	if file, err := c.FormFile("measurement_sheet_image"); err == nil {
 		data, filename, procErr := storage.ProcessImage(file)
 		if procErr != nil {
 			return httperr.BadRequest(c, procErr.Error())
 		}
 		url, upErr := storage.UploadFile("job-orders/"+filename, data, file.Header.Get("Content-Type"))
 		if upErr != nil {
-			log.Println("upload job order image error:", upErr)
+			log.Println("upload measurement sheet image error:", upErr)
 			return httperr.Internal(c)
 		}
 		in.ImageURL = url
+	}
+
+	if file, err := c.FormFile("design_sheet_image"); err == nil {
+		data, filename, procErr := storage.ProcessImage(file)
+		if procErr != nil {
+			return httperr.BadRequest(c, procErr.Error())
+		}
+		url, upErr := storage.UploadFile("job-orders/"+filename, data, file.Header.Get("Content-Type"))
+		if upErr != nil {
+			log.Println("upload design sheet image error:", upErr)
+			return httperr.Internal(c)
+		}
+		in.DesignImageURL = url
 	}
 
 	if in.CustomerID == "" && in.CustomerPhone == "" {

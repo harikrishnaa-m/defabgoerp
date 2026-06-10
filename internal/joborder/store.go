@@ -2,6 +2,7 @@ package joborder
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math"
 )
@@ -83,14 +84,14 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 			 status, payment_status, expected_delivery_date,
 			 sub_amount, discount_amount, gst_amount, net_amount,
 			 notes, sample_provided, sample_description, measurement_bill_number,
-			 image_url, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,'RECEIVED','UNPAID',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+			 image_url, design_image_url, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,'RECEIVED','UNPAID',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		RETURNING id
 	`, jobNumber, in.CustomerID, branchParam, whParam, in.JobType, in.MaterialSource,
 		in.ExpectedDeliveryDate,
 		round2(in.SubAmount), round2(in.DiscountAmount), round2(in.GSTAmount), round2(in.NetAmount),
 		in.Notes, in.SampleProvided, in.SampleDescription, in.MeasurementBillNumber,
-		nilIfEmpty(in.ImageURL), userID).Scan(&jobID)
+		nilIfEmpty(in.ImageURL), nilIfEmpty(in.DesignImageURL), userID).Scan(&jobID)
 	if err != nil {
 		return "", fmt.Errorf("create job order: %w", err)
 	}
@@ -106,12 +107,15 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 
 	// Insert items
 	for _, item := range in.Items {
+		piecesJSON, _ := json.Marshal(item.Pieces)
 		_, err = tx.Exec(`
 			INSERT INTO job_order_items
-				(job_order_id, description, quantity, unit_price, discount, tax_percent, cgst, sgst, total_price)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-		`, jobID, item.Description, item.Quantity, round2(item.UnitPrice),
-			round2(item.Discount), item.TaxPercent, round2(item.CGST), round2(item.SGST), round2(item.TotalPrice))
+				(job_order_id, category, sub_category, pieces,
+				 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		`, jobID, item.Category, item.SubCategory, string(piecesJSON),
+			item.Quantity, round2(item.UnitPrice), round2(item.Discount),
+			item.TaxPercent, round2(item.CGST), round2(item.SGST), round2(item.TotalPrice))
 		if err != nil {
 			return "", fmt.Errorf("insert job order item: %w", err)
 		}
@@ -333,6 +337,11 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 		q += fmt.Sprintf(", image_url = $%d", n)
 		args = append(args, nilIfEmpty(*in.ImageURL))
 	}
+	if in.DesignImageURL != nil {
+		n++
+		q += fmt.Sprintf(", design_image_url = $%d", n)
+		args = append(args, nilIfEmpty(*in.DesignImageURL))
+	}
 	if in.SubAmount != nil {
 		n++
 		q += fmt.Sprintf(", sub_amount = $%d", n)
@@ -402,11 +411,14 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 			return fmt.Errorf("delete old items: %w", err)
 		}
 		for _, it := range in.Items {
+			piecesJSON, _ := json.Marshal(it.Pieces)
 			_, err = tx.Exec(`
 				INSERT INTO job_order_items
-					(job_order_id, description, quantity, unit_price, discount, tax_percent, cgst, sgst, total_price)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-			`, id, it.Description, it.Quantity, round2(it.UnitPrice), round2(it.Discount),
+					(job_order_id, category, sub_category, pieces,
+					 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			`, id, it.Category, it.SubCategory, string(piecesJSON),
+				it.Quantity, round2(it.UnitPrice), round2(it.Discount),
 				it.TaxPercent, round2(it.CGST), round2(it.SGST), round2(it.TotalPrice))
 			if err != nil {
 				return fmt.Errorf("insert item: %w", err)
@@ -687,6 +699,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 		       jo.sub_amount, jo.discount_amount, jo.gst_amount, jo.net_amount,
 		       jo.notes, jo.sample_provided, jo.sample_description, jo.measurement_bill_number,
 		       COALESCE(jo.image_url, '') AS image_url,
+		       COALESCE(jo.design_image_url, '') AS design_image_url,
 		       jo.created_by, jo.created_at,
 		       c.name AS customer_name, c.phone AS customer_phone,
 		       COALESCE(b.name, '') AS branch_name,
@@ -716,7 +729,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			createdBy, custName, custPhone                string
 			branchName, createdByName                     string
 			branchIDVal, whIDVal                          sql.NullString
-			imageURL                                      string
+			imageURL, designImageURL                      string
 			expectedDate                                  sql.NullString
 			actualDate                                    sql.NullTime
 			receivedDate, createdAt                       sql.NullTime
@@ -726,7 +739,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			&receivedDate, &expectedDate, &actualDate,
 			&subAmt, &discAmt, &gstAmt, &netAmt,
 			&notes, &sampleProvided, &sampleDesc, &measBillNum,
-			&imageURL,
+			&imageURL, &designImageURL,
 			&createdBy, &createdAt,
 			&custName, &custPhone, &branchName, &createdByName); err != nil {
 			return nil, 0, err
@@ -756,6 +769,7 @@ func (s *Store) List(branchID *string, status, jobType, search string, limit, of
 			"sample_description":      sampleDesc,
 			"measurement_bill_number": measBillNum,
 			"image_url":               imageURL,
+			"design_image_url":        designImageURL,
 			"created_by":              createdBy,
 			"created_by_name":         createdByName,
 			"created_at":              createdAt.Time,
@@ -783,7 +797,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		sampleProvided                                   bool
 		createdBy                                        string
 		branchIDVal, whIDVal                             sql.NullString
-		imageURL                                         sql.NullString
+		imageURL, designImageURL                         sql.NullString
 		expectedDate                                     sql.NullString
 		actualDate                                       sql.NullTime
 		receivedDate, createdAt, updatedAt               sql.NullTime
@@ -795,6 +809,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		       sub_amount, discount_amount, gst_amount, net_amount,
 		       notes, sample_provided, sample_description, measurement_bill_number,
 		       COALESCE(image_url, '') AS image_url,
+		       COALESCE(design_image_url, '') AS design_image_url,
 		       created_by, created_at, updated_at
 		FROM job_orders WHERE id = $1
 	`, id).Scan(&jobID, &jobNum, &custID, &branchIDVal, &whIDVal,
@@ -802,7 +817,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		&receivedDate, &expectedDate, &actualDate,
 		&subAmt, &discAmt, &gstAmt, &netAmt,
 		&notes, &sampleProvided, &sampleDesc, &measBillNum,
-		&imageURL,
+		&imageURL, &designImageURL,
 		&createdBy, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
@@ -830,6 +845,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"sample_description":      sampleDesc,
 		"measurement_bill_number": measBillNum,
 		"image_url":               imageURL.String,
+		"design_image_url":        designImageURL.String,
 		"created_by":              createdBy,
 		"created_at":              createdAt.Time,
 		"updated_at":              updatedAt.Time,
@@ -846,20 +862,35 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 
 	// Items
 	itemRows, err := s.db.Query(`
-		SELECT id, description, quantity, unit_price, discount, tax_percent, cgst, sgst, total_price
+		SELECT id, COALESCE(category,''), COALESCE(sub_category,''),
+		       COALESCE(pieces, '[]'::jsonb)::text,
+		       quantity, unit_price, discount, tax_percent, cgst, sgst, total_price
 		FROM job_order_items WHERE job_order_id = $1
 	`, id)
 	if err == nil {
 		defer itemRows.Close()
 		var items []map[string]interface{}
 		for itemRows.Next() {
-			var iid, desc string
+			var iid, cat, subCat, piecesStr string
 			var qty, up, disc, tp, cgst, sgst, tot float64
-			if err := itemRows.Scan(&iid, &desc, &qty, &up, &disc, &tp, &cgst, &sgst, &tot); err == nil {
+			if err := itemRows.Scan(&iid, &cat, &subCat, &piecesStr,
+				&qty, &up, &disc, &tp, &cgst, &sgst, &tot); err == nil {
+				var pieces []PieceEntry
+				if err := json.Unmarshal([]byte(piecesStr), &pieces); err != nil || pieces == nil {
+					pieces = []PieceEntry{}
+				}
 				items = append(items, map[string]interface{}{
-					"id": iid, "description": desc, "quantity": qty,
-					"unit_price": up, "discount": disc, "tax_percent": tp,
-					"cgst": cgst, "sgst": sgst, "total_price": tot,
+					"id":           iid,
+					"category":     cat,
+					"sub_category": subCat,
+					"pieces":       pieces,
+					"quantity":     qty,
+					"unit_price":   up,
+					"discount":     disc,
+					"tax_percent":  tp,
+					"cgst":         cgst,
+					"sgst":         sgst,
+					"total_price":  tot,
 				})
 			}
 		}
