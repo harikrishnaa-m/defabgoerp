@@ -66,6 +66,23 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	return c.Status(http.StatusCreated).JSON(result)
 }
 
+// POST /exchanges/preview
+func (h *Handler) Preview(c *fiber.Ctx) error {
+	var in CreateExchangeInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON body")
+	}
+	if in.OriginalSalesInvoiceID == "" || len(in.ItemsOut) == 0 || len(in.ItemsIn) == 0 {
+		return httperr.BadRequest(c, "original_sales_invoice_id, items_out and items_in are required")
+	}
+
+	result, err := h.store.Preview(in)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(result)
+}
+
 // GET /exchanges
 func (h *Handler) List(c *fiber.Ctx) error {
 	f := ExchangeListFilter{}

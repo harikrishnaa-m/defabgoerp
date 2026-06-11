@@ -29,6 +29,195 @@ func NewStore(db *sql.DB) *Store {
 //  7. Records settlements and exchange_order header
 //
 // ─────────────────────────────────────────────────────────────────────────────
+
+// PreviewResult is returned by Preview — no DB writes are made.
+type PreviewResult struct {
+	TotalOutAmount float64          `json:"total_out_amount"`
+	TotalInAmount  float64          `json:"total_in_amount"`
+	NetPayable     float64          `json:"net_payable"`
+	Direction      string           `json:"direction"` // "COLLECT" | "REFUND" | "EVEN"
+	ItemsOut       []PreviewItemOut `json:"items_out"`
+	ItemsIn        []PreviewItemIn  `json:"items_in"`
+}
+
+type PreviewItemOut struct {
+	SalesInvoiceItemID string  `json:"sales_invoice_item_id"`
+	VariantID          string  `json:"variant_id"`
+	Quantity           float64 `json:"quantity"`
+	UnitPrice          float64 `json:"unit_price"`
+	ItemDiscount       float64 `json:"item_discount"`
+	BillDiscShare      float64 `json:"bill_discount_share"`
+	TaxPercent         float64 `json:"tax_percent"`
+	TaxAmount          float64 `json:"tax_amount"`
+	ReturnCredit       float64 `json:"return_credit"`
+}
+
+type PreviewItemIn struct {
+	VariantID  string  `json:"variant_id"`
+	Quantity   float64 `json:"quantity"`
+	UnitPrice  float64 `json:"unit_price"`
+	Discount   float64 `json:"discount"`
+	TaxPercent float64 `json:"tax_percent"`
+	TaxAmount  float64 `json:"tax_amount"`
+	Total      float64 `json:"total"`
+}
+
+// Preview performs all calculations for an exchange without writing to the DB.
+// The returned NetPayable should be used as-is for the settlements in Create.
+func (s *Store) Preview(in CreateExchangeInput) (*PreviewResult, error) {
+	if in.OriginalSalesInvoiceID == "" {
+		return nil, fmt.Errorf("original_sales_invoice_id is required")
+	}
+	if len(in.ItemsOut) == 0 {
+		return nil, fmt.Errorf("items_out cannot be empty")
+	}
+	if len(in.ItemsIn) == 0 {
+		return nil, fmt.Errorf("items_in cannot be empty")
+	}
+
+	// Read-only — no transaction needed, use plain DB reads.
+	var inv struct {
+		SubAmount    float64
+		BillDiscount float64
+	}
+	if err := s.db.QueryRow(`
+		SELECT sub_amount, bill_discount FROM sales_invoices WHERE id = $1
+	`, in.OriginalSalesInvoiceID).Scan(&inv.SubAmount, &inv.BillDiscount); err != nil {
+		return nil, fmt.Errorf("original invoice not found: %w", err)
+	}
+
+	res := &PreviewResult{}
+
+	// ── items_out ─────────────────────────────────────────────────────────────
+	var totalOutAmount float64
+	for _, item := range in.ItemsOut {
+		if item.Quantity <= 0 {
+			return nil, fmt.Errorf("items_out quantity must be > 0")
+		}
+		var si struct {
+			ID         string
+			VariantID  string
+			Quantity   float64
+			UnitPrice  float64
+			Discount   float64
+			TaxPercent float64
+		}
+		if err := s.db.QueryRow(`
+			SELECT id, variant_id, quantity, unit_price, discount, tax_percent
+			FROM sales_invoice_items
+			WHERE id = $1 AND sales_invoice_id = $2
+		`, item.SalesInvoiceItemID, in.OriginalSalesInvoiceID).Scan(
+			&si.ID, &si.VariantID, &si.Quantity,
+			&si.UnitPrice, &si.Discount, &si.TaxPercent,
+		); err != nil {
+			return nil, fmt.Errorf("invoice item %s not found: %w", item.SalesInvoiceItemID, err)
+		}
+		if item.Quantity > si.Quantity {
+			return nil, fmt.Errorf("exchange qty %.2f exceeds invoiced qty %.2f for item %s",
+				item.Quantity, si.Quantity, si.ID)
+		}
+
+		lineTotal := item.Quantity * si.UnitPrice
+		itemDisc := round2(si.Discount * item.Quantity / si.Quantity)
+		lineBillDisc := 0.0
+		if inv.SubAmount > 0 {
+			lineBillDisc = round2(lineTotal * inv.BillDiscount / inv.SubAmount)
+		}
+		taxable := lineTotal - itemDisc - lineBillDisc
+		if taxable < 0 {
+			taxable = 0
+		}
+		lineTax := round2(taxable * si.TaxPercent / (100 + si.TaxPercent))
+		lineReturn := round2(lineTotal - itemDisc - lineBillDisc)
+
+		res.ItemsOut = append(res.ItemsOut, PreviewItemOut{
+			SalesInvoiceItemID: si.ID,
+			VariantID:          si.VariantID,
+			Quantity:           item.Quantity,
+			UnitPrice:          si.UnitPrice,
+			ItemDiscount:       itemDisc,
+			BillDiscShare:      lineBillDisc,
+			TaxPercent:         si.TaxPercent,
+			TaxAmount:          lineTax,
+			ReturnCredit:       lineReturn,
+		})
+		totalOutAmount += lineReturn
+	}
+	totalOutAmount = math.Round(totalOutAmount)
+
+	// ── items_in ──────────────────────────────────────────────────────────────
+	var subAmtIn, discAmtIn float64
+	for _, item := range in.ItemsIn {
+		if item.Quantity <= 0 {
+			return nil, fmt.Errorf("items_in quantity must be > 0")
+		}
+		unitPrice := item.UnitPrice
+		if unitPrice <= 0 {
+			if err := s.db.QueryRow(`SELECT price FROM variants WHERE id = $1`, item.VariantID).Scan(&unitPrice); err != nil {
+				return nil, fmt.Errorf("fetch price for variant %s: %w", item.VariantID, err)
+			}
+		}
+
+		lineTotal := item.Quantity * unitPrice
+		itemDisc := item.Discount
+		if item.DiscountType == "percent" {
+			itemDisc = round2(lineTotal * item.Discount / 100)
+		}
+		itemDisc = round2(itemDisc)
+
+		taxPercent := 5.0
+		if item.ItemType == "MATERIAL" {
+			if lineTotal > 2500 {
+				taxPercent = 18
+			}
+		} else {
+			if unitPrice > 2500 {
+				taxPercent = 18
+			}
+		}
+
+		taxable := lineTotal - itemDisc
+		if taxable < 0 {
+			taxable = 0
+		}
+		lineTax := round2(taxable * taxPercent / (100 + taxPercent))
+		total := round2(lineTotal - itemDisc)
+
+		res.ItemsIn = append(res.ItemsIn, PreviewItemIn{
+			VariantID:  item.VariantID,
+			Quantity:   item.Quantity,
+			UnitPrice:  unitPrice,
+			Discount:   itemDisc,
+			TaxPercent: taxPercent,
+			TaxAmount:  lineTax,
+			Total:      total,
+		})
+		subAmtIn += lineTotal
+		discAmtIn += itemDisc
+	}
+	subAmtIn = round2(subAmtIn)
+	discAmtIn = round2(discAmtIn)
+	totalInAmount := math.Round(round2(subAmtIn - discAmtIn))
+
+	netPayable := round2(totalInAmount - totalOutAmount)
+
+	direction := "EVEN"
+	if netPayable > 0 {
+		direction = "COLLECT"
+	} else if netPayable < 0 {
+		direction = "REFUND"
+		netPayable = -netPayable
+	}
+
+	res.TotalOutAmount = totalOutAmount
+	res.TotalInAmount = totalInAmount
+	res.NetPayable = netPayable
+	res.Direction = direction
+
+	return res, nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string, error) {
 	if in.OriginalSalesInvoiceID == "" {
 		return "", fmt.Errorf("original_sales_invoice_id is required")
