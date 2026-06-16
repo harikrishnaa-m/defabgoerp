@@ -403,3 +403,351 @@ func (s *Store) scanRows(query string, args []interface{}, page, limit int) (*Re
 		Totals:         totals,
 	}, nil
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ListDetailed — item-level detailed report.
+// One row per invoice line item; invoice-level fields repeat across items.
+// Totals.NetAmount / GST / discount etc. are summed once per unique invoice.
+// Totals.Quantity / ItemTotal / ItemTotalGST are summed across all line items.
+// Supports the same filters as List (branch_id, from_date, to_date,
+// salesperson_id, created_by_id, payment_type, channel, page, limit).
+// ─────────────────────────────────────────────────────────────────────────────
+func (s *Store) ListDetailed(f Filter) (*DetailedReportResult, error) {
+	limit := f.Limit
+	page := f.Page
+	if page <= 0 {
+		page = 1
+	}
+	offset := 0
+	if limit > 0 {
+		offset = (page - 1) * limit
+	}
+
+	var conds []string
+	var args []interface{}
+	idx := 1
+
+	if f.BranchID != "" {
+		conds = append(conds, fmt.Sprintf("si.branch_id = $%d", idx))
+		args = append(args, f.BranchID)
+		idx++
+	}
+	if f.FromDate != "" {
+		conds = append(conds, fmt.Sprintf("(si.invoice_date AT TIME ZONE 'Asia/Kolkata')::date >= $%d::date", idx))
+		args = append(args, f.FromDate)
+		idx++
+	}
+	if f.ToDate != "" {
+		conds = append(conds, fmt.Sprintf("(si.invoice_date AT TIME ZONE 'Asia/Kolkata')::date <= $%d::date", idx))
+		args = append(args, f.ToDate)
+		idx++
+	}
+	if f.SalespersonID != "" {
+		conds = append(conds, fmt.Sprintf("so.salesperson_id = $%d", idx))
+		args = append(args, f.SalespersonID)
+		idx++
+	}
+	if f.CreatedByID != "" {
+		conds = append(conds, fmt.Sprintf("si.created_by::text = $%d", idx))
+		args = append(args, f.CreatedByID)
+		idx++
+	}
+	if f.Channel != "" {
+		conds = append(conds, fmt.Sprintf("si.channel = $%d", idx))
+		args = append(args, f.Channel)
+		idx++
+	}
+	if f.PaymentType != "" {
+		if f.PaymentType == "CARD" {
+			conds = append(conds, fmt.Sprintf(`EXISTS (
+				SELECT 1 FROM sales_payments spm2
+				WHERE spm2.sales_invoice_id = si.id
+				  AND spm2.payment_method = ANY($%d)
+			)`, idx))
+			args = append(args, []string{"CARD", "DEBIT_CARD", "CREDIT_CARD"})
+		} else {
+			conds = append(conds, fmt.Sprintf(`EXISTS (
+				SELECT 1 FROM sales_payments spm2
+				WHERE spm2.sales_invoice_id = si.id
+				  AND spm2.payment_method = $%d
+			)`, idx))
+			args = append(args, f.PaymentType)
+		}
+		idx++
+	}
+
+	where := "WHERE si.status NOT IN ('CANCELLED')"
+	if len(conds) > 0 {
+		where += " AND " + strings.Join(conds, " AND ")
+	}
+
+	query := fmt.Sprintf(`
+WITH invoice_payments AS (
+    SELECT
+        sales_invoice_id,
+        STRING_AGG(payment_method, ', ' ORDER BY paid_at, id)                         AS payment_methods,
+        STRING_AGG(amount::TEXT,   ', ' ORDER BY paid_at, id)                         AS payment_amounts,
+        STRING_AGG(COALESCE(reference, ''), ', ' ORDER BY paid_at, id)                AS payment_references,
+        NULLIF(SUM(CASE WHEN payment_method = 'CASH'                             THEN amount ELSE 0 END), 0) AS cash,
+        NULLIF(SUM(CASE WHEN payment_method IN ('CARD','DEBIT_CARD')              THEN amount ELSE 0 END), 0) AS debit_card,
+        NULLIF(SUM(CASE WHEN payment_method = 'CREDIT_CARD'                      THEN amount ELSE 0 END), 0) AS credit_card,
+        NULLIF(SUM(CASE WHEN payment_method = 'UPI'                              THEN amount ELSE 0 END), 0) AS upi,
+        NULLIF(SUM(CASE WHEN payment_method = 'BANK_TRANSFER'                    THEN amount ELSE 0 END), 0) AS bank_transfer,
+        NULLIF(SUM(CASE WHEN payment_method = 'EXCHANGE_CREDIT'                  THEN amount ELSE 0 END), 0) AS exchange_credit
+    FROM sales_payments
+    GROUP BY sales_invoice_id
+),
+line_items AS (
+    SELECT
+        si.id                                                                AS _invoice_id,
+        si.invoice_date                                                      AS _invoice_date,
+        sii.id                                                               AS _item_id,
+        si.invoice_number,
+        TO_CHAR(si.invoice_date AT TIME ZONE 'Asia/Kolkata', 'DD/MM/YYYY')  AS date,
+        COALESCE(c.name,  '')                                                AS customer_name,
+        COALESCE(b.name,  '')                                                AS branch,
+        COALESCE(sp.name, '')                                                AS salesperson,
+        si.status,
+        COALESCE(ip.payment_methods,    '')                                  AS payment_methods,
+        COALESCE(ip.payment_amounts,    '')                                  AS payment_amounts,
+        COALESCE(ip.payment_references, '')                                  AS payment_references,
+        ip.cash,
+        ip.debit_card,
+        ip.credit_card,
+        ip.upi,
+        ip.bank_transfer,
+        ip.exchange_credit,
+        SUM(sii.total_price) OVER (PARTITION BY si.id)                       AS sub_amount,
+        COALESCE(si.discount_amount, 0)                                      AS discount_amount,
+        COALESCE(si.bill_discount,   0)                                      AS bill_discount,
+        ROUND((
+            si.gst_amount + COALESCE((
+                SELECT SUM(ro.gst_amount) FROM return_orders ro
+                WHERE ro.sales_invoice_id = si.id
+                  AND ro.source != 'EXCHANGE'
+                  AND ro.status != 'CANCELLED'
+            ), 0)
+        ) / 2, 2)                                                            AS cgst,
+        ROUND((
+            si.gst_amount + COALESCE((
+                SELECT SUM(ro.gst_amount) FROM return_orders ro
+                WHERE ro.sales_invoice_id = si.id
+                  AND ro.source != 'EXCHANGE'
+                  AND ro.status != 'CANCELLED'
+            ), 0)
+        ) / 2, 2)                                                            AS sgst,
+        si.gst_amount + COALESCE((
+            SELECT SUM(ro.gst_amount) FROM return_orders ro
+            WHERE ro.sales_invoice_id = si.id
+              AND ro.source != 'EXCHANGE'
+              AND ro.status != 'CANCELLED'
+        ), 0)                                                                AS total_gst,
+        COALESCE(si.round_off, 0)                                           AS round_off,
+        si.net_amount + COALESCE((
+            SELECT SUM(ro.total_amount) FROM return_orders ro
+            WHERE ro.sales_invoice_id = si.id
+              AND ro.source != 'EXCHANGE'
+              AND ro.status != 'CANCELLED'
+        ), 0)                                                                AS net_amount,
+        v.variant_code,
+        v.name                                                               AS item_name,
+        v.sku,
+        COALESCE(v.hsn_code, '')                                             AS hsn_code,
+        sii.quantity,
+        sii.unit_price,
+        sii.discount                                                         AS item_discount,
+        sii.tax_percent                                                      AS item_gst_percent,
+        ROUND(sii.tax_amount / 2, 2)                                        AS item_cgst,
+        ROUND(sii.tax_amount / 2, 2)                                        AS item_sgst,
+        sii.tax_amount                                                       AS item_total_gst,
+        sii.total_price                                                      AS item_total
+    FROM sales_invoices si
+    JOIN  sales_invoice_items sii ON sii.sales_invoice_id = si.id
+    JOIN  variants            v   ON v.id  = sii.variant_id
+    LEFT JOIN invoice_payments ip ON ip.sales_invoice_id = si.id
+    LEFT JOIN customers        c  ON c.id  = si.customer_id
+    LEFT JOIN branches         b  ON b.id  = si.branch_id
+    LEFT JOIN sales_orders     so ON so.id = si.sales_order_id
+    LEFT JOIN sales_persons    sp ON sp.id = so.salesperson_id
+    %s
+),
+inv_sums AS (
+    SELECT
+        SUM(net_amount)      AS s_net,
+        SUM(cgst)            AS s_cgst,
+        SUM(sgst)            AS s_sgst,
+        SUM(total_gst)       AS s_total_gst,
+        SUM(discount_amount) AS s_discount,
+        SUM(bill_discount)   AS s_bill_discount,
+        SUM(round_off)       AS s_round_off,
+        NULLIF(SUM(cash),           0) AS s_cash,
+        NULLIF(SUM(debit_card),      0) AS s_debit_card,
+        NULLIF(SUM(credit_card),     0) AS s_credit_card,
+        NULLIF(SUM(upi),             0) AS s_upi,
+        NULLIF(SUM(bank_transfer),   0) AS s_bank_transfer,
+        NULLIF(SUM(exchange_credit), 0) AS s_exchange_credit
+    FROM (
+        SELECT DISTINCT _invoice_id, net_amount, cgst, sgst, total_gst, discount_amount, bill_discount, round_off,
+                        cash, debit_card, credit_card, upi, bank_transfer, exchange_credit
+        FROM line_items
+    ) u
+)
+SELECT
+    invoice_number, date, customer_name, branch, salesperson, status,
+    payment_methods, payment_amounts, payment_references,
+    cash, debit_card, credit_card, upi, bank_transfer, exchange_credit,
+    sub_amount, discount_amount, bill_discount,
+    cgst, sgst, total_gst, round_off, net_amount,
+    variant_code, item_name, sku, hsn_code,
+    quantity, unit_price, item_discount, item_gst_percent,
+    item_cgst, item_sgst, item_total_gst, item_total,
+    COUNT(*)            OVER ()  AS total_count,
+    SUM(quantity)       OVER ()  AS total_quantity,
+    SUM(item_total)     OVER ()  AS total_item_total,
+    SUM(item_total_gst) OVER ()  AS total_item_gst,
+    s_net, s_cgst, s_sgst, s_total_gst, s_discount, s_bill_discount, s_round_off,
+    s_cash, s_debit_card, s_credit_card, s_upi, s_bank_transfer, s_exchange_credit
+FROM line_items CROSS JOIN inv_sums
+ORDER BY _invoice_date, invoice_number, _item_id`, where)
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
+		args = append(args, limit, offset)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var data []DetailedReportRow
+	var totalCount int
+	var totalQuantity, totalItemTotal, totalItemGST float64
+	var sNet, sCGST, sSGST, sTotalGST, sDiscount, sBillDiscount, sRoundOff float64
+	var sCash, sDebitCard, sCreditCard, sUPI, sBankTransfer, sExchangeCredit sql.NullFloat64
+
+	for rows.Next() {
+		var row DetailedReportRow
+		var cash, debitCard, creditCard, upi, bankTransfer, exchangeCredit sql.NullFloat64
+		if err := rows.Scan(
+			&row.InvoiceNumber,
+			&row.Date,
+			&row.CustomerName,
+			&row.Branch,
+			&row.Salesperson,
+			&row.Status,
+			&row.PaymentMethods,
+			&row.PaymentAmounts,
+			&row.PaymentRefs,
+			&cash,
+			&debitCard,
+			&creditCard,
+			&upi,
+			&bankTransfer,
+			&exchangeCredit,
+			&row.SubAmount,
+			&row.DiscountAmount,
+			&row.BillDiscount,
+			&row.CGST,
+			&row.SGST,
+			&row.TotalGST,
+			&row.RoundOff,
+			&row.NetAmount,
+			&row.VariantCode,
+			&row.ItemName,
+			&row.SKU,
+			&row.HSNCode,
+			&row.Quantity,
+			&row.UnitPrice,
+			&row.ItemDiscount,
+			&row.ItemGSTPercent,
+			&row.ItemCGST,
+			&row.ItemSGST,
+			&row.ItemTotalGST,
+			&row.ItemTotal,
+			&totalCount,
+			&totalQuantity,
+			&totalItemTotal,
+			&totalItemGST,
+			&sNet,
+			&sCGST,
+			&sSGST,
+			&sTotalGST,
+			&sDiscount,
+			&sBillDiscount,
+			&sRoundOff,
+			&sCash,
+			&sDebitCard,
+			&sCreditCard,
+			&sUPI,
+			&sBankTransfer,
+			&sExchangeCredit,
+		); err != nil {
+			return nil, err
+		}
+		if cash.Valid {
+			row.Cash = &cash.Float64
+		}
+		if debitCard.Valid {
+			row.DebitCard = &debitCard.Float64
+		}
+		if creditCard.Valid {
+			row.CreditCard = &creditCard.Float64
+		}
+		if upi.Valid {
+			row.UPI = &upi.Float64
+		}
+		if bankTransfer.Valid {
+			row.BankTransfer = &bankTransfer.Float64
+		}
+		if exchangeCredit.Valid {
+			row.ExchangeCredit = &exchangeCredit.Float64
+		}
+		data = append(data, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if data == nil {
+		data = []DetailedReportRow{}
+	}
+
+	totalPages := 1
+	if limit > 0 && totalCount > 0 {
+		totalPages = (totalCount + limit - 1) / limit
+	}
+
+	ptrOrNil := func(n sql.NullFloat64) *float64 {
+		if !n.Valid {
+			return nil
+		}
+		return &n.Float64
+	}
+
+	return &DetailedReportResult{
+		Data:       data,
+		Total:      totalCount,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+		Totals: DetailedTotals{
+			NetAmount:      sNet - sExchangeCredit.Float64,
+			DiscountAmount: sDiscount,
+			BillDiscount:   sBillDiscount,
+			CGST:           sCGST,
+			SGST:           sSGST,
+			TotalGST:       sTotalGST,
+			RoundOff:       sRoundOff,
+			Cash:           ptrOrNil(sCash),
+			DebitCard:      ptrOrNil(sDebitCard),
+			CreditCard:     ptrOrNil(sCreditCard),
+			UPI:            ptrOrNil(sUPI),
+			BankTransfer:   ptrOrNil(sBankTransfer),
+			ExchangeCredit: ptrOrNil(sExchangeCredit),
+			Quantity:       totalQuantity,
+			ItemTotal:      totalItemTotal,
+			ItemTotalGST:   totalItemGST,
+		},
+	}, nil
+}

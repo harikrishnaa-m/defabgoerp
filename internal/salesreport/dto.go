@@ -59,3 +59,75 @@ type Filter struct {
 	Page          int
 	Limit         int
 }
+
+// DetailedReportRow is one item line in the detailed sales report.
+// Invoice-level fields repeat for every item on that invoice.
+type DetailedReportRow struct {
+	InvoiceNumber  string   `json:"invoice_number"`
+	Date           string   `json:"date"`
+	CustomerName   string   `json:"customer_name"`
+	Branch         string   `json:"branch"`
+	Salesperson    string   `json:"salesperson"`
+	Status         string   `json:"status"`
+	PaymentMethods string   `json:"payment_methods"`
+	PaymentAmounts string   `json:"payment_amounts"`
+	PaymentRefs    string   `json:"payment_references"`
+	Cash           *float64 `json:"cash"`
+	DebitCard      *float64 `json:"debit_card"`
+	CreditCard     *float64 `json:"credit_card"`
+	UPI            *float64 `json:"upi"`
+	BankTransfer   *float64 `json:"bank_transfer"`
+	ExchangeCredit *float64 `json:"exchange_credit"`
+	SubAmount      float64  `json:"sub_amount"`
+	DiscountAmount float64  `json:"discount_amount"`
+	BillDiscount   float64  `json:"bill_discount"`
+	CGST           float64  `json:"cgst"`
+	SGST           float64  `json:"sgst"`
+	TotalGST       float64  `json:"total_gst"`
+	RoundOff       float64  `json:"round_off"`
+	NetAmount      float64  `json:"net_amount"`
+	VariantCode    string   `json:"variant_code"`
+	ItemName       string   `json:"item_name"`
+	SKU            string   `json:"sku"`
+	HSNCode        string   `json:"hsn_code"`
+	Quantity       float64  `json:"quantity"`
+	UnitPrice      float64  `json:"unit_price"`
+	ItemDiscount   float64  `json:"item_discount"`
+	ItemGSTPercent float64  `json:"item_gst_percent"`
+	ItemCGST       float64  `json:"item_cgst"`
+	ItemSGST       float64  `json:"item_sgst"`
+	ItemTotalGST   float64  `json:"item_total_gst"`
+	ItemTotal      float64  `json:"item_total"`
+}
+
+// DetailedTotals holds column-level sums for the entire filtered detailed result set.
+// Invoice-level fields (net_amount, gst, discount, payment totals) are summed once per unique invoice.
+// Item-level fields (quantity, item_total, item_gst) are summed across all line items.
+type DetailedTotals struct {
+	NetAmount      float64  `json:"net_amount"`
+	DiscountAmount float64  `json:"discount_amount"`
+	BillDiscount   float64  `json:"bill_discount"`
+	CGST           float64  `json:"cgst"`
+	SGST           float64  `json:"sgst"`
+	TotalGST       float64  `json:"total_gst"`
+	RoundOff       float64  `json:"round_off"`
+	Cash           *float64 `json:"cash"`
+	DebitCard      *float64 `json:"debit_card"`
+	CreditCard     *float64 `json:"credit_card"`
+	UPI            *float64 `json:"upi"`
+	BankTransfer   *float64 `json:"bank_transfer"`
+	ExchangeCredit *float64 `json:"exchange_credit"`
+	Quantity       float64  `json:"quantity"`
+	ItemTotal      float64  `json:"item_total"`
+	ItemTotalGST   float64  `json:"item_total_gst"`
+}
+
+// DetailedReportResult is the full API response for the detailed report.
+type DetailedReportResult struct {
+	Data       []DetailedReportRow `json:"data"`
+	Total      int                 `json:"total"`
+	Page       int                 `json:"page"`
+	Limit      int                 `json:"limit"`
+	TotalPages int                 `json:"total_pages"`
+	Totals     DetailedTotals      `json:"totals"`
+}
