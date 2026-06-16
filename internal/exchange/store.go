@@ -498,14 +498,14 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 	// The original invoice is NOT modified.
 	creditNoteNum := s.nextCreditNoteNumber(tx)
 	var creditNoteID string
-	if err := tx.QueryRow(`
+	if err := tx.QueryRow(fmt.Sprintf(`
 		INSERT INTO return_orders
 			(return_number, sales_invoice_id, branch_id, warehouse_id, customer_id,
 			 status, refund_type, refund_amount, total_amount, gst_amount,
-			 created_by, notes, source)
-		VALUES ($1, $2, $3, $4, $5, 'COMPLETED', 'CREDIT', 0, $6, $7, $8, $9, 'EXCHANGE')
+			 created_by, notes, source, created_at)
+		VALUES ($1, $2, $3, $4, $5, 'COMPLETED', 'CREDIT', 0, $6, $7, $8, $9, 'EXCHANGE', %s)
 		RETURNING id
-	`, creditNoteNum, inv.ID, inv.BranchID, inv.WarehouseID, inv.CustomerID,
+	`, txDate), creditNoteNum, inv.ID, inv.BranchID, inv.WarehouseID, inv.CustomerID,
 		totalOutAmount, totalGSTOut, userID,
 		"Credit note for exchange "+exchangeNumber).Scan(&creditNoteID); err != nil {
 		return "", fmt.Errorf("create credit note: %w", err)
