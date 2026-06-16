@@ -229,6 +229,12 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 		return "", fmt.Errorf("items_in cannot be empty")
 	}
 
+	// Resolve transaction date: use provided date or fall back to NOW()
+	txDate := "NOW()"
+	if in.ExchangeDate != "" {
+		txDate = "'" + in.ExchangeDate + "'::timestamptz"
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return "", err
@@ -547,17 +553,17 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 	soNumber := fmt.Sprintf("SO%05d", soNext)
 
 	var newSalesOrderID string
-	if err := tx.QueryRow(`
+	if err := tx.QueryRow(fmt.Sprintf(`
 		INSERT INTO sales_orders
 			(so_number, channel, branch_id, customer_id, warehouse_id,
 			 created_by, order_date,
 			 subtotal, tax_total, discount_total, bill_discount, grand_total,
 			 status, payment_status, notes, salesperson_id)
-		VALUES ($1, 'EXCHANGE', $2, $3, $4, $5, NOW(),
+		VALUES ($1, 'EXCHANGE', $2, $3, $4, $5, %s,
 		        $6, $7, $8, 0, $9,
 		        'CONFIRMED', 'PAID', $10, $11)
 		RETURNING id
-	`, soNumber, inv.BranchID, inv.CustomerID, inv.WarehouseID, userID,
+	`, txDate), soNumber, inv.BranchID, inv.CustomerID, inv.WarehouseID, userID,
 		subAmtIn, gstAmtIn, discAmtIn, totalInAmount,
 		"Exchange "+exchangeNumber, inv.SalespersonID).Scan(&newSalesOrderID); err != nil {
 		return "", fmt.Errorf("create exchange sales order: %w", err)
@@ -574,17 +580,17 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 	invoiceNumber := fmt.Sprintf("INV%05d", invNext)
 
 	var newInvoiceID string
-	if err := tx.QueryRow(`
+	if err := tx.QueryRow(fmt.Sprintf(`
 		INSERT INTO sales_invoices
 			(sales_order_id, customer_id, warehouse_id, channel, branch_id,
 			 invoice_number, invoice_date,
 			 sub_amount, discount_amount, bill_discount, gst_amount, round_off,
 			 net_amount, paid_amount, status, created_by, return_order_id)
-		VALUES ($1, $2, $3, 'EXCHANGE', $4, $5, NOW(),
+		VALUES ($1, $2, $3, 'EXCHANGE', $4, $5, %s,
 		        $6, $7, 0, $8, $9,
 		        $10, $11, 'PAID', $12, $13)
 		RETURNING id
-	`, newSalesOrderID, inv.CustomerID, inv.WarehouseID, inv.BranchID,
+	`, txDate), newSalesOrderID, inv.CustomerID, inv.WarehouseID, inv.BranchID,
 		invoiceNumber,
 		subAmtIn, discAmtIn, gstAmtIn, roundOff,
 		totalInAmount, totalInAmount, userID, creditNoteID).Scan(&newInvoiceID); err != nil {
@@ -611,20 +617,20 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 	}
 	creditApplied = round2(creditApplied)
 
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(fmt.Sprintf(`
 		INSERT INTO sales_payments (sales_invoice_id, amount, payment_method, reference, paid_at)
-		VALUES ($1, $2, 'EXCHANGE_CREDIT', $3, NOW())
-	`, newInvoiceID, creditApplied, exchangeNumber); err != nil {
+		VALUES ($1, $2, 'EXCHANGE_CREDIT', $3, %s)
+	`, txDate), newInvoiceID, creditApplied, exchangeNumber); err != nil {
 		return "", fmt.Errorf("record exchange credit payment: %w", err)
 	}
 
 	// If customer is paying the difference, record those payments too
 	if netAmount > 0 {
 		for _, sett := range in.Settlements {
-			if _, err := tx.Exec(`
+			if _, err := tx.Exec(fmt.Sprintf(`
 				INSERT INTO sales_payments (sales_invoice_id, amount, payment_method, reference, paid_at)
-				VALUES ($1, $2, $3, $4, NOW())
-			`, newInvoiceID, round2(sett.Amount), sett.PaymentMethod, sett.Reference); err != nil {
+				VALUES ($1, $2, $3, $4, %s)
+			`, txDate), newInvoiceID, round2(sett.Amount), sett.PaymentMethod, sett.Reference); err != nil {
 				return "", fmt.Errorf("record collect settlement: %w", err)
 			}
 		}
@@ -650,11 +656,11 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 			`, ic.variantID).Scan(&variantLabel)
 			return "", fmt.Errorf("insufficient stock for %s", variantLabel)
 		}
-		if _, err := tx.Exec(`
+		if _, err := tx.Exec(fmt.Sprintf(`
 			INSERT INTO stock_movements
 				(variant_id, from_warehouse_id, quantity, movement_type, reference, status, created_at)
-			VALUES ($1, $2, $3, 'EXCHANGE_OUT', $4, 'COMPLETED', NOW())
-		`, ic.variantID, inv.WarehouseID, ic.quantity, exchangeID); err != nil {
+			VALUES ($1, $2, $3, 'EXCHANGE_OUT', $4, 'COMPLETED', %s)
+		`, txDate), ic.variantID, inv.WarehouseID, ic.quantity, exchangeID); err != nil {
 			return "", fmt.Errorf("stock movement for exchange out: %w", err)
 		}
 	}
@@ -671,17 +677,17 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 	}
 
 	// ── 13. Finalise exchange_order with computed totals ─────────────────────
-	if _, err := tx.Exec(`
+	if _, err := tx.Exec(fmt.Sprintf(`
 		UPDATE exchange_orders
 		SET credit_note_id       = $1,
 		    new_sales_invoice_id = $2,
 		    items_out_total      = $3,
 		    items_in_total       = $4,
 		    net_amount           = $5,
-		    completed_at         = NOW(),
+		    completed_at         = %s,
 		    updated_at           = NOW()
 		WHERE id = $6
-	`, creditNoteID, newInvoiceID, totalOutAmount, totalInAmount, netAmount, exchangeID); err != nil {
+	`, txDate), creditNoteID, newInvoiceID, totalOutAmount, totalInAmount, netAmount, exchangeID); err != nil {
 		return "", fmt.Errorf("finalise exchange order: %w", err)
 	}
 
