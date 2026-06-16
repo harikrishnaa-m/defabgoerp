@@ -30,12 +30,14 @@ type ExchangeSettlementInput struct {
 
 // CreateExchangeInput is the single request body for a complete exchange transaction.
 // The server creates the credit note and new invoice atomically.
+// ExchangeDate is optional (YYYY-MM-DD); defaults to current server time when omitted.
 type CreateExchangeInput struct {
 	OriginalSalesInvoiceID string                    `json:"original_sales_invoice_id"`
 	ItemsOut               []ExchangeItemOutInput    `json:"items_out"`
 	ItemsIn                []ExchangeItemInInput     `json:"items_in"`
 	Settlements            []ExchangeSettlementInput `json:"settlements"`
 	Notes                  string                    `json:"notes"`
+	ExchangeDate           string                    `json:"exchange_date"` // YYYY-MM-DD, optional
 }
 
 // ExchangeListFilter holds query params for listing exchange orders.
