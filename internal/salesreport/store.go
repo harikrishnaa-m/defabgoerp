@@ -85,6 +85,12 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
 		idx++
 		includeCreditNotes = false
 	}
+	if f.VariantCode != "" {
+		invConds = append(invConds, fmt.Sprintf("v.variant_code = $%d", idx))
+		args = append(args, f.VariantCode)
+		idx++
+		includeCreditNotes = false
+	}
 
 	invWhere := "WHERE si.status NOT IN ('CANCELLED')"
 	if len(invConds) > 0 {
@@ -115,6 +121,9 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
         COALESCE(b.name, '')        AS location,
         ''                          AS salesperson_name,
         COALESCE(u.name, '')        AS created_by_name,
+        NULL::TEXT                  AS variant_name,
+        0::NUMERIC                  AS quantity,
+        NULL::TEXT                  AS supplier_names,
         ro.created_at               AS sort_date
     FROM return_orders ro
     LEFT JOIN customers c ON c.id = ro.customer_id
@@ -123,7 +132,24 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
     %s`, cnWhere)
 	}
 
-	query := fmt.Sprintf(`
+	// Build variant-specific query components
+	variantSelect := ""
+	variantJoin := ""
+	variantGroupBy := ""
+	if f.VariantCode != "" {
+		variantSelect = "COALESCE(v.name, '') AS variant_name, SUM(sii.quantity) AS quantity, COALESCE(STRING_AGG(DISTINCT sup.name, ', '), '') AS supplier_names, "
+		variantJoin = `LEFT JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id
+    LEFT JOIN variants v ON v.id = sii.variant_id
+    LEFT JOIN purchase_order_items poi ON poi.product_code = v.variant_code::text
+    LEFT JOIN purchase_orders po ON po.id = poi.purchase_order_id
+    LEFT JOIN suppliers sup ON sup.id = po.supplier_id
+    `
+		variantGroupBy = ", v.id, v.name"
+	} else {
+		variantSelect = "NULL::TEXT AS variant_name, 0::NUMERIC AS quantity, NULL::TEXT AS supplier_names, "
+	}
+
+	queryTemplate := `
 WITH combined AS (
     SELECT
         si.id,
@@ -153,6 +179,7 @@ WITH combined AS (
         COALESCE(b.name,  '')       AS location,
         COALESCE(sp.name, '')       AS salesperson_name,
         COALESCE(u.name,  '')       AS created_by_name,
+        %s
         si.invoice_date             AS sort_date
     FROM sales_invoices si
     LEFT JOIN customers    c  ON c.id  = si.customer_id
@@ -162,8 +189,9 @@ WITH combined AS (
     LEFT JOIN users        u  ON u.id::text = si.created_by::text
     LEFT JOIN sales_payments spm ON spm.sales_invoice_id = si.id
     %s
+    %s
     GROUP BY si.id, si.invoice_number, si.invoice_date, si.net_amount, si.gst_amount,
-             c.name, b.name, sp.name, u.name, si.channel
+             c.name, b.name, sp.name, u.name, si.channel%s
     %s
 )
 SELECT
@@ -171,6 +199,9 @@ SELECT
     net_amount, gst_amount,
     cash, card, upi, bank_transfer, exchange_credit,
     location, salesperson_name, created_by_name,
+    COALESCE(variant_name, '') AS variant_name,
+    COALESCE(quantity, 0) AS quantity,
+    supplier_names,
     COUNT(*)                             OVER ()  AS total_count,
     COALESCE(SUM(net_amount)             OVER (), 0) AS total_net,
     COALESCE(SUM(gst_amount)             OVER (), 0) AS total_gst,
@@ -180,7 +211,9 @@ SELECT
     COALESCE(SUM(bank_transfer)          OVER (), 0) AS total_bank_transfer,
     COALESCE(SUM(exchange_credit)        OVER (), 0) AS total_exchange_credit
 FROM combined
-ORDER BY sort_date DESC, invoice_number DESC`, invWhere, creditNoteUnion)
+ORDER BY sort_date DESC, invoice_number DESC`
+
+	query := fmt.Sprintf(queryTemplate, variantSelect, variantJoin, invWhere, variantGroupBy, creditNoteUnion)
 
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
@@ -296,6 +329,9 @@ SELECT
     net_amount, gst_amount,
     cash, card, upi, bank_transfer, exchange_credit,
     location, salesperson_name, created_by_name,
+    NULL::TEXT AS variant_name,
+    0::NUMERIC AS quantity,
+    NULL::TEXT AS supplier_names,
     COUNT(*)                             OVER ()  AS total_count,
     COALESCE(SUM(net_amount)             OVER (), 0) AS total_net,
     COALESCE(SUM(gst_amount)             OVER (), 0) AS total_gst,
@@ -333,15 +369,20 @@ func (s *Store) scanRows(query string, args []interface{}, page, limit int) (*Re
 	for rows.Next() {
 		var row SalesReportRow
 		var cash, card, upi, bank, exchange sql.NullFloat64
+		var supplierNames sql.NullString
 		if err := rows.Scan(
 			&row.ID, &row.InvoiceNumber, &row.Date, &row.CustomerName, &row.Channel,
 			&row.NetAmount, &row.GSTAmount,
 			&cash, &card, &upi, &bank, &exchange,
 			&row.Location, &row.SalespersonName, &row.CreatedByName,
+			&row.VariantName, &row.Quantity, &supplierNames,
 			&totalCount, &totalNet, &totalGST,
 			&totalCash, &totalCard, &totalUPI, &totalBank, &totalExchange,
 		); err != nil {
 			return nil, err
+		}
+		if supplierNames.Valid {
+			row.SupplierNames = &supplierNames.String
 		}
 		row.CGSTAmount = row.GSTAmount / 2
 		row.SGSTAmount = row.GSTAmount / 2
