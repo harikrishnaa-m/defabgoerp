@@ -3,6 +3,7 @@ package salesreport
 // SalesReportRow is one row in the report — one invoice (or credit note).
 // Payment amounts are broken out into separate nullable columns.
 // Credit notes (exchanges) appear as negative rows (channel = "CREDIT_NOTE").
+// VariantName and Quantity are populated only when variant_code filter is active.
 type SalesReportRow struct {
 	ID              string   `json:"id"`
 	InvoiceNumber   string   `json:"invoice_number"`
@@ -21,6 +22,9 @@ type SalesReportRow struct {
 	Location        string   `json:"location"`
 	SalespersonName string   `json:"salesperson_name"`
 	CreatedByName   string   `json:"created_by_name"`
+	VariantName     string   `json:"variant_name,omitempty"`   // populated when variant_code filter is active
+	Quantity        float64  `json:"quantity,omitempty"`       // populated when variant_code filter is active
+	SupplierNames   *string  `json:"supplier_names,omitempty"` // null when no filter; "" when filter active but no supplier found
 }
 
 // ReportTotals holds column-level sums for the entire filtered result set.
@@ -56,6 +60,7 @@ type Filter struct {
 	CreatedByID   string
 	PaymentType   string // CASH, UPI, CARD, BANK_TRANSFER
 	Channel       string // STORE, ONLINE, EXCHANGE
+	VariantCode   string // filter by variant code (supports multiple variants with same code)
 	Page          int
 	Limit         int
 }
