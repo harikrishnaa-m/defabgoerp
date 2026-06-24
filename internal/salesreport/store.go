@@ -369,17 +369,24 @@ func (s *Store) scanRows(query string, args []interface{}, page, limit int) (*Re
 	for rows.Next() {
 		var row SalesReportRow
 		var cash, card, upi, bank, exchange sql.NullFloat64
-		var supplierNames sql.NullString
+		var variantName, supplierNames sql.NullString
+		var quantity sql.NullFloat64
 		if err := rows.Scan(
 			&row.ID, &row.InvoiceNumber, &row.Date, &row.CustomerName, &row.Channel,
 			&row.NetAmount, &row.GSTAmount,
 			&cash, &card, &upi, &bank, &exchange,
 			&row.Location, &row.SalespersonName, &row.CreatedByName,
-			&row.VariantName, &row.Quantity, &supplierNames,
+			&variantName, &quantity, &supplierNames,
 			&totalCount, &totalNet, &totalGST,
 			&totalCash, &totalCard, &totalUPI, &totalBank, &totalExchange,
 		); err != nil {
 			return nil, err
+		}
+		if variantName.Valid {
+			row.VariantName = variantName.String
+		}
+		if quantity.Valid {
+			row.Quantity = quantity.Float64
 		}
 		if supplierNames.Valid {
 			row.SupplierNames = &supplierNames.String
