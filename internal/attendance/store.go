@@ -18,6 +18,14 @@ func NewStore(db *sql.DB) *Store {
 	return &Store{db: db}
 }
 
+// formatHours converts a decimal-hours float (e.g. 10.9167) to "HH:MM" (e.g. "10:55").
+func formatHours(h float64) string {
+	totalMins := int(math.Round(h * 60))
+	hrs := totalMins / 60
+	mins := totalMins % 60
+	return fmt.Sprintf("%d:%02d", hrs, mins)
+}
+
 // ──────────────────────────────────────────
 // Punch In  (supports multiple sessions & branches per day)
 // ──────────────────────────────────────────
@@ -121,7 +129,7 @@ func (s *Store) PunchOut(userID, notes string) (map[string]interface{}, error) {
 		"date":        today,
 		"punch_in":    punchIn,
 		"punch_out":   now,
-		"total_hours": hours,
+		"total_hours": formatHours(hours),
 		"notes":       notes,
 	}, nil
 }
@@ -251,7 +259,7 @@ func (s *Store) List(userID *string, branchID *string, search string, date strin
 			"date":        today,
 			"punch_in":    nil,
 			"punch_out":   nil,
-			"total_hours": totalHours,
+			"total_hours": formatHours(totalHours),
 			"sessions":    sessions,
 			"status":      status,
 			"shift":       shift,
@@ -319,7 +327,7 @@ func (s *Store) GetByID(targetUserID string, dateFrom, dateTo string) (map[strin
 	type session struct {
 		PunchIn    interface{} `json:"punch_in"`
 		PunchOut   interface{} `json:"punch_out"`
-		TotalHours float64     `json:"total_hours"`
+		TotalHours string      `json:"total_hours"`
 		Notes      string      `json:"notes"`
 		SessionSeq int         `json:"session_seq"`
 		BranchName string      `json:"branch_name"`
@@ -340,7 +348,7 @@ func (s *Store) GetByID(targetUserID string, dateFrom, dateTo string) (map[strin
 		}
 		sess := session{
 			PunchIn:    punchIn,
-			TotalHours: totalHours,
+			TotalHours: formatHours(totalHours),
 			Notes:      notes,
 			SessionSeq: sessionSeq,
 			BranchName: branchName,
@@ -370,12 +378,12 @@ func (s *Store) GetByID(targetUserID string, dateFrom, dateTo string) (map[strin
 			"sessions":    []session{},
 			"punch_in":    nil,
 			"punch_out":   nil,
-			"total_hours": 0.0,
+			"total_hours": "0:00",
 		}
 		if sessions, ok := dateSessionsMap[ds]; ok && len(sessions) > 0 {
 			day["status"] = "present"
 			day["sessions"] = sessions
-			day["total_hours"] = math.Round(dateHoursMap[ds]*100) / 100
+			day["total_hours"] = formatHours(dateHoursMap[ds])
 			// Backward-compat: first punch_in and last punch_out
 			day["punch_in"] = sessions[0].PunchIn
 			if last := sessions[len(sessions)-1]; last.PunchOut != nil {
@@ -399,7 +407,7 @@ func (s *Store) GetByID(targetUserID string, dateFrom, dateTo string) (map[strin
 		"date_to":      dateTo,
 		"days_present": daysPresent,
 		"days_absent":  daysAbsent,
-		"total_hours":  math.Round(totalHoursSum*100) / 100,
+		"total_hours":  formatHours(totalHoursSum),
 		"records":      days,
 	}, nil
 }
