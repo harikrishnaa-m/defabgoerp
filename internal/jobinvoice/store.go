@@ -54,7 +54,7 @@ func (s *Store) List(branchID *string, search string, limit, offset int) ([]map[
 		       ji.branch_id, COALESCE(b.name,'') AS branch_name,
 		       ji.customer_id, COALESCE(c.name,'') AS customer_name, COALESCE(c.phone,'') AS customer_phone,
 		       ji.sub_amount, ji.discount_amount, ji.gst_amount, ji.net_amount,
-		       ji.payment_status, ji.created_at
+		       ji.payment_status, ji.created_at, jo.received_date
 		FROM job_invoices ji
 		LEFT JOIN job_orders jo ON jo.id = ji.job_order_id
 		LEFT JOIN branches b ON b.id = ji.branch_id
@@ -78,13 +78,13 @@ func (s *Store) List(branchID *string, search string, limit, offset int) ([]map[
 			brID, brName                    sql.NullString
 			subAmt, discAmt, gstAmt, netAmt float64
 			paySt                           string
-			createdAt                       sql.NullTime
+			createdAt, receivedDate         sql.NullTime
 		)
 		if err := rows.Scan(&id, &invNum, &joID, &joNum,
 			&brID, &brName,
 			&custID, &custName, &custPhone,
 			&subAmt, &discAmt, &gstAmt, &netAmt,
-			&paySt, &createdAt); err != nil {
+			&paySt, &createdAt, &receivedDate); err != nil {
 			return nil, 0, err
 		}
 		list = append(list, map[string]interface{}{
@@ -103,6 +103,7 @@ func (s *Store) List(branchID *string, search string, limit, offset int) ([]map[
 			"net_amount":      netAmt,
 			"payment_status":  paySt,
 			"created_at":      createdAt.Time,
+			"received_date":   receivedDate.Time,
 		})
 	}
 	if list == nil {
@@ -122,7 +123,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		brID, brName                           sql.NullString
 		subAmt, discAmt, gstAmt, netAmt        float64
 		paySt                                  string
-		createdAt                              sql.NullTime
+		createdAt, receivedDate                sql.NullTime
 	)
 	err := s.db.QueryRow(`
 		SELECT ji.id, ji.invoice_number, ji.job_order_id, jo.job_number,
@@ -130,7 +131,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		       ji.customer_id, COALESCE(c.name,'') AS customer_name,
 		       COALESCE(c.phone,'') AS customer_phone, COALESCE(c.email,'') AS customer_email,
 		       ji.sub_amount, ji.discount_amount, ji.gst_amount, ji.net_amount,
-		       ji.payment_status, ji.created_at
+		       ji.payment_status, ji.created_at, jo.received_date
 		FROM job_invoices ji
 		LEFT JOIN job_orders jo ON jo.id = ji.job_order_id
 		LEFT JOIN branches b ON b.id = ji.branch_id
@@ -140,7 +141,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		&brID, &brName,
 		&custID, &custName, &custPhone, &custEmail,
 		&subAmt, &discAmt, &gstAmt, &netAmt,
-		&paySt, &createdAt)
+		&paySt, &createdAt, &receivedDate)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +165,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"net_amount":      netAmt,
 		"payment_status":  paySt,
 		"created_at":      createdAt.Time,
+		"received_date":   receivedDate.Time,
 	}
 
 	// Job order items (the invoice line items come from the job order)
