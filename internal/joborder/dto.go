@@ -59,6 +59,7 @@ type CreateJobOrderInput struct {
 	CustomerEmail         string                        `json:"customer_email"`
 	JobType               string                        `json:"job_type"`
 	MaterialSource        string                        `json:"material_source"` // CUSTOMER or STORE
+	ReceivedDate          string                        `json:"received_date"`   // YYYY-MM-DD, optional; defaults to today
 	ExpectedDeliveryDate  *string                       `json:"expected_delivery_date"`
 	Notes                 string                        `json:"notes"`
 	SampleProvided        bool                          `json:"sample_provided"`
