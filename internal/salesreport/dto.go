@@ -25,6 +25,7 @@ type SalesReportRow struct {
 	VariantName     string   `json:"variant_name,omitempty"`   // populated when variant_code filter is active
 	Quantity        float64  `json:"quantity,omitempty"`       // populated when variant_code filter is active
 	SupplierNames   *string  `json:"supplier_names,omitempty"` // null when no filter; "" when filter active but no supplier found
+	CategoryName    string   `json:"category_name,omitempty"`  // populated when category_id filter is active
 }
 
 // ReportTotals holds column-level sums for the entire filtered result set.
@@ -61,6 +62,7 @@ type Filter struct {
 	PaymentType   string // CASH, UPI, CARD, BANK_TRANSFER
 	Channel       string // STORE, ONLINE, EXCHANGE
 	VariantCode   string // filter by variant code (supports multiple variants with same code)
+	CategoryID    string // filter by category ID; includes category_name and quantity in response
 	Page          int
 	Limit         int
 }
