@@ -30,6 +30,7 @@ func NewHandler(store *Store) *Handler {
 //	payment_type     — filter by payment method: CASH | UPI | CARD | BANK_TRANSFER
 //	channel          — filter by sale type: STORE | ONLINE
 //	variant_code     — filter by variant code (matches all variants with this code; includes variant_name and quantity in response)
+//	category_id      — filter by category UUID; includes category_name and quantity in response
 //	page             — 1-based page number (default 1)
 //	limit            — results per page (default 50)
 func (h *Handler) List(c *fiber.Ctx) error {
@@ -55,6 +56,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		PaymentType:   c.Query("payment_type"),
 		Channel:       c.Query("channel"),
 		VariantCode:   c.Query("variant_code"),
+		CategoryID:    c.Query("category_id"),
 		Page:          page,
 		Limit:         limit,
 	}
