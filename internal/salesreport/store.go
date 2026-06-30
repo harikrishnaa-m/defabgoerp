@@ -129,7 +129,11 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
         COALESCE(u.name, '')        AS created_by_name,
         NULL::TEXT                  AS variant_name,
         0::NUMERIC                  AS quantity,
-        NULL::TEXT                  AS supplier_names,        NULL::TEXT                  AS category_name,        ro.created_at               AS sort_date
+        NULL::TEXT                  AS supplier_names,
+        NULL::TEXT                  AS category_name,
+        NULL::TEXT                  AS product_name,
+        NULL::TEXT                  AS variant_code_col,
+        ro.created_at               AS sort_date
     FROM return_orders ro
     LEFT JOIN customers c ON c.id = ro.customer_id
     LEFT JOIN branches  b ON b.id = ro.branch_id
@@ -143,7 +147,7 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
 	variantGroupBy := ""
 	switch {
 	case f.VariantCode != "" && f.CategoryID != "":
-		variantSelect = "COALESCE(v.name, '') AS variant_name, SUM(sii.quantity) AS quantity, COALESCE(STRING_AGG(DISTINCT sup.name, ', '), '') AS supplier_names, COALESCE(cat.name, '') AS category_name, "
+		variantSelect = "COALESCE(v.name, '') AS variant_name, SUM(sii.quantity) AS quantity, COALESCE(STRING_AGG(DISTINCT sup.name, ', '), '') AS supplier_names, COALESCE(cat.name, '') AS category_name, COALESCE(p.name, '') AS product_name, COALESCE(v.variant_code::text, '') AS variant_code_col, "
 		variantJoin = `LEFT JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id
     LEFT JOIN variants v ON v.id = sii.variant_id
     LEFT JOIN purchase_order_items poi ON poi.product_code = v.variant_code::text
@@ -152,26 +156,27 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
     LEFT JOIN products p ON p.id = v.product_id
     LEFT JOIN categories cat ON cat.id = p.category_id
     `
-		variantGroupBy = ", v.id, v.name, cat.id, cat.name"
+		variantGroupBy = ", v.id, v.name, v.variant_code, cat.id, cat.name, p.id, p.name"
 	case f.VariantCode != "":
-		variantSelect = "COALESCE(v.name, '') AS variant_name, SUM(sii.quantity) AS quantity, COALESCE(STRING_AGG(DISTINCT sup.name, ', '), '') AS supplier_names, NULL::TEXT AS category_name, "
+		variantSelect = "COALESCE(v.name, '') AS variant_name, SUM(sii.quantity) AS quantity, COALESCE(STRING_AGG(DISTINCT sup.name, ', '), '') AS supplier_names, NULL::TEXT AS category_name, COALESCE(p.name, '') AS product_name, COALESCE(v.variant_code::text, '') AS variant_code_col, "
 		variantJoin = `LEFT JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id
     LEFT JOIN variants v ON v.id = sii.variant_id
     LEFT JOIN purchase_order_items poi ON poi.product_code = v.variant_code::text
     LEFT JOIN purchase_orders po ON po.id = poi.purchase_order_id
     LEFT JOIN suppliers sup ON sup.id = po.supplier_id
+    LEFT JOIN products p ON p.id = v.product_id
     `
-		variantGroupBy = ", v.id, v.name"
+		variantGroupBy = ", v.id, v.name, v.variant_code, p.id, p.name"
 	case f.CategoryID != "":
-		variantSelect = "NULL::TEXT AS variant_name, SUM(sii.quantity) AS quantity, NULL::TEXT AS supplier_names, COALESCE(cat.name, '') AS category_name, "
+		variantSelect = "COALESCE(v.name, '') AS variant_name, SUM(sii.quantity) AS quantity, NULL::TEXT AS supplier_names, COALESCE(cat.name, '') AS category_name, COALESCE(p.name, '') AS product_name, COALESCE(v.variant_code::text, '') AS variant_code_col, "
 		variantJoin = `LEFT JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id
     LEFT JOIN variants v ON v.id = sii.variant_id
     LEFT JOIN products p ON p.id = v.product_id
     LEFT JOIN categories cat ON cat.id = p.category_id
     `
-		variantGroupBy = ", cat.id, cat.name"
+		variantGroupBy = ", cat.id, cat.name, v.id, v.name, v.variant_code, p.id, p.name"
 	default:
-		variantSelect = "NULL::TEXT AS variant_name, 0::NUMERIC AS quantity, NULL::TEXT AS supplier_names, NULL::TEXT AS category_name, "
+		variantSelect = "NULL::TEXT AS variant_name, 0::NUMERIC AS quantity, NULL::TEXT AS supplier_names, NULL::TEXT AS category_name, NULL::TEXT AS product_name, NULL::TEXT AS variant_code_col, "
 	}
 
 	queryTemplate := `
@@ -228,6 +233,8 @@ SELECT
     COALESCE(quantity, 0) AS quantity,
     supplier_names,
     COALESCE(category_name, '') AS category_name,
+    COALESCE(product_name, '') AS product_name,
+    COALESCE(variant_code_col, '') AS variant_code_col,
     COUNT(*)                             OVER ()  AS total_count,
     COALESCE(SUM(net_amount)             OVER (), 0) AS total_net,
     COALESCE(SUM(gst_amount)             OVER (), 0) AS total_gst,
@@ -359,6 +366,8 @@ SELECT
     0::NUMERIC AS quantity,
     NULL::TEXT AS supplier_names,
     NULL::TEXT AS category_name,
+    NULL::TEXT AS product_name,
+    NULL::TEXT AS variant_code_col,
     COUNT(*)                             OVER ()  AS total_count,
     COALESCE(SUM(net_amount)             OVER (), 0) AS total_net,
     COALESCE(SUM(gst_amount)             OVER (), 0) AS total_gst,
@@ -396,14 +405,14 @@ func (s *Store) scanRows(query string, args []interface{}, page, limit int) (*Re
 	for rows.Next() {
 		var row SalesReportRow
 		var cash, card, upi, bank, exchange sql.NullFloat64
-		var variantName, supplierNames, categoryName sql.NullString
+		var variantName, supplierNames, categoryName, productName, variantCodeCol sql.NullString
 		var quantity sql.NullFloat64
 		if err := rows.Scan(
 			&row.ID, &row.InvoiceNumber, &row.Date, &row.CustomerName, &row.Channel,
 			&row.NetAmount, &row.GSTAmount,
 			&cash, &card, &upi, &bank, &exchange,
 			&row.Location, &row.SalespersonName, &row.CreatedByName,
-			&variantName, &quantity, &supplierNames, &categoryName,
+			&variantName, &quantity, &supplierNames, &categoryName, &productName, &variantCodeCol,
 			&totalCount, &totalNet, &totalGST,
 			&totalCash, &totalCard, &totalUPI, &totalBank, &totalExchange,
 		); err != nil {
@@ -417,6 +426,12 @@ func (s *Store) scanRows(query string, args []interface{}, page, limit int) (*Re
 		}
 		if categoryName.Valid {
 			row.CategoryName = categoryName.String
+		}
+		if productName.Valid {
+			row.ProductName = productName.String
+		}
+		if variantCodeCol.Valid {
+			row.VariantCode = variantCodeCol.String
 		}
 		if supplierNames.Valid {
 			row.SupplierNames = &supplierNames.String

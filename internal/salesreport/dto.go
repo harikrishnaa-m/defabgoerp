@@ -22,10 +22,12 @@ type SalesReportRow struct {
 	Location        string   `json:"location"`
 	SalespersonName string   `json:"salesperson_name"`
 	CreatedByName   string   `json:"created_by_name"`
-	VariantName     string   `json:"variant_name,omitempty"`   // populated when variant_code filter is active
-	Quantity        float64  `json:"quantity,omitempty"`       // populated when variant_code filter is active
+	VariantName     string   `json:"variant_name,omitempty"`   // populated when variant_code or category_id filter is active
+	Quantity        float64  `json:"quantity,omitempty"`       // per-variant quantity when variant_code or category_id filter is active
 	SupplierNames   *string  `json:"supplier_names,omitempty"` // null when no filter; "" when filter active but no supplier found
 	CategoryName    string   `json:"category_name,omitempty"`  // populated when category_id filter is active
+	ProductName     string   `json:"product_name,omitempty"`   // populated when variant_code or category_id filter is active
+	VariantCode     string   `json:"variant_code,omitempty"`   // populated when variant_code or category_id filter is active
 }
 
 // ReportTotals holds column-level sums for the entire filtered result set.
