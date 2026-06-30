@@ -78,16 +78,23 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 	}
 
 	var jobID string
-	err = tx.QueryRow(`
+
+	// Resolve received date: use provided date or fall back to NOW()
+	receivedDate := "NOW()"
+	if in.ReceivedDate != "" {
+		receivedDate = "'" + in.ReceivedDate + "'::timestamptz"
+	}
+
+	err = tx.QueryRow(fmt.Sprintf(`
 		INSERT INTO job_orders
 			(job_number, customer_id, branch_id, warehouse_id, job_type, material_source,
-			 status, payment_status, expected_delivery_date,
+			 status, payment_status, received_date, expected_delivery_date,
 			 sub_amount, discount_amount, gst_amount, net_amount,
 			 notes, sample_provided, sample_description, measurement_bill_number,
 			 image_url, design_image_url, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,'RECEIVED','UNPAID',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		VALUES ($1,$2,$3,$4,$5,$6,'RECEIVED','UNPAID',%s,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 		RETURNING id
-	`, jobNumber, in.CustomerID, branchParam, whParam, in.JobType, in.MaterialSource,
+	`, receivedDate), jobNumber, in.CustomerID, branchParam, whParam, in.JobType, in.MaterialSource,
 		in.ExpectedDeliveryDate,
 		round2(in.SubAmount), round2(in.DiscountAmount), round2(in.GSTAmount), round2(in.NetAmount),
 		in.Notes, in.SampleProvided, in.SampleDescription, in.MeasurementBillNumber,

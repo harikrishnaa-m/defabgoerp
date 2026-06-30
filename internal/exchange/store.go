@@ -552,6 +552,12 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 	}
 	soNumber := fmt.Sprintf("SO%05d", soNext)
 
+	// Use provided salesperson if given, otherwise inherit from original invoice
+	salespersonID := inv.SalespersonID
+	if in.SalespersonID != nil {
+		salespersonID = sql.NullString{String: *in.SalespersonID, Valid: true}
+	}
+
 	var newSalesOrderID string
 	if err := tx.QueryRow(fmt.Sprintf(`
 		INSERT INTO sales_orders
@@ -565,7 +571,7 @@ func (s *Store) Create(in CreateExchangeInput, userID, branchID string) (string,
 		RETURNING id
 	`, txDate), soNumber, inv.BranchID, inv.CustomerID, inv.WarehouseID, userID,
 		subAmtIn, gstAmtIn, discAmtIn, totalInAmount,
-		"Exchange "+exchangeNumber, inv.SalespersonID).Scan(&newSalesOrderID); err != nil {
+		"Exchange "+exchangeNumber, salespersonID).Scan(&newSalesOrderID); err != nil {
 		return "", fmt.Errorf("create exchange sales order: %w", err)
 	}
 

@@ -37,7 +37,8 @@ type CreateExchangeInput struct {
 	ItemsIn                []ExchangeItemInInput     `json:"items_in"`
 	Settlements            []ExchangeSettlementInput `json:"settlements"`
 	Notes                  string                    `json:"notes"`
-	ExchangeDate           string                    `json:"exchange_date"` // YYYY-MM-DD, optional
+	ExchangeDate           string                    `json:"exchange_date"`  // YYYY-MM-DD, optional
+	SalespersonID          *string                   `json:"salesperson_id"` // optional; overrides the original invoice's salesperson
 }
 
 // ExchangeListFilter holds query params for listing exchange orders.
