@@ -14,4 +14,3 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	r.Post("/import-stock-to-warehouse/:warehouseId", h.ImportStockToWarehouse)
 }
 
-//
