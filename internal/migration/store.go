@@ -2450,29 +2450,36 @@ type stockXlsxRow struct {
 func parseStockXlsx(fileBytes []byte) ([]stockXlsxRow, error) {
 	f, err := excelize.OpenReader(bytes.NewReader(fileBytes))
 	if err != nil {
-		return nil, fmt.Errorf("open xlsx: %w", err)
+		return nil, fmt.Errorf("the uploaded file is not a valid Excel (.xlsx) file")
 	}
 	defer f.Close()
 
 	sheets := f.GetSheetList()
 	if len(sheets) == 0 {
-		return nil, fmt.Errorf("xlsx has no sheets")
+		return nil, fmt.Errorf("the Excel file has no sheets")
 	}
 
 	allRows, err := f.GetRows(sheets[0])
 	if err != nil {
-		return nil, fmt.Errorf("get rows: %w", err)
+		return nil, fmt.Errorf("could not read the Excel sheet: %w", err)
 	}
-	if len(allRows) < 2 {
-		return nil, fmt.Errorf("xlsx has no data rows")
+	if len(allRows) == 0 {
+		return nil, fmt.Errorf("the Excel sheet is empty — no data found")
 	}
 
-	// Locate header row (first row containing "CODE")
+	// Locate header row by scanning until we find CODE and ITEM NAME.
 	headerIdx := -1
 	colCode, colCP, colSP, colHSN, colQty, colItem, colCat := -1, -1, -1, -1, -1, -1, -1
+	var foundHeaders []string
 	for i, row := range allRows {
+		colCode, colCP, colSP, colHSN, colQty, colItem, colCat = -1, -1, -1, -1, -1, -1, -1
+		foundHeaders = foundHeaders[:0]
 		for j, cell := range row {
-			switch strings.ToUpper(strings.TrimSpace(cell)) {
+			h := strings.ToUpper(strings.TrimSpace(cell))
+			if h != "" {
+				foundHeaders = append(foundHeaders, h)
+			}
+			switch h {
 			case "CODE":
 				colCode = j
 			case "CP":
@@ -2494,28 +2501,68 @@ func parseStockXlsx(fileBytes []byte) ([]stockXlsxRow, error) {
 			break
 		}
 	}
+
 	if headerIdx < 0 {
-		return nil, fmt.Errorf("header row with CODE and ITEM NAME not found")
+		// Build a helpful message showing what was actually found.
+		var firstRowCells []string
+		if len(allRows) > 0 {
+			for _, cell := range allRows[0] {
+				if v := strings.TrimSpace(cell); v != "" {
+					firstRowCells = append(firstRowCells, v)
+				}
+			}
+		}
+		var missing []string
+		if colCode < 0 {
+			missing = append(missing, "CODE")
+		}
+		if colItem < 0 {
+			missing = append(missing, "ITEM NAME")
+		}
+		if len(firstRowCells) > 0 {
+			return nil, fmt.Errorf(
+				"missing required column(s): %s — columns found in the file: %s (check for typos or extra spaces)",
+				strings.Join(missing, ", "),
+				strings.Join(firstRowCells, ", "),
+			)
+		}
+		return nil, fmt.Errorf(
+			"missing required column(s): %s — no recognisable headers found in the file",
+			strings.Join(missing, ", "),
+		)
 	}
 
+	dataRows := allRows[headerIdx+1:]
+	if len(dataRows) == 0 {
+		return nil, fmt.Errorf("the Excel file has a header row but no data rows below it")
+	}
+
+	_ = colHSN // optional — used when present
+
 	var rows []stockXlsxRow
-	for _, row := range allRows[headerIdx+1:] {
+	for i, row := range dataRows {
+		rowNum := headerIdx + i + 2 // 1-based Excel row number
+
 		codeStr := strings.TrimSpace(safeCol(row, colCode))
 		if codeStr == "" {
-			continue
+			continue // blank CODE row → skip silently
 		}
+
 		code := int(parseFloat(codeStr))
 		if code == 0 {
-			continue
+			return nil, fmt.Errorf("row %d: CODE value %q is not a valid number", rowNum, codeStr)
 		}
+
 		itemName := strings.ToUpper(strings.TrimSpace(safeCol(row, colItem)))
 		if itemName == "" {
-			continue
+			return nil, fmt.Errorf("row %d: CODE %d has a blank ITEM NAME — every row must have an item name", rowNum, code)
 		}
+
 		catName := ""
 		if colCat >= 0 {
 			catName = strings.ToUpper(strings.TrimSpace(safeCol(row, colCat)))
 		}
+
 		qtyRaw := strings.TrimSpace(safeCol(row, colQty))
 		var qty float64
 		if qtyRaw == "" {
@@ -2523,6 +2570,7 @@ func parseStockXlsx(fileBytes []byte) ([]stockXlsxRow, error) {
 		} else {
 			qty = parseFloat(qtyRaw)
 		}
+
 		rows = append(rows, stockXlsxRow{
 			Code:     code,
 			CP:       parseFloat(safeCol(row, colCP)),
@@ -2533,6 +2581,11 @@ func parseStockXlsx(fileBytes []byte) ([]stockXlsxRow, error) {
 			Category: catName,
 		})
 	}
+
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("no valid data rows found — all rows had a blank CODE value")
+	}
+
 	return rows, nil
 }
 
@@ -2545,16 +2598,16 @@ func parseStockXlsx(fileBytes []byte) ([]stockXlsxRow, error) {
 func (s *Store) ImportStockToWarehouse(fileBytes []byte, warehouseIDStr string, dryRun bool) (*StockImportResult, error) {
 	warehouseID, err := uuid.Parse(warehouseIDStr)
 	if err != nil {
-		return nil, fmt.Errorf("invalid warehouse ID: %w", err)
+		return nil, fmt.Errorf("'%s' is not a valid warehouse ID — expected a UUID like a1b2c3d4-e5f6-7890-abcd-ef1234567890", warehouseIDStr)
 	}
 
 	// Verify warehouse exists
 	var exists bool
 	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM warehouses WHERE id = $1)`, warehouseID).Scan(&exists); err != nil {
-		return nil, fmt.Errorf("warehouse lookup: %w", err)
+		return nil, fmt.Errorf("could not verify warehouse: %w", err)
 	}
 	if !exists {
-		return nil, fmt.Errorf("warehouse %s not found", warehouseIDStr)
+		return nil, fmt.Errorf("warehouse with ID '%s' does not exist — please check the warehouse ID", warehouseIDStr)
 	}
 
 	rows, err := parseStockXlsx(fileBytes)
@@ -2647,6 +2700,29 @@ func (s *Store) ImportStockToWarehouse(fileBytes []byte, warehouseIDStr string, 
 	unmatched := make([]unmatchedRow, 0, len(unmatchedMap))
 	for _, u := range unmatchedMap {
 		unmatched = append(unmatched, *u)
+	}
+
+	// Validate all rows that need new variant creation.
+	for _, u := range unmatched {
+		if u.category == "" {
+			return nil, fmt.Errorf(
+				"CODE %d (%s) is a new item not found in the database, but its CATEGORY cell is blank — a category is required to create a new product",
+				u.code, u.itemName,
+			)
+		}
+		if u.sp <= 0 {
+			return nil, fmt.Errorf(
+				"CODE %d (%s) is a new item not found in the database, but its SP (selling price) is blank or zero — a price is required to create a new variant",
+				u.code, u.itemName,
+			)
+		}
+	}
+
+	if len(matched) == 0 && len(unmatched) == 0 {
+		return nil, fmt.Errorf(
+			"no rows were imported — all %d row(s) had zero or negative quantity",
+			result.TotalRows,
+		)
 	}
 
 	if dryRun {
