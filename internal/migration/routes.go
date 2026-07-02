@@ -11,4 +11,5 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 	r.Post("/import-sales", h.ImportSales)
 	r.Post("/import-vyttila-stock", h.ImportVyttilaStock)
 	r.Post("/map-hsn-from-xlsx", h.MapHSNFromXlsx)
+	r.Post("/import-stock-to-warehouse/:warehouseId", h.ImportStockToWarehouse)
 }

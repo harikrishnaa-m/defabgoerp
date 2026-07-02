@@ -334,3 +334,66 @@ func (h *Handler) MapHSNFromXlsx(c *fiber.Ctx) error {
 		"variants_updated": variantsUpdated,
 	})
 }
+
+// ImportStockToWarehouse handles POST /api/migration/import-stock-to-warehouse/:warehouseId
+//
+// Accepts a multipart file upload (field: "file") of an xlsx with columns:
+//
+//	CODE, CP, SP, HSN CODE, QTY, ITEM NAME, CATEGORY
+//
+// For each row:
+//   - If CODE matches an existing variant_code → add QTY to that variant's stock
+//     in the target warehouse (insert stock row if none exists yet).
+//   - If CODE does not match → create the product (and category if needed),
+//     variant, and stock entry from scratch.
+//
+// Query params:
+//
+//	dry_run – "true" to preview counts without DB writes
+func (h *Handler) ImportStockToWarehouse(c *fiber.Ctx) error {
+	warehouseIDStr := c.Params("warehouseId")
+	if warehouseIDStr == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "warehouseId path param is required",
+		})
+	}
+
+	dryRun := c.Query("dry_run") == "true"
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "multipart field 'file' is required",
+		})
+	}
+
+	f, err := fileHeader.Open()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to open uploaded file: " + err.Error(),
+		})
+	}
+	defer f.Close()
+
+	fileBytes, err := io.ReadAll(f)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to read uploaded file: " + err.Error(),
+		})
+	}
+
+	result, err := h.store.ImportStockToWarehouse(fileBytes, warehouseIDStr, dryRun)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "import failed",
+			"details": err.Error(),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message":      "stock import completed",
+		"warehouse_id": warehouseIDStr,
+		"dry_run":      dryRun,
+		"result":       result,
+	})
+}
