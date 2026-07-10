@@ -844,5 +844,3 @@ ORDER BY _invoice_date, invoice_number, _item_id`, where)
 		},
 	}, nil
 }
-
-//
