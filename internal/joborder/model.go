@@ -29,18 +29,21 @@ type JobOrder struct {
 }
 
 type JobOrderItem struct {
-	ID          string       `json:"id"`
-	JobOrderID  string       `json:"job_order_id"`
-	Category    string       `json:"category"`
-	SubCategory string       `json:"sub_category"`
-	Pieces      []PieceEntry `json:"pieces"`
-	Quantity    float64      `json:"quantity"`
-	UnitPrice   float64      `json:"unit_price"`
-	Discount    float64      `json:"discount"`
-	TaxPercent  float64      `json:"tax_percent"`
-	CGST        float64      `json:"cgst"`
-	SGST        float64      `json:"sgst"`
-	TotalPrice  float64      `json:"total_price"`
+	ID           string       `json:"id"`
+	JobOrderID   string       `json:"job_order_id"`
+	Category     string       `json:"category"`
+	SubCategory  string       `json:"sub_category"`
+	Pieces       []PieceEntry `json:"pieces"`
+	Quantity     float64      `json:"quantity"`
+	UnitPrice    float64      `json:"unit_price"`
+	Discount     float64      `json:"discount"`
+	TaxPercent   float64      `json:"tax_percent"`
+	CGST         float64      `json:"cgst"`
+	SGST         float64      `json:"sgst"`
+	TotalPrice   float64      `json:"total_price"`
+	DesignerName string       `json:"designer_name"`
+	CutterName   string       `json:"cutter_name"`
+	StitcherName string       `json:"stitcher_name"`
 }
 
 type JobOrderMaterial struct {
