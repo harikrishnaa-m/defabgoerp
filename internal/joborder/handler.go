@@ -73,8 +73,9 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	}
 
 	user := c.Locals("user").(*model.User)
-	branchID := ""
-	if user.BranchID != nil {
+	// Use branch_id from request body if provided; fall back to user's assigned branch
+	branchID := in.BranchID
+	if branchID == "" && user.BranchID != nil {
 		branchID = *user.BranchID
 	}
 

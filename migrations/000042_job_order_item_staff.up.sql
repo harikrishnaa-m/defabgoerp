@@ -1,0 +1,4 @@
+ALTER TABLE job_order_items
+    ADD COLUMN IF NOT EXISTS designer_name VARCHAR(100) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS cutter_name   VARCHAR(100) DEFAULT '',
+    ADD COLUMN IF NOT EXISTS stitcher_name VARCHAR(100) DEFAULT '';

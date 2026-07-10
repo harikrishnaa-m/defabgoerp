@@ -118,11 +118,13 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 		_, err = tx.Exec(`
 			INSERT INTO job_order_items
 				(job_order_id, category, sub_category, pieces,
-				 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+				 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
+				 designer_name, cutter_name, stitcher_name)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 		`, jobID, item.Category, item.SubCategory, string(piecesJSON),
 			item.Quantity, round2(item.UnitPrice), round2(item.Discount),
-			item.TaxPercent, round2(item.CGST), round2(item.SGST), round2(item.TotalPrice))
+			item.TaxPercent, round2(item.CGST), round2(item.SGST), round2(item.TotalPrice),
+			item.DesignerName, item.CutterName, item.StitcherName)
 		if err != nil {
 			return "", fmt.Errorf("insert job order item: %w", err)
 		}
@@ -422,11 +424,13 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 			_, err = tx.Exec(`
 				INSERT INTO job_order_items
 					(job_order_id, category, sub_category, pieces,
-					 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+					 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
+					 designer_name, cutter_name, stitcher_name)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
 			`, id, it.Category, it.SubCategory, string(piecesJSON),
 				it.Quantity, round2(it.UnitPrice), round2(it.Discount),
-				it.TaxPercent, round2(it.CGST), round2(it.SGST), round2(it.TotalPrice))
+				it.TaxPercent, round2(it.CGST), round2(it.SGST), round2(it.TotalPrice),
+				it.DesignerName, it.CutterName, it.StitcherName)
 			if err != nil {
 				return fmt.Errorf("insert item: %w", err)
 			}
@@ -808,28 +812,33 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		sampleProvided                                   bool
 		createdBy                                        string
 		branchIDVal, whIDVal                             sql.NullString
+		branchName                                       sql.NullString
 		imageURL, designImageURL                         sql.NullString
 		expectedDate                                     sql.NullString
 		actualDate                                       sql.NullTime
 		receivedDate, createdAt, updatedAt               sql.NullTime
 	)
 	err := s.db.QueryRow(`
-		SELECT id, job_number, customer_id, branch_id, warehouse_id,
-		       job_type, material_source, status, payment_status,
-		       received_date, expected_delivery_date, actual_delivery_date,
-		       sub_amount, discount_amount, gst_amount, net_amount,
-		       notes, sample_provided, sample_description, measurement_bill_number,
-		       COALESCE(image_url, '') AS image_url,
-		       COALESCE(design_image_url, '') AS design_image_url,
-		       created_by, created_at, updated_at
-		FROM job_orders WHERE id = $1
+		SELECT jo.id, jo.job_number, jo.customer_id, jo.branch_id, jo.warehouse_id,
+		       jo.job_type, jo.material_source, jo.status, jo.payment_status,
+		       jo.received_date, jo.expected_delivery_date, jo.actual_delivery_date,
+		       jo.sub_amount, jo.discount_amount, jo.gst_amount, jo.net_amount,
+		       jo.notes, jo.sample_provided, jo.sample_description, jo.measurement_bill_number,
+		       COALESCE(jo.image_url, '') AS image_url,
+		       COALESCE(jo.design_image_url, '') AS design_image_url,
+		       jo.created_by, jo.created_at, jo.updated_at,
+		       COALESCE(b.name, '') AS branch_name
+		FROM job_orders jo
+		LEFT JOIN branches b ON b.id = jo.branch_id
+		WHERE jo.id = $1
 	`, id).Scan(&jobID, &jobNum, &custID, &branchIDVal, &whIDVal,
 		&jobTyp, &matSrc, &st, &paySt,
 		&receivedDate, &expectedDate, &actualDate,
 		&subAmt, &discAmt, &gstAmt, &netAmt,
 		&notes, &sampleProvided, &sampleDesc, &measBillNum,
 		&imageURL, &designImageURL,
-		&createdBy, &createdAt, &updatedAt)
+		&createdBy, &createdAt, &updatedAt,
+		&branchName)
 	if err != nil {
 		return nil, err
 	}
@@ -839,6 +848,7 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		"job_number":              jobNum,
 		"customer_id":             custID,
 		"branch_id":               branchIDVal.String,
+		"branch_name":             branchName.String,
 		"warehouse_id":            whIDVal.String,
 		"job_type":                jobTyp,
 		"material_source":         matSrc,
@@ -875,7 +885,8 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 	itemRows, err := s.db.Query(`
 		SELECT id, COALESCE(category,''), COALESCE(sub_category,''),
 		       COALESCE(pieces, '[]'::jsonb)::text,
-		       quantity, unit_price, discount, tax_percent, cgst, sgst, total_price
+		       quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
+		       COALESCE(designer_name,''), COALESCE(cutter_name,''), COALESCE(stitcher_name,'')
 		FROM job_order_items WHERE job_order_id = $1
 	`, id)
 	if err == nil {
@@ -884,24 +895,29 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		for itemRows.Next() {
 			var iid, cat, subCat, piecesStr string
 			var qty, up, disc, tp, cgst, sgst, tot float64
+			var designerName, cutterName, stitcherName string
 			if err := itemRows.Scan(&iid, &cat, &subCat, &piecesStr,
-				&qty, &up, &disc, &tp, &cgst, &sgst, &tot); err == nil {
+				&qty, &up, &disc, &tp, &cgst, &sgst, &tot,
+				&designerName, &cutterName, &stitcherName); err == nil {
 				var pieces []PieceEntry
 				if err := json.Unmarshal([]byte(piecesStr), &pieces); err != nil || pieces == nil {
 					pieces = []PieceEntry{}
 				}
 				items = append(items, map[string]interface{}{
-					"id":           iid,
-					"category":     cat,
-					"sub_category": subCat,
-					"pieces":       pieces,
-					"quantity":     qty,
-					"unit_price":   up,
-					"discount":     disc,
-					"tax_percent":  tp,
-					"cgst":         cgst,
-					"sgst":         sgst,
-					"total_price":  tot,
+					"id":            iid,
+					"category":      cat,
+					"sub_category":  subCat,
+					"pieces":        pieces,
+					"quantity":      qty,
+					"unit_price":    up,
+					"discount":      disc,
+					"tax_percent":   tp,
+					"cgst":          cgst,
+					"sgst":          sgst,
+					"total_price":   tot,
+					"designer_name": designerName,
+					"cutter_name":   cutterName,
+					"stitcher_name": stitcherName,
 				})
 			}
 		}
