@@ -87,6 +87,7 @@ type UpdateJobOrderInput struct {
 	CustomerPhone         string                        `json:"customer_phone"`
 	CustomerName          string                        `json:"customer_name"`
 	CustomerEmail         string                        `json:"customer_email"`
+	BranchID              *string                       `json:"branch_id"`
 	JobType               *string                       `json:"job_type"`
 	MaterialSource        *string                       `json:"material_source"`
 	ExpectedDeliveryDate  *string                       `json:"expected_delivery_date"`
@@ -102,6 +103,12 @@ type UpdateJobOrderInput struct {
 	NetAmount             *float64                      `json:"net_amount"`
 	Items                 []CreateJobOrderItemInput     `json:"items"`
 	Materials             []CreateJobOrderMaterialInput `json:"materials"`
+}
+
+type UpdateItemStaffInput struct {
+	DesignerName *string `json:"designer_name"`
+	CutterName   *string `json:"cutter_name"`
+	StitcherName *string `json:"stitcher_name"`
 }
 
 type StatusUpdateInput struct {
