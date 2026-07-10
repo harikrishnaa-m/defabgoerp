@@ -105,6 +105,12 @@ type UpdateJobOrderInput struct {
 	Materials             []CreateJobOrderMaterialInput `json:"materials"`
 }
 
+type UpdateItemStaffInput struct {
+	DesignerName *string `json:"designer_name"`
+	CutterName   *string `json:"cutter_name"`
+	StitcherName *string `json:"stitcher_name"`
+}
+
 type StatusUpdateInput struct {
 	Status string `json:"status"`
 	Notes  string `json:"notes"`

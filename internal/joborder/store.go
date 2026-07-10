@@ -1067,6 +1067,44 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 // Cancel
 // ──────────────────────────────────────────
 
+func (s *Store) UpdateItemStaff(itemID string, in UpdateItemStaffInput) error {
+	q := `UPDATE job_order_items SET id = id`
+	args := []interface{}{}
+	n := 0
+
+	if in.DesignerName != nil {
+		n++
+		q += fmt.Sprintf(", designer_name = $%d", n)
+		args = append(args, *in.DesignerName)
+	}
+	if in.CutterName != nil {
+		n++
+		q += fmt.Sprintf(", cutter_name = $%d", n)
+		args = append(args, *in.CutterName)
+	}
+	if in.StitcherName != nil {
+		n++
+		q += fmt.Sprintf(", stitcher_name = $%d", n)
+		args = append(args, *in.StitcherName)
+	}
+
+	n++
+	q += fmt.Sprintf(" WHERE id = $%d", n)
+	args = append(args, itemID)
+
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("item not found")
+	}
+	return nil
+}
+
+// ──────────────────────────────────────────
+
 func (s *Store) Cancel(id, userID string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
