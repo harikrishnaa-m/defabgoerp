@@ -87,6 +87,7 @@ type UpdateJobOrderInput struct {
 	CustomerPhone         string                        `json:"customer_phone"`
 	CustomerName          string                        `json:"customer_name"`
 	CustomerEmail         string                        `json:"customer_email"`
+	BranchID              *string                       `json:"branch_id"`
 	JobType               *string                       `json:"job_type"`
 	MaterialSource        *string                       `json:"material_source"`
 	ExpectedDeliveryDate  *string                       `json:"expected_delivery_date"`

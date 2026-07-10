@@ -306,6 +306,11 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 		q += fmt.Sprintf(", customer_id = $%d", n)
 		args = append(args, *in.CustomerID)
 	}
+	if in.BranchID != nil {
+		n++
+		q += fmt.Sprintf(", branch_id = $%d", n)
+		args = append(args, *in.BranchID)
+	}
 	if in.JobType != nil {
 		n++
 		q += fmt.Sprintf(", job_type = $%d", n)
