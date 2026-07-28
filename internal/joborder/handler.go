@@ -234,12 +234,55 @@ func (h *Handler) UpdateItemStaff(c *fiber.Ctx) error {
 	if err := c.BodyParser(&in); err != nil {
 		return httperr.BadRequest(c, "Invalid JSON body")
 	}
-	if in.DesignerName == nil && in.CutterName == nil && in.StitcherName == nil {
-		return httperr.BadRequest(c, "at least one of designer_name, cutter_name, stitcher_name is required")
+	if in.DesignerName == nil && in.CutterName == nil && in.StitcherName == nil && in.HandWorkerName == nil {
+		return httperr.BadRequest(c, "at least one of designer_name, cutter_name, stitcher_name, hand_worker_name is required")
 	}
 	if err := h.store.UpdateItemStaff(itemID, in); err != nil {
 		log.Println("update item staff error:", err)
 		return httperr.Internal(c)
 	}
 	return c.JSON(fiber.Map{"message": "updated"})
+}
+
+func (h *Handler) CreateWorkLog(c *fiber.Ctx) error {
+	itemID := c.Params("itemId")
+	var in CreateWorkLogInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON body")
+	}
+	if !IsValidWorkRole(in.Role) {
+		return httperr.BadRequest(c, "role must be one of DESIGNER, CUTTER, STITCHER, HAND_WORKER")
+	}
+	if in.StartedAt == "" {
+		return httperr.BadRequest(c, "started_at is required")
+	}
+	user := c.Locals("user").(*model.User)
+	id, err := h.store.CreateWorkLog(itemID, in, user.ID.String())
+	if err != nil {
+		log.Println("create work log error:", err)
+		return httperr.Internal(c)
+	}
+	return c.Status(http.StatusCreated).JSON(fiber.Map{"id": id, "message": "work log created"})
+}
+
+func (h *Handler) UpdateWorkLog(c *fiber.Ctx) error {
+	logID := c.Params("logId")
+	var in UpdateWorkLogInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON body")
+	}
+	if err := h.store.UpdateWorkLog(logID, in); err != nil {
+		log.Println("update work log error:", err)
+		return httperr.Internal(c)
+	}
+	return c.JSON(fiber.Map{"message": "updated"})
+}
+
+func (h *Handler) DeleteWorkLog(c *fiber.Ctx) error {
+	logID := c.Params("logId")
+	if err := h.store.DeleteWorkLog(logID); err != nil {
+		log.Println("delete work log error:", err)
+		return httperr.Internal(c)
+	}
+	return c.JSON(fiber.Map{"message": "deleted"})
 }

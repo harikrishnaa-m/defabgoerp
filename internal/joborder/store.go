@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"time"
 )
 
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
@@ -119,12 +120,12 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 			INSERT INTO job_order_items
 				(job_order_id, category, sub_category, pieces,
 				 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
-				 designer_name, cutter_name, stitcher_name)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+				 designer_name, cutter_name, stitcher_name, hand_worker_name)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		`, jobID, item.Category, item.SubCategory, string(piecesJSON),
 			item.Quantity, round2(item.UnitPrice), round2(item.Discount),
 			item.TaxPercent, round2(item.CGST), round2(item.SGST), round2(item.TotalPrice),
-			item.DesignerName, item.CutterName, item.StitcherName)
+			item.DesignerName, item.CutterName, item.StitcherName, item.HandWorkerName)
 		if err != nil {
 			return "", fmt.Errorf("insert job order item: %w", err)
 		}
@@ -430,12 +431,12 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 				INSERT INTO job_order_items
 					(job_order_id, category, sub_category, pieces,
 					 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
-					 designer_name, cutter_name, stitcher_name)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+					 designer_name, cutter_name, stitcher_name, hand_worker_name)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			`, id, it.Category, it.SubCategory, string(piecesJSON),
 				it.Quantity, round2(it.UnitPrice), round2(it.Discount),
 				it.TaxPercent, round2(it.CGST), round2(it.SGST), round2(it.TotalPrice),
-				it.DesignerName, it.CutterName, it.StitcherName)
+				it.DesignerName, it.CutterName, it.StitcherName, it.HandWorkerName)
 			if err != nil {
 				return fmt.Errorf("insert item: %w", err)
 			}
@@ -891,38 +892,79 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		SELECT id, COALESCE(category,''), COALESCE(sub_category,''),
 		       COALESCE(pieces, '[]'::jsonb)::text,
 		       quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
-		       COALESCE(designer_name,''), COALESCE(cutter_name,''), COALESCE(stitcher_name,'')
+		       COALESCE(designer_name,''), COALESCE(cutter_name,''), COALESCE(stitcher_name,''),
+		       COALESCE(hand_worker_name,'')
 		FROM job_order_items WHERE job_order_id = $1
 	`, id)
 	if err == nil {
 		defer itemRows.Close()
+
+		// Work time logs, grouped by item
+		workLogsByItem := map[string][]map[string]interface{}{}
+		wlRows, wlErr := s.db.Query(`
+			SELECT wl.id, wl.job_order_item_id, wl.role, COALESCE(wl.worker_name,''),
+			       wl.started_at, wl.ended_at, COALESCE(wl.notes,'')
+			FROM job_order_item_work_logs wl
+			JOIN job_order_items it ON it.id = wl.job_order_item_id
+			WHERE it.job_order_id = $1
+			ORDER BY wl.started_at ASC
+		`, id)
+		if wlErr == nil {
+			defer wlRows.Close()
+			for wlRows.Next() {
+				var wid, witemID, role, workerName, notes string
+				var startedAt time.Time
+				var endedAt sql.NullTime
+				if err := wlRows.Scan(&wid, &witemID, &role, &workerName, &startedAt, &endedAt, &notes); err == nil {
+					entry := map[string]interface{}{
+						"id": wid, "role": role, "worker_name": workerName,
+						"started_at": startedAt, "notes": notes,
+					}
+					if endedAt.Valid {
+						entry["ended_at"] = endedAt.Time
+						entry["duration_minutes"] = round2(endedAt.Time.Sub(startedAt).Minutes())
+					} else {
+						entry["ended_at"] = nil
+						entry["duration_minutes"] = nil
+					}
+					workLogsByItem[witemID] = append(workLogsByItem[witemID], entry)
+				}
+			}
+		}
+
 		var items []map[string]interface{}
 		for itemRows.Next() {
 			var iid, cat, subCat, piecesStr string
 			var qty, up, disc, tp, cgst, sgst, tot float64
-			var designerName, cutterName, stitcherName string
+			var designerName, cutterName, stitcherName, handWorkerName string
 			if err := itemRows.Scan(&iid, &cat, &subCat, &piecesStr,
 				&qty, &up, &disc, &tp, &cgst, &sgst, &tot,
-				&designerName, &cutterName, &stitcherName); err == nil {
+				&designerName, &cutterName, &stitcherName, &handWorkerName); err == nil {
 				var pieces []PieceEntry
 				if err := json.Unmarshal([]byte(piecesStr), &pieces); err != nil || pieces == nil {
 					pieces = []PieceEntry{}
 				}
+				workLogs := workLogsByItem[iid]
+				if workLogs == nil {
+					workLogs = []map[string]interface{}{}
+				}
 				items = append(items, map[string]interface{}{
-					"id":            iid,
-					"category":      cat,
-					"sub_category":  subCat,
-					"pieces":        pieces,
-					"quantity":      qty,
-					"unit_price":    up,
-					"discount":      disc,
-					"tax_percent":   tp,
-					"cgst":          cgst,
-					"sgst":          sgst,
-					"total_price":   tot,
-					"designer_name": designerName,
-					"cutter_name":   cutterName,
-					"stitcher_name": stitcherName,
+					"id":               iid,
+					"category":         cat,
+					"sub_category":     subCat,
+					"pieces":           pieces,
+					"quantity":         qty,
+					"unit_price":       up,
+					"discount":         disc,
+					"tax_percent":      tp,
+					"cgst":             cgst,
+					"sgst":             sgst,
+					"total_price":      tot,
+					"designer_name":    designerName,
+					"cutter_name":      cutterName,
+					"stitcher_name":    stitcherName,
+					"hand_worker_name": handWorkerName,
+					"work_logs":        workLogs,
 				})
 			}
 		}
@@ -1087,6 +1129,11 @@ func (s *Store) UpdateItemStaff(itemID string, in UpdateItemStaffInput) error {
 		q += fmt.Sprintf(", stitcher_name = $%d", n)
 		args = append(args, *in.StitcherName)
 	}
+	if in.HandWorkerName != nil {
+		n++
+		q += fmt.Sprintf(", hand_worker_name = $%d", n)
+		args = append(args, *in.HandWorkerName)
+	}
 
 	n++
 	q += fmt.Sprintf(" WHERE id = $%d", n)
@@ -1099,6 +1146,77 @@ func (s *Store) UpdateItemStaff(itemID string, in UpdateItemStaffInput) error {
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
 		return fmt.Errorf("item not found")
+	}
+	return nil
+}
+
+// ──────────────────────────────────────────
+// Work time logs (designer / cutter / stitcher / hand worker)
+// ──────────────────────────────────────────
+
+func (s *Store) CreateWorkLog(itemID string, in CreateWorkLogInput, userID string) (string, error) {
+	var id string
+	err := s.db.QueryRow(`
+		INSERT INTO job_order_item_work_logs
+			(job_order_item_id, role, worker_name, started_at, ended_at, notes, created_by)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		RETURNING id
+	`, itemID, in.Role, in.WorkerName, in.StartedAt, in.EndedAt, in.Notes, nilIfEmpty(userID)).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+func (s *Store) UpdateWorkLog(logID string, in UpdateWorkLogInput) error {
+	q := `UPDATE job_order_item_work_logs SET updated_at = NOW()`
+	args := []interface{}{}
+	n := 0
+
+	if in.WorkerName != nil {
+		n++
+		q += fmt.Sprintf(", worker_name = $%d", n)
+		args = append(args, *in.WorkerName)
+	}
+	if in.StartedAt != nil {
+		n++
+		q += fmt.Sprintf(", started_at = $%d", n)
+		args = append(args, *in.StartedAt)
+	}
+	if in.EndedAt != nil {
+		n++
+		q += fmt.Sprintf(", ended_at = $%d", n)
+		args = append(args, *in.EndedAt)
+	}
+	if in.Notes != nil {
+		n++
+		q += fmt.Sprintf(", notes = $%d", n)
+		args = append(args, *in.Notes)
+	}
+
+	n++
+	q += fmt.Sprintf(" WHERE id = $%d", n)
+	args = append(args, logID)
+
+	res, err := s.db.Exec(q, args...)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("work log not found")
+	}
+	return nil
+}
+
+func (s *Store) DeleteWorkLog(logID string) error {
+	res, err := s.db.Exec(`DELETE FROM job_order_item_work_logs WHERE id = $1`, logID)
+	if err != nil {
+		return err
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("work log not found")
 	}
 	return nil
 }
