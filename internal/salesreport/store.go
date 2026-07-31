@@ -168,9 +168,12 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
     `
 		variantGroupBy = ", v.id, v.name, v.variant_code, p.id, p.name"
 	case f.CategoryID != "":
-		variantSelect = "COALESCE(v.name, '') AS variant_name, SUM(sii.quantity) AS quantity, NULL::TEXT AS supplier_names, COALESCE(cat.name, '') AS category_name, COALESCE(p.name, '') AS product_name, COALESCE(v.variant_code::text, '') AS variant_code_col, "
+		variantSelect = "COALESCE(v.name, '') AS variant_name, SUM(sii.quantity) AS quantity, COALESCE(STRING_AGG(DISTINCT sup.name, ', '), '') AS supplier_names, COALESCE(cat.name, '') AS category_name, COALESCE(p.name, '') AS product_name, COALESCE(v.variant_code::text, '') AS variant_code_col, "
 		variantJoin = `LEFT JOIN sales_invoice_items sii ON sii.sales_invoice_id = si.id
     LEFT JOIN variants v ON v.id = sii.variant_id
+    LEFT JOIN purchase_order_items poi ON poi.product_code = v.variant_code::text
+    LEFT JOIN purchase_orders po ON po.id = poi.purchase_order_id
+    LEFT JOIN suppliers sup ON sup.id = po.supplier_id
     LEFT JOIN products p ON p.id = v.product_id
     LEFT JOIN categories cat ON cat.id = p.category_id
     `

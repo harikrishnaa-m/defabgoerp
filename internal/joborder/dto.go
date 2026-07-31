@@ -36,9 +36,10 @@ type CreateJobOrderItemInput struct {
 	Pieces      []PieceEntry `json:"pieces"`       // one per component; single-piece → one entry, piece_type=""
 
 	// Staff assignments (free text)
-	DesignerName string `json:"designer_name"`
-	CutterName   string `json:"cutter_name"`
-	StitcherName string `json:"stitcher_name"`
+	DesignerName   string `json:"designer_name"`
+	CutterName     string `json:"cutter_name"`
+	StitcherName   string `json:"stitcher_name"`
+	HandWorkerName string `json:"hand_worker_name"`
 
 	// Pricing — fully decided by client/frontend
 	Quantity   float64 `json:"quantity"`
@@ -106,9 +107,29 @@ type UpdateJobOrderInput struct {
 }
 
 type UpdateItemStaffInput struct {
-	DesignerName *string `json:"designer_name"`
-	CutterName   *string `json:"cutter_name"`
-	StitcherName *string `json:"stitcher_name"`
+	DesignerName   *string `json:"designer_name"`
+	CutterName     *string `json:"cutter_name"`
+	StitcherName   *string `json:"stitcher_name"`
+	HandWorkerName *string `json:"hand_worker_name"`
+}
+
+// CreateWorkLogInput records a time-tracked work session for one role
+// (designer/cutter/stitcher/hand worker) on a job order item.
+// StartedAt/EndedAt are timestamps, e.g. "2026-07-28T10:00:00Z" or "2026-07-28 10:00:00".
+// EndedAt may be omitted to record an in-progress session and closed later via update.
+type CreateWorkLogInput struct {
+	Role       string  `json:"role"` // DESIGNER | CUTTER | STITCHER | HAND_WORKER
+	WorkerName string  `json:"worker_name"`
+	StartedAt  string  `json:"started_at"`
+	EndedAt    *string `json:"ended_at"`
+	Notes      string  `json:"notes"`
+}
+
+type UpdateWorkLogInput struct {
+	WorkerName *string `json:"worker_name"`
+	StartedAt  *string `json:"started_at"`
+	EndedAt    *string `json:"ended_at"`
+	Notes      *string `json:"notes"`
 }
 
 type StatusUpdateInput struct {
