@@ -183,7 +183,18 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
 	}
 
 	queryTemplate := `
-WITH combined AS (
+WITH pay AS (
+    SELECT
+        spm.sales_invoice_id AS invoice_id,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'CASH'                                         THEN spm.amount ELSE 0 END), 0), 0) AS cash,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method IN ('CARD','DEBIT_CARD','CREDIT_CARD')           THEN spm.amount ELSE 0 END), 0), 0) AS card,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'UPI'                                          THEN spm.amount ELSE 0 END), 0), 0) AS upi,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'BANK_TRANSFER'                               THEN spm.amount ELSE 0 END), 0), 0) AS bank_transfer,
+        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'EXCHANGE_CREDIT'                             THEN spm.amount ELSE 0 END), 0), 0) AS exchange_credit
+    FROM sales_payments spm
+    GROUP BY spm.sales_invoice_id
+),
+combined AS (
     SELECT
         si.id,
         si.invoice_number,
@@ -204,11 +215,11 @@ WITH combined AS (
               AND ro.source != 'EXCHANGE'
               AND ro.status  != 'CANCELLED'
         ), 0) AS gst_amount,
-        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'CASH'                                         THEN spm.amount ELSE 0 END), 0), 0) AS cash,
-        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method IN ('CARD','DEBIT_CARD','CREDIT_CARD')           THEN spm.amount ELSE 0 END), 0), 0) AS card,
-        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'UPI'                                          THEN spm.amount ELSE 0 END), 0), 0) AS upi,
-        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'BANK_TRANSFER'                               THEN spm.amount ELSE 0 END), 0), 0) AS bank_transfer,
-        NULLIF(COALESCE(SUM(CASE WHEN spm.payment_method = 'EXCHANGE_CREDIT'                             THEN spm.amount ELSE 0 END), 0), 0) AS exchange_credit,
+        pay.cash,
+        pay.card,
+        pay.upi,
+        pay.bank_transfer,
+        pay.exchange_credit,
         COALESCE(b.name,  '')       AS location,
         COALESCE(sp.name, '')       AS salesperson_name,
         COALESCE(u.name,  '')       AS created_by_name,
@@ -220,12 +231,20 @@ WITH combined AS (
     LEFT JOIN sales_orders so ON so.id = si.sales_order_id
     LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
     LEFT JOIN users        u  ON u.id::text = si.created_by::text
-    LEFT JOIN sales_payments spm ON spm.sales_invoice_id = si.id
+    LEFT JOIN pay ON pay.invoice_id = si.id
     %s
     %s
     GROUP BY si.id, si.invoice_number, si.invoice_date, si.net_amount, si.gst_amount,
-             c.name, b.name, sp.name, u.name, si.channel%s
+             c.name, b.name, sp.name, u.name, si.channel,
+             pay.cash, pay.card, pay.upi, pay.bank_transfer, pay.exchange_credit%s
     %s
+),
+-- When a variant_code/category_id filter is active, an invoice can appear as
+-- multiple rows in "combined" (one per matching line item). Tag only the
+-- first row per invoice so invoice-level amounts aren't summed more than once.
+deduped AS (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY variant_code_col NULLS FIRST) AS rn
+    FROM combined
 )
 SELECT
     id, invoice_number, date, customer_name, channel,
@@ -238,15 +257,15 @@ SELECT
     COALESCE(category_name, '') AS category_name,
     COALESCE(product_name, '') AS product_name,
     COALESCE(variant_code_col, '') AS variant_code_col,
-    COUNT(*)                             OVER ()  AS total_count,
-    COALESCE(SUM(net_amount)             OVER (), 0) AS total_net,
-    COALESCE(SUM(gst_amount)             OVER (), 0) AS total_gst,
-    COALESCE(SUM(cash)                   OVER (), 0) AS total_cash,
-    COALESCE(SUM(card)                   OVER (), 0) AS total_card,
-    COALESCE(SUM(upi)                    OVER (), 0) AS total_upi,
-    COALESCE(SUM(bank_transfer)          OVER (), 0) AS total_bank_transfer,
-    COALESCE(SUM(exchange_credit)        OVER (), 0) AS total_exchange_credit
-FROM combined
+    COUNT(*)                                                          OVER ()  AS total_count,
+    COALESCE(SUM(CASE WHEN rn = 1 THEN net_amount      ELSE 0 END)    OVER (), 0) AS total_net,
+    COALESCE(SUM(CASE WHEN rn = 1 THEN gst_amount       ELSE 0 END)    OVER (), 0) AS total_gst,
+    COALESCE(SUM(CASE WHEN rn = 1 THEN cash             ELSE 0 END)    OVER (), 0) AS total_cash,
+    COALESCE(SUM(CASE WHEN rn = 1 THEN card             ELSE 0 END)    OVER (), 0) AS total_card,
+    COALESCE(SUM(CASE WHEN rn = 1 THEN upi              ELSE 0 END)    OVER (), 0) AS total_upi,
+    COALESCE(SUM(CASE WHEN rn = 1 THEN bank_transfer    ELSE 0 END)    OVER (), 0) AS total_bank_transfer,
+    COALESCE(SUM(CASE WHEN rn = 1 THEN exchange_credit  ELSE 0 END)    OVER (), 0) AS total_exchange_credit
+FROM deduped
 ORDER BY sort_date DESC, invoice_number DESC`
 
 	query := fmt.Sprintf(queryTemplate, variantSelect, variantJoin, invWhere, variantGroupBy, creditNoteUnion)
