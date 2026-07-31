@@ -120,12 +120,12 @@ func (s *Store) CreateJobOrder(in CreateJobOrderInput, userID, branchID, warehou
 			INSERT INTO job_order_items
 				(job_order_id, category, sub_category, pieces,
 				 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
-				 designer_name, cutter_name, stitcher_name, hand_worker_name)
+				 designer_id, cutter_id, stitcher_id, hand_worker_id)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 		`, jobID, item.Category, item.SubCategory, string(piecesJSON),
 			item.Quantity, round2(item.UnitPrice), round2(item.Discount),
 			item.TaxPercent, round2(item.CGST), round2(item.SGST), round2(item.TotalPrice),
-			item.DesignerName, item.CutterName, item.StitcherName, item.HandWorkerName)
+			nilIfEmpty(item.DesignerID), nilIfEmpty(item.CutterID), nilIfEmpty(item.StitcherID), nilIfEmpty(item.HandWorkerID))
 		if err != nil {
 			return "", fmt.Errorf("insert job order item: %w", err)
 		}
@@ -431,12 +431,12 @@ func (s *Store) UpdateJobOrder(id string, in UpdateJobOrderInput) error {
 				INSERT INTO job_order_items
 					(job_order_id, category, sub_category, pieces,
 					 quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
-					 designer_name, cutter_name, stitcher_name, hand_worker_name)
+					 designer_id, cutter_id, stitcher_id, hand_worker_id)
 				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			`, id, it.Category, it.SubCategory, string(piecesJSON),
 				it.Quantity, round2(it.UnitPrice), round2(it.Discount),
 				it.TaxPercent, round2(it.CGST), round2(it.SGST), round2(it.TotalPrice),
-				it.DesignerName, it.CutterName, it.StitcherName, it.HandWorkerName)
+				nilIfEmpty(it.DesignerID), nilIfEmpty(it.CutterID), nilIfEmpty(it.StitcherID), nilIfEmpty(it.HandWorkerID))
 			if err != nil {
 				return fmt.Errorf("insert item: %w", err)
 			}
@@ -889,12 +889,19 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 
 	// Items
 	itemRows, err := s.db.Query(`
-		SELECT id, COALESCE(category,''), COALESCE(sub_category,''),
-		       COALESCE(pieces, '[]'::jsonb)::text,
-		       quantity, unit_price, discount, tax_percent, cgst, sgst, total_price,
-		       COALESCE(designer_name,''), COALESCE(cutter_name,''), COALESCE(stitcher_name,''),
-		       COALESCE(hand_worker_name,'')
-		FROM job_order_items WHERE job_order_id = $1
+		SELECT it.id, COALESCE(it.category,''), COALESCE(it.sub_category,''),
+		       COALESCE(it.pieces, '[]'::jsonb)::text,
+		       it.quantity, it.unit_price, it.discount, it.tax_percent, it.cgst, it.sgst, it.total_price,
+		       COALESCE(it.designer_id::text,''), COALESCE(dw.name,''),
+		       COALESCE(it.cutter_id::text,''), COALESCE(cw.name,''),
+		       COALESCE(it.stitcher_id::text,''), COALESCE(sw.name,''),
+		       COALESCE(it.hand_worker_id::text,''), COALESCE(hw.name,'')
+		FROM job_order_items it
+		LEFT JOIN job_order_workers dw ON dw.id = it.designer_id
+		LEFT JOIN job_order_workers cw ON cw.id = it.cutter_id
+		LEFT JOIN job_order_workers sw ON sw.id = it.stitcher_id
+		LEFT JOIN job_order_workers hw ON hw.id = it.hand_worker_id
+		WHERE it.job_order_id = $1
 	`, id)
 	if err == nil {
 		defer itemRows.Close()
@@ -902,22 +909,24 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		// Work time logs, grouped by item
 		workLogsByItem := map[string][]map[string]interface{}{}
 		wlRows, wlErr := s.db.Query(`
-			SELECT wl.id, wl.job_order_item_id, wl.role, COALESCE(wl.worker_name,''),
+			SELECT wl.id, wl.job_order_item_id, wl.role,
+			       COALESCE(wl.worker_id::text,''), COALESCE(w.name,''),
 			       wl.started_at, wl.ended_at, COALESCE(wl.notes,'')
 			FROM job_order_item_work_logs wl
 			JOIN job_order_items it ON it.id = wl.job_order_item_id
+			LEFT JOIN job_order_workers w ON w.id = wl.worker_id
 			WHERE it.job_order_id = $1
 			ORDER BY wl.started_at ASC
 		`, id)
 		if wlErr == nil {
 			defer wlRows.Close()
 			for wlRows.Next() {
-				var wid, witemID, role, workerName, notes string
+				var wid, witemID, role, workerID, workerName, notes string
 				var startedAt time.Time
 				var endedAt sql.NullTime
-				if err := wlRows.Scan(&wid, &witemID, &role, &workerName, &startedAt, &endedAt, &notes); err == nil {
+				if err := wlRows.Scan(&wid, &witemID, &role, &workerID, &workerName, &startedAt, &endedAt, &notes); err == nil {
 					entry := map[string]interface{}{
-						"id": wid, "role": role, "worker_name": workerName,
+						"id": wid, "role": role, "worker_id": workerID, "worker_name": workerName,
 						"started_at": startedAt, "notes": notes,
 					}
 					if endedAt.Valid {
@@ -936,10 +945,11 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 		for itemRows.Next() {
 			var iid, cat, subCat, piecesStr string
 			var qty, up, disc, tp, cgst, sgst, tot float64
-			var designerName, cutterName, stitcherName, handWorkerName string
+			var designerID, designerName, cutterID, cutterName, stitcherID, stitcherName, handWorkerID, handWorkerName string
 			if err := itemRows.Scan(&iid, &cat, &subCat, &piecesStr,
 				&qty, &up, &disc, &tp, &cgst, &sgst, &tot,
-				&designerName, &cutterName, &stitcherName, &handWorkerName); err == nil {
+				&designerID, &designerName, &cutterID, &cutterName,
+				&stitcherID, &stitcherName, &handWorkerID, &handWorkerName); err == nil {
 				var pieces []PieceEntry
 				if err := json.Unmarshal([]byte(piecesStr), &pieces); err != nil || pieces == nil {
 					pieces = []PieceEntry{}
@@ -960,9 +970,13 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 					"cgst":             cgst,
 					"sgst":             sgst,
 					"total_price":      tot,
+					"designer_id":      designerID,
 					"designer_name":    designerName,
+					"cutter_id":        cutterID,
 					"cutter_name":      cutterName,
+					"stitcher_id":      stitcherID,
 					"stitcher_name":    stitcherName,
+					"hand_worker_id":   handWorkerID,
 					"hand_worker_name": handWorkerName,
 					"work_logs":        workLogs,
 				})
@@ -1109,37 +1123,57 @@ func (s *Store) GetByID(id string) (map[string]interface{}, error) {
 // Cancel
 // ──────────────────────────────────────────
 
+// UpdateItemStaff reassigns a role's worker on a job order item. When a role's
+// worker changes, any existing work logs for that item/role that were logged
+// under the OLD worker are moved to the new worker in the same transaction —
+// this treats the staff change as a correction (the old worker never actually
+// did the work) rather than a handover, so no logged time is lost.
 func (s *Store) UpdateItemStaff(itemID string, in UpdateItemStaffInput) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var oldDesigner, oldCutter, oldStitcher, oldHandWorker sql.NullString
+	err = tx.QueryRow(`
+		SELECT designer_id, cutter_id, stitcher_id, hand_worker_id
+		FROM job_order_items WHERE id = $1
+	`, itemID).Scan(&oldDesigner, &oldCutter, &oldStitcher, &oldHandWorker)
+	if err != nil {
+		return err
+	}
+
 	q := `UPDATE job_order_items SET id = id`
 	args := []interface{}{}
 	n := 0
 
-	if in.DesignerName != nil {
+	if in.DesignerID != nil {
 		n++
-		q += fmt.Sprintf(", designer_name = $%d", n)
-		args = append(args, *in.DesignerName)
+		q += fmt.Sprintf(", designer_id = $%d", n)
+		args = append(args, nilIfEmpty(*in.DesignerID))
 	}
-	if in.CutterName != nil {
+	if in.CutterID != nil {
 		n++
-		q += fmt.Sprintf(", cutter_name = $%d", n)
-		args = append(args, *in.CutterName)
+		q += fmt.Sprintf(", cutter_id = $%d", n)
+		args = append(args, nilIfEmpty(*in.CutterID))
 	}
-	if in.StitcherName != nil {
+	if in.StitcherID != nil {
 		n++
-		q += fmt.Sprintf(", stitcher_name = $%d", n)
-		args = append(args, *in.StitcherName)
+		q += fmt.Sprintf(", stitcher_id = $%d", n)
+		args = append(args, nilIfEmpty(*in.StitcherID))
 	}
-	if in.HandWorkerName != nil {
+	if in.HandWorkerID != nil {
 		n++
-		q += fmt.Sprintf(", hand_worker_name = $%d", n)
-		args = append(args, *in.HandWorkerName)
+		q += fmt.Sprintf(", hand_worker_id = $%d", n)
+		args = append(args, nilIfEmpty(*in.HandWorkerID))
 	}
 
 	n++
 	q += fmt.Sprintf(" WHERE id = $%d", n)
 	args = append(args, itemID)
 
-	res, err := s.db.Exec(q, args...)
+	res, err := tx.Exec(q, args...)
 	if err != nil {
 		return err
 	}
@@ -1147,7 +1181,32 @@ func (s *Store) UpdateItemStaff(itemID string, in UpdateItemStaffInput) error {
 	if rows == 0 {
 		return fmt.Errorf("item not found")
 	}
-	return nil
+
+	reassign := func(roleName string, oldID sql.NullString, newID *string) error {
+		if newID == nil || *newID == "" || !oldID.Valid || oldID.String == *newID {
+			return nil
+		}
+		_, err := tx.Exec(`
+			UPDATE job_order_item_work_logs
+			SET worker_id = $1, updated_at = NOW()
+			WHERE job_order_item_id = $2 AND role = $3 AND worker_id = $4
+		`, *newID, itemID, roleName, oldID.String)
+		return err
+	}
+	if err := reassign(WorkRoleDesigner, oldDesigner, in.DesignerID); err != nil {
+		return err
+	}
+	if err := reassign(WorkRoleCutter, oldCutter, in.CutterID); err != nil {
+		return err
+	}
+	if err := reassign(WorkRoleStitcher, oldStitcher, in.StitcherID); err != nil {
+		return err
+	}
+	if err := reassign(WorkRoleHandWorker, oldHandWorker, in.HandWorkerID); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // ──────────────────────────────────────────
@@ -1158,10 +1217,10 @@ func (s *Store) CreateWorkLog(itemID string, in CreateWorkLogInput, userID strin
 	var id string
 	err := s.db.QueryRow(`
 		INSERT INTO job_order_item_work_logs
-			(job_order_item_id, role, worker_name, started_at, ended_at, notes, created_by)
+			(job_order_item_id, role, worker_id, started_at, ended_at, notes, created_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		RETURNING id
-	`, itemID, in.Role, in.WorkerName, in.StartedAt, in.EndedAt, in.Notes, nilIfEmpty(userID)).Scan(&id)
+	`, itemID, in.Role, nilIfEmpty(in.WorkerID), in.StartedAt, in.EndedAt, in.Notes, nilIfEmpty(userID)).Scan(&id)
 	if err != nil {
 		return "", err
 	}
@@ -1173,10 +1232,10 @@ func (s *Store) UpdateWorkLog(logID string, in UpdateWorkLogInput) error {
 	args := []interface{}{}
 	n := 0
 
-	if in.WorkerName != nil {
+	if in.WorkerID != nil {
 		n++
-		q += fmt.Sprintf(", worker_name = $%d", n)
-		args = append(args, *in.WorkerName)
+		q += fmt.Sprintf(", worker_id = $%d", n)
+		args = append(args, nilIfEmpty(*in.WorkerID))
 	}
 	if in.StartedAt != nil {
 		n++

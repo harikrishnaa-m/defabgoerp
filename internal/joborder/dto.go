@@ -35,11 +35,11 @@ type CreateJobOrderItemInput struct {
 	SubCategory string       `json:"sub_category"` // e.g. "NORMAL with L", "PRINCESS CUT without L" (optional)
 	Pieces      []PieceEntry `json:"pieces"`       // one per component; single-piece → one entry, piece_type=""
 
-	// Staff assignments (free text)
-	DesignerName   string `json:"designer_name"`
-	CutterName     string `json:"cutter_name"`
-	StitcherName   string `json:"stitcher_name"`
-	HandWorkerName string `json:"hand_worker_name"`
+	// Staff assignments — job_order_workers IDs (optional)
+	DesignerID   string `json:"designer_id"`
+	CutterID     string `json:"cutter_id"`
+	StitcherID   string `json:"stitcher_id"`
+	HandWorkerID string `json:"hand_worker_id"`
 
 	// Pricing — fully decided by client/frontend
 	Quantity   float64 `json:"quantity"`
@@ -107,10 +107,10 @@ type UpdateJobOrderInput struct {
 }
 
 type UpdateItemStaffInput struct {
-	DesignerName   *string `json:"designer_name"`
-	CutterName     *string `json:"cutter_name"`
-	StitcherName   *string `json:"stitcher_name"`
-	HandWorkerName *string `json:"hand_worker_name"`
+	DesignerID   *string `json:"designer_id"`
+	CutterID     *string `json:"cutter_id"`
+	StitcherID   *string `json:"stitcher_id"`
+	HandWorkerID *string `json:"hand_worker_id"`
 }
 
 // CreateWorkLogInput records a time-tracked work session for one role
@@ -118,18 +118,18 @@ type UpdateItemStaffInput struct {
 // StartedAt/EndedAt are timestamps, e.g. "2026-07-28T10:00:00Z" or "2026-07-28 10:00:00".
 // EndedAt may be omitted to record an in-progress session and closed later via update.
 type CreateWorkLogInput struct {
-	Role       string  `json:"role"` // DESIGNER | CUTTER | STITCHER | HAND_WORKER
-	WorkerName string  `json:"worker_name"`
-	StartedAt  string  `json:"started_at"`
-	EndedAt    *string `json:"ended_at"`
-	Notes      string  `json:"notes"`
+	Role      string  `json:"role"` // DESIGNER | CUTTER | STITCHER | HAND_WORKER
+	WorkerID  string  `json:"worker_id"`
+	StartedAt string  `json:"started_at"`
+	EndedAt   *string `json:"ended_at"`
+	Notes     string  `json:"notes"`
 }
 
 type UpdateWorkLogInput struct {
-	WorkerName *string `json:"worker_name"`
-	StartedAt  *string `json:"started_at"`
-	EndedAt    *string `json:"ended_at"`
-	Notes      *string `json:"notes"`
+	WorkerID  *string `json:"worker_id"`
+	StartedAt *string `json:"started_at"`
+	EndedAt   *string `json:"ended_at"`
+	Notes     *string `json:"notes"`
 }
 
 type StatusUpdateInput struct {

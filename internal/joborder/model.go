@@ -29,29 +29,29 @@ type JobOrder struct {
 }
 
 type JobOrderItem struct {
-	ID             string       `json:"id"`
-	JobOrderID     string       `json:"job_order_id"`
-	Category       string       `json:"category"`
-	SubCategory    string       `json:"sub_category"`
-	Pieces         []PieceEntry `json:"pieces"`
-	Quantity       float64      `json:"quantity"`
-	UnitPrice      float64      `json:"unit_price"`
-	Discount       float64      `json:"discount"`
-	TaxPercent     float64      `json:"tax_percent"`
-	CGST           float64      `json:"cgst"`
-	SGST           float64      `json:"sgst"`
-	TotalPrice     float64      `json:"total_price"`
-	DesignerName   string       `json:"designer_name"`
-	CutterName     string       `json:"cutter_name"`
-	StitcherName   string       `json:"stitcher_name"`
-	HandWorkerName string       `json:"hand_worker_name"`
+	ID           string       `json:"id"`
+	JobOrderID   string       `json:"job_order_id"`
+	Category     string       `json:"category"`
+	SubCategory  string       `json:"sub_category"`
+	Pieces       []PieceEntry `json:"pieces"`
+	Quantity     float64      `json:"quantity"`
+	UnitPrice    float64      `json:"unit_price"`
+	Discount     float64      `json:"discount"`
+	TaxPercent   float64      `json:"tax_percent"`
+	CGST         float64      `json:"cgst"`
+	SGST         float64      `json:"sgst"`
+	TotalPrice   float64      `json:"total_price"`
+	DesignerID   *string      `json:"designer_id"`
+	CutterID     *string      `json:"cutter_id"`
+	StitcherID   *string      `json:"stitcher_id"`
+	HandWorkerID *string      `json:"hand_worker_id"`
 }
 
 type JobOrderItemWorkLog struct {
 	ID              string     `json:"id"`
 	JobOrderItemID  string     `json:"job_order_item_id"`
 	Role            string     `json:"role"`
-	WorkerName      string     `json:"worker_name"`
+	WorkerID        *string    `json:"worker_id"`
 	StartedAt       time.Time  `json:"started_at"`
 	EndedAt         *time.Time `json:"ended_at"`
 	DurationMinutes *float64   `json:"duration_minutes"`
