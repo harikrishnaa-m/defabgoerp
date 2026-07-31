@@ -234,8 +234,8 @@ func (h *Handler) UpdateItemStaff(c *fiber.Ctx) error {
 	if err := c.BodyParser(&in); err != nil {
 		return httperr.BadRequest(c, "Invalid JSON body")
 	}
-	if in.DesignerName == nil && in.CutterName == nil && in.StitcherName == nil && in.HandWorkerName == nil {
-		return httperr.BadRequest(c, "at least one of designer_name, cutter_name, stitcher_name, hand_worker_name is required")
+	if in.DesignerID == nil && in.CutterID == nil && in.StitcherID == nil && in.HandWorkerID == nil {
+		return httperr.BadRequest(c, "at least one of designer_id, cutter_id, stitcher_id, hand_worker_id is required")
 	}
 	if err := h.store.UpdateItemStaff(itemID, in); err != nil {
 		log.Println("update item staff error:", err)

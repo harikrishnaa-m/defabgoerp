@@ -46,6 +46,7 @@ import (
 	"defab-erp/internal/goodsreceipt"
 	"defab-erp/internal/jobinvoice"
 	"defab-erp/internal/joborder"
+	"defab-erp/internal/jobworker"
 	"defab-erp/internal/production"
 	"defab-erp/internal/purchase"
 	"defab-erp/internal/purchaseinvoice"
@@ -196,6 +197,9 @@ func main() {
 
 	jobOrderStore := joborder.NewStore(database)
 	jobOrderHandler := joborder.NewHandler(jobOrderStore)
+
+	jobWorkerStore := jobworker.NewStore(database)
+	jobWorkerHandler := jobworker.NewHandler(jobWorkerStore)
 
 	jobInvoiceStore := jobinvoice.NewStore(database)
 	jobInvoiceHandler := jobinvoice.NewHandler(jobInvoiceStore)
@@ -664,6 +668,17 @@ func main() {
 			),
 		),
 		jobOrderHandler,
+	)
+
+	jobworker.RegisterRoutes(
+		protected.Group("/job-order-workers",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+				model.RoleAccountsManager,
+			),
+		),
+		jobWorkerHandler,
 	)
 
 	production.RegisterRoutes(
