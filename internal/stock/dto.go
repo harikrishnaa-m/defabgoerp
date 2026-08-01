@@ -35,15 +35,53 @@ type QuickAddInput struct {
 	Price       float64 `json:"price"`
 	CostPrice   float64 `json:"cost_price"`
 	HSNCode     string  `json:"hsn_code"`
+	UOM         string  `json:"uom"` // unit of measure for the product; defaults to "Unit" if omitted
 
-	// Stock
+	// Stock (optional) — either a single warehouse (warehouse_id + quantity), or
+	// multiple via warehouses[] to seed stock across several warehouses in one
+	// call. If neither is provided, only the product+variant are created.
+	WarehouseID string                   `json:"warehouse_id"`
+	Quantity    decimal.Decimal          `json:"quantity"`
+	Warehouses  []QuickAddWarehouseStock `json:"warehouses"`
+}
+
+// QuickAddWarehouseStock is one warehouse/quantity allocation within QuickAddInput.Warehouses.
+type QuickAddWarehouseStock struct {
 	WarehouseID string          `json:"warehouse_id"`
 	Quantity    decimal.Decimal `json:"quantity"`
 }
 
-type QuickAddResult struct {
-	ProductID   string `json:"product_id"`
-	VariantID   string `json:"variant_id"`
-	VariantCode int    `json:"variant_code"`
+// QuickAddStockResult is the stock record created for one warehouse allocation.
+type QuickAddStockResult struct {
+	WarehouseID string `json:"warehouse_id"`
 	StockID     string `json:"stock_id"`
+}
+
+type QuickAddResult struct {
+	ProductID   string                `json:"product_id"`
+	VariantID   string                `json:"variant_id"`
+	VariantCode int                   `json:"variant_code"`
+	StockID     string                `json:"stock_id"` // first stock record, kept for backward compatibility
+	Stocks      []QuickAddStockResult `json:"stocks"`
+}
+
+// QuickEditInput updates a variant and/or its parent product's fields in one call.
+// All fields are optional pointers; only non-nil fields are updated.
+type QuickEditInput struct {
+	// Variant fields
+	VariantCode *int     `json:"variant_code"`
+	VariantName *string  `json:"variant_name"`
+	Price       *float64 `json:"price"`
+	CostPrice   *float64 `json:"cost_price"`
+	HSNCode     *string  `json:"hsn_code"`
+
+	// Product fields
+	ProductName *string `json:"product_name"`
+	CategoryID  *string `json:"category_id"`
+	UOM         *string `json:"uom"`
+}
+
+type QuickEditResult struct {
+	ProductID string `json:"product_id"`
+	VariantID string `json:"variant_id"`
 }

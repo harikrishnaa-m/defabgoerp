@@ -888,11 +888,16 @@ func (h *Handler) QuickAdd(c *fiber.Ctx) error {
 	if in.Price <= 0 {
 		return httperr.BadRequest(c, "price is required")
 	}
-	if in.WarehouseID == "" {
-		return httperr.BadRequest(c, "warehouse_id is required")
-	}
-	if in.Quantity.IsZero() {
-		return httperr.BadRequest(c, "quantity is required")
+	if len(in.Warehouses) == 0 {
+		if in.WarehouseID != "" && in.Quantity.IsZero() {
+			return httperr.BadRequest(c, "quantity is required when warehouse_id is given")
+		}
+	} else {
+		for _, a := range in.Warehouses {
+			if a.WarehouseID == "" || a.Quantity.IsZero() {
+				return httperr.BadRequest(c, "each entry in warehouses[] needs warehouse_id and quantity")
+			}
+		}
 	}
 	if in.ProductID == "" && (in.ProductName == "" || in.CategoryID == "") {
 		return httperr.BadRequest(c, "provide product_id or product_name + category_id")
@@ -909,5 +914,35 @@ func (h *Handler) QuickAdd(c *fiber.Ctx) error {
 		"variant_id":   result.VariantID,
 		"variant_code": result.VariantCode,
 		"stock_id":     result.StockID,
+		"stocks":       result.Stocks,
+	})
+}
+
+// PATCH /stocks/quick-edit/:variantId
+// Updates a variant and/or its parent product's fields (name, price, cost_price,
+// variant_code, hsn_code, category_id, uom) in one call.
+func (h *Handler) QuickEdit(c *fiber.Ctx) error {
+	variantID := c.Params("variantId")
+	if variantID == "" {
+		return httperr.BadRequest(c, "variantId is required")
+	}
+
+	var in QuickEditInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "invalid request body")
+	}
+	if in.Price != nil && *in.Price <= 0 {
+		return httperr.BadRequest(c, "price must be greater than 0")
+	}
+
+	result, err := h.store.QuickEdit(variantID, in)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"message":    "product and variant updated",
+		"product_id": result.ProductID,
+		"variant_id": result.VariantID,
 	})
 }

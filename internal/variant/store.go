@@ -155,8 +155,12 @@ func (s *Store) ListByProduct(pid string) (*sql.Rows, error) {
 
 func (s *Store) Get(id string) (*sql.Row, error) {
 	return s.db.QueryRow(`
-	SELECT id,product_id,variant_code,name,sku,COALESCE(barcode,''),price,cost_price,is_active,COALESCE(hsn_code,'')
-	FROM variants WHERE id=$1
+	SELECT v.id, v.product_id, v.variant_code, v.name, v.sku, COALESCE(v.barcode,''), v.price, v.cost_price, v.is_active, COALESCE(v.hsn_code,''),
+	       COALESCE(p.name, ''), COALESCE(p.uom, ''), COALESCE(p.category_id::text, ''), COALESCE(cat.name, '')
+	FROM variants v
+	LEFT JOIN products p ON p.id = v.product_id
+	LEFT JOIN categories cat ON cat.id = p.category_id
+	WHERE v.id=$1
 	`, id), nil
 }
 
@@ -612,13 +616,18 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 			       v.price, COALESCE(v.cost_price, 0), COALESCE(v.hsn_code,''),
 			       p.id, p.name, COALESCE(c.name,''), v.is_active,
 			       COALESCE(st.quantity, 0),
-			       COALESCE(w.id::text,''), COALESCE(w.name,''), COALESCE(b.name,'')
+			       COALESCE(w.id::text,''), COALESCE(w.name,''), COALESCE(b.name,''),
+			       pi.invoice_number, sup.name
 			FROM variants v
 			JOIN products p ON p.id = v.product_id
 			LEFT JOIN categories c ON c.id = p.category_id
 			INNER JOIN stocks st ON st.variant_id = v.id AND st.warehouse_id = $1
 			LEFT JOIN warehouses w ON w.id = st.warehouse_id
 			LEFT JOIN branches b ON b.id = w.branch_id
+			LEFT JOIN purchase_order_items poi ON poi.product_code = v.variant_code::text
+			LEFT JOIN purchase_orders po ON po.id = poi.purchase_order_id
+			LEFT JOIN purchase_invoices pi ON pi.purchase_order_id = po.id
+			LEFT JOIN suppliers sup ON sup.id = po.supplier_id
 			WHERE 1=1%s
 			ORDER BY v.variant_code
 		`, wherePart)
@@ -639,10 +648,12 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 			var variantCode int
 			var price, costPrice, qty float64
 			var isActive bool
+			var billNo, supplierName sql.NullString
 			if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode,
 				&price, &costPrice, &hsnCode,
 				&productID, &productName, &categoryName, &isActive, &qty,
-				&warehouseID2, &warehouseName, &branchName); err != nil {
+				&warehouseID2, &warehouseName, &branchName,
+				&billNo, &supplierName); err != nil {
 				return nil, 0, err
 			}
 			out = append(out, map[string]interface{}{
@@ -662,6 +673,8 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 				"warehouse_id":   warehouseID2,
 				"warehouse_name": warehouseName,
 				"branch_name":    branchName,
+				"bill_no":        nullableString(billNo),
+				"supplier_name":  nullableString(supplierName),
 			})
 		}
 		return out, total, nil
@@ -681,13 +694,18 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 		       v.price, COALESCE(v.cost_price, 0), COALESCE(v.hsn_code,''),
 		       p.id, p.name, COALESCE(c.name,''), v.is_active,
 		       COALESCE(w.id::text,''), COALESCE(w.name,''),
-		       COALESCE(b.name,''), COALESCE(st.quantity, 0)
+		       COALESCE(b.name,''), COALESCE(st.quantity, 0),
+		       pi.invoice_number, sup.name
 		FROM variants v
 		JOIN products p ON p.id = v.product_id
 		LEFT JOIN categories c ON c.id = p.category_id
 		LEFT JOIN stocks st ON st.variant_id = v.id
 		LEFT JOIN warehouses w ON w.id = st.warehouse_id
 		LEFT JOIN branches b ON b.id = w.branch_id
+		LEFT JOIN purchase_order_items poi ON poi.product_code = v.variant_code::text
+		LEFT JOIN purchase_orders po ON po.id = poi.purchase_order_id
+		LEFT JOIN purchase_invoices pi ON pi.purchase_order_id = po.id
+		LEFT JOIN suppliers sup ON sup.id = po.supplier_id
 		%s
 		ORDER BY v.variant_code, w.name
 	`, wherePart)
@@ -708,10 +726,12 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 		var variantCode int
 		var price, costPrice, qty float64
 		var isActive bool
+		var billNo, supplierName sql.NullString
 		if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode,
 			&price, &costPrice, &hsnCode,
 			&productID, &productName, &categoryName, &isActive,
-			&warehouseID2, &warehouseName, &branchName, &qty); err != nil {
+			&warehouseID2, &warehouseName, &branchName, &qty,
+			&billNo, &supplierName); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, map[string]interface{}{
@@ -731,9 +751,19 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 			"warehouse_name": warehouseName,
 			"branch_name":    branchName,
 			"quantity":       qty,
+			"bill_no":        nullableString(billNo),
+			"supplier_name":  nullableString(supplierName),
 		})
 	}
 	return out, total, nil
+}
+
+// nullableString returns nil (JSON null) for an invalid/unset sql.NullString.
+func nullableString(ns sql.NullString) interface{} {
+	if !ns.Valid {
+		return nil
+	}
+	return ns.String
 }
 
 func (s *Store) getProductPrefix(productID string) (string, error) {
