@@ -30,6 +30,7 @@ type SalesReportRow struct {
 	VariantCode     string   `json:"variant_code,omitempty"`   // populated when variant_code or category_id filter is active
 }
 
+//new updates
 // ReportTotals holds column-level sums for the entire filtered result set.
 type ReportTotals struct {
 	NetAmount      float64  `json:"net_amount"`
