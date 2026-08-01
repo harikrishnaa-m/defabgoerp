@@ -191,7 +191,9 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 	var variantCode int
 	var price, costPrice float64
 	var isActive bool
-	if err := row.Scan(&variantID, &productID, &variantCode, &name, &sku, &barcode, &price, &costPrice, &isActive, &hsnCode); err != nil {
+	var productName, uom, categoryID, categoryName string
+	if err := row.Scan(&variantID, &productID, &variantCode, &name, &sku, &barcode, &price, &costPrice, &isActive, &hsnCode,
+		&productName, &uom, &categoryID, &categoryName); err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "variant not found"})
 	}
 
@@ -215,18 +217,22 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"id":           variantID,
-		"product_id":   productID,
-		"variant_code": variantCode,
-		"name":         name,
-		"sku":          sku,
-		"barcode":      barcode,
-		"price":        price,
-		"cost_price":   costPrice,
-		"is_active":    isActive,
-		"hsn_code":     hsnCode,
-		"images":       images,
-		"attributes":   attributes,
+		"id":            variantID,
+		"product_id":    productID,
+		"variant_code":  variantCode,
+		"name":          name,
+		"sku":           sku,
+		"barcode":       barcode,
+		"price":         price,
+		"cost_price":    costPrice,
+		"is_active":     isActive,
+		"hsn_code":      hsnCode,
+		"product_name":  productName,
+		"uom":           uom,
+		"category_id":   categoryID,
+		"category_name": categoryName,
+		"images":        images,
+		"attributes":    attributes,
 	})
 }
 

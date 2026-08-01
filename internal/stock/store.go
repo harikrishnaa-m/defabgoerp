@@ -645,11 +645,24 @@ func (s *Store) QuickAdd(in QuickAddInput) (QuickAddResult, error) {
 	if in.VariantCode == 0 {
 		return QuickAddResult{}, fmt.Errorf("variant_code is required")
 	}
-	if in.WarehouseID == "" {
-		return QuickAddResult{}, fmt.Errorf("warehouse_id is required")
+
+	// Normalize stock allocations: prefer warehouses[] if given, else fall back
+	// to the single warehouse_id/quantity fields. Both are optional — if neither
+	// is supplied, only the product+variant are created (no stock record).
+	allocations := in.Warehouses
+	if len(allocations) == 0 && in.WarehouseID != "" {
+		if in.Quantity.IsZero() {
+			return QuickAddResult{}, fmt.Errorf("quantity is required when warehouse_id is given")
+		}
+		allocations = []QuickAddWarehouseStock{{WarehouseID: in.WarehouseID, Quantity: in.Quantity}}
 	}
-	if in.Quantity.IsZero() {
-		return QuickAddResult{}, fmt.Errorf("quantity is required")
+	for _, a := range allocations {
+		if a.WarehouseID == "" {
+			return QuickAddResult{}, fmt.Errorf("warehouse_id is required for each warehouse allocation")
+		}
+		if a.Quantity.IsZero() {
+			return QuickAddResult{}, fmt.Errorf("quantity is required for each warehouse allocation")
+		}
 	}
 
 	tx, err := s.db.Begin()
@@ -664,11 +677,15 @@ func (s *Store) QuickAdd(in QuickAddInput) (QuickAddResult, error) {
 		if in.ProductName == "" || in.CategoryID == "" {
 			return QuickAddResult{}, fmt.Errorf("either product_id or (product_name + category_id) is required")
 		}
+		uom := in.UOM
+		if uom == "" {
+			uom = "Unit"
+		}
 		err = tx.QueryRow(`
-			INSERT INTO products (name, category_id)
-			VALUES ($1, $2)
+			INSERT INTO products (name, category_id, uom)
+			VALUES ($1, $2, $3)
 			RETURNING id
-		`, in.ProductName, in.CategoryID).Scan(&productID)
+		`, in.ProductName, in.CategoryID, uom).Scan(&productID)
 		if err != nil {
 			return QuickAddResult{}, fmt.Errorf("create product: %w", err)
 		}
@@ -710,27 +727,80 @@ func (s *Store) QuickAdd(in QuickAddInput) (QuickAddResult, error) {
 		return QuickAddResult{}, fmt.Errorf("create variant: %w", err)
 	}
 
-	// 3. Upsert stock
-	var stockID string
-	err = tx.QueryRow(`
-		INSERT INTO stocks (variant_id, warehouse_id, quantity, stock_type, updated_at)
-		VALUES ($1, $2, $3, 'PRODUCT', NOW())
-		ON CONFLICT (variant_id, warehouse_id)
-		DO UPDATE SET quantity = stocks.quantity + EXCLUDED.quantity, updated_at = NOW()
-		RETURNING id
-	`, variantID, in.WarehouseID, in.Quantity).Scan(&stockID)
-	if err != nil {
-		return QuickAddResult{}, fmt.Errorf("upsert stock: %w", err)
+	// 3. Upsert stock for each requested warehouse allocation (if any)
+	stocks := make([]QuickAddStockResult, 0, len(allocations))
+	for _, a := range allocations {
+		var stockID string
+		err = tx.QueryRow(`
+			INSERT INTO stocks (variant_id, warehouse_id, quantity, stock_type, updated_at)
+			VALUES ($1, $2, $3, 'PRODUCT', NOW())
+			ON CONFLICT (variant_id, warehouse_id)
+			DO UPDATE SET quantity = stocks.quantity + EXCLUDED.quantity, updated_at = NOW()
+			RETURNING id
+		`, variantID, a.WarehouseID, a.Quantity).Scan(&stockID)
+		if err != nil {
+			return QuickAddResult{}, fmt.Errorf("upsert stock for warehouse %s: %w", a.WarehouseID, err)
+		}
+		stocks = append(stocks, QuickAddStockResult{WarehouseID: a.WarehouseID, StockID: stockID})
 	}
 
 	if err = tx.Commit(); err != nil {
 		return QuickAddResult{}, err
 	}
 
-	return QuickAddResult{
+	result := QuickAddResult{
 		ProductID:   productID,
 		VariantID:   variantID,
 		VariantCode: assignedCode,
-		StockID:     stockID,
-	}, nil
+		Stocks:      stocks,
+	}
+	if len(stocks) > 0 {
+		result.StockID = stocks[0].StockID
+	}
+	return result, nil
+}
+
+// QuickEdit updates a variant and/or its parent product's fields in one transaction.
+func (s *Store) QuickEdit(variantID string, in QuickEditInput) (QuickEditResult, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return QuickEditResult{}, err
+	}
+	defer tx.Rollback()
+
+	var productID string
+	if err = tx.QueryRow(`SELECT product_id FROM variants WHERE id = $1`, variantID).Scan(&productID); err != nil {
+		return QuickEditResult{}, fmt.Errorf("variant not found: %s", variantID)
+	}
+
+	_, err = tx.Exec(`
+		UPDATE variants SET
+			name = COALESCE($1, name),
+			price = COALESCE($2, price),
+			cost_price = COALESCE($3, cost_price),
+			variant_code = COALESCE($4, variant_code),
+			hsn_code = COALESCE($5, hsn_code)
+		WHERE id = $6
+	`, in.VariantName, in.Price, in.CostPrice, in.VariantCode, in.HSNCode, variantID)
+	if err != nil {
+		return QuickEditResult{}, fmt.Errorf("update variant: %w", err)
+	}
+
+	_, err = tx.Exec(`
+		UPDATE products SET
+			name = COALESCE($1, name),
+			category_id = COALESCE($2, category_id),
+			uom = COALESCE($3, uom),
+			updated_at = NOW()
+		WHERE id = $4
+	`, in.ProductName, in.CategoryID, in.UOM, productID)
+	if err != nil {
+		return QuickEditResult{}, fmt.Errorf("update product: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return QuickEditResult{}, err
+	}
+
+	return QuickEditResult{ProductID: productID, VariantID: variantID}, nil
 }

@@ -5,6 +5,7 @@ import "github.com/gofiber/fiber/v2"
 func RegisterRoutes(r fiber.Router, h *Handler) {
 	r.Post("/", h.Create)                           // create or upsert stock
 	r.Post("/quick-add", h.QuickAdd)                // create product+variant+stock in one shot
+	r.Patch("/quick-edit/:variantId", h.QuickEdit)  // edit product+variant fields in one shot
 	r.Get("/", h.All)                               // all stocks (paginated with total)
 	r.Get("/low", h.LowStock)                       // low stock alert
 	r.Get("/movements", h.Movements)                // movement audit log (filterable)
