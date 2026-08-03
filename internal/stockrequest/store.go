@@ -62,7 +62,7 @@ func (s *Store) CreateRequest(
 
 func (s *Store) AddItem(
 	requestID, variantID string,
-	qty int,
+	qty float64,
 ) error {
 
 	_, err := s.db.Exec(`
@@ -595,7 +595,7 @@ func (s *Store) Dispatch(
 			return err
 		}
 
-		remaining := int(requestedQty) - int(approvedQty)
+		remaining := requestedQty - approvedQty
 		if remaining <= 0 {
 			return fmt.Errorf(
 				"no remaining quantity for variant %s",
@@ -605,7 +605,7 @@ func (s *Store) Dispatch(
 
 		if item.Qty > remaining {
 			return fmt.Errorf(
-				"dispatch qty exceeds remaining for variant %s (remaining %d)",
+				"dispatch qty exceeds remaining for variant %s (remaining %.2f)",
 				item.VariantID,
 				remaining,
 			)
