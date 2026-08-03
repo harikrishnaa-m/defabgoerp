@@ -27,8 +27,8 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		Priority     string  `json:"priority"`
 		ExpectedDate *string `json:"expected_date"`
 		Items        []struct {
-			VariantID string `json:"variant_id"`
-			Qty       int    `json:"qty"`
+			VariantID string  `json:"variant_id"`
+			Qty       float64 `json:"qty"`
 		} `json:"items"`
 	}
 
@@ -376,8 +376,8 @@ func (h *Handler) Dispatch(c *fiber.Ctx) error {
 	var in struct {
 		FromWarehouseID string `json:"from_warehouse_id"`
 		Items           []struct {
-			VariantID string `json:"variant_id"`
-			Qty       int    `json:"dispatch_qty"`
+			VariantID string  `json:"variant_id"`
+			Qty       float64 `json:"dispatch_qty"`
 		} `json:"items"`
 		Remarks string `json:"remarks"`
 	}
