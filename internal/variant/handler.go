@@ -191,9 +191,9 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 	var variantCode int
 	var price, costPrice float64
 	var isActive bool
-	var productName, uom, categoryID, categoryName string
+	var productName, uom, categoryID, categoryName, description string
 	if err := row.Scan(&variantID, &productID, &variantCode, &name, &sku, &barcode, &price, &costPrice, &isActive, &hsnCode,
-		&productName, &uom, &categoryID, &categoryName); err != nil {
+		&productName, &uom, &categoryID, &categoryName, &description); err != nil {
 		return c.Status(404).JSON(fiber.Map{"error": "variant not found"})
 	}
 
@@ -231,6 +231,7 @@ func (h *Handler) GetByID(c *fiber.Ctx) error {
 		"uom":           uom,
 		"category_id":   categoryID,
 		"category_name": categoryName,
+		"description":   description,
 		"images":        images,
 		"attributes":    attributes,
 	})

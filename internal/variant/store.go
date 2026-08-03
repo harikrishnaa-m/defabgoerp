@@ -156,7 +156,7 @@ func (s *Store) ListByProduct(pid string) (*sql.Rows, error) {
 func (s *Store) Get(id string) (*sql.Row, error) {
 	return s.db.QueryRow(`
 	SELECT v.id, v.product_id, v.variant_code, v.name, v.sku, COALESCE(v.barcode,''), v.price, v.cost_price, v.is_active, COALESCE(v.hsn_code,''),
-	       COALESCE(p.name, ''), COALESCE(p.uom, ''), COALESCE(p.category_id::text, ''), COALESCE(cat.name, '')
+	       COALESCE(p.name, ''), COALESCE(p.uom, ''), COALESCE(p.category_id::text, ''), COALESCE(cat.name, ''), COALESCE(p.description, '')
 	FROM variants v
 	LEFT JOIN products p ON p.id = v.product_id
 	LEFT JOIN categories cat ON cat.id = p.category_id
@@ -617,7 +617,7 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 			       p.id, p.name, COALESCE(c.name,''), v.is_active,
 			       COALESCE(st.quantity, 0),
 			       COALESCE(w.id::text,''), COALESCE(w.name,''), COALESCE(b.name,''),
-			       pi.invoice_number, sup.name
+			       pi.invoice_number, sup.name, p.description
 			FROM variants v
 			JOIN products p ON p.id = v.product_id
 			LEFT JOIN categories c ON c.id = p.category_id
@@ -648,12 +648,12 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 			var variantCode int
 			var price, costPrice, qty float64
 			var isActive bool
-			var billNo, supplierName sql.NullString
+			var billNo, supplierName, description sql.NullString
 			if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode,
 				&price, &costPrice, &hsnCode,
 				&productID, &productName, &categoryName, &isActive, &qty,
 				&warehouseID2, &warehouseName, &branchName,
-				&billNo, &supplierName); err != nil {
+				&billNo, &supplierName, &description); err != nil {
 				return nil, 0, err
 			}
 			out = append(out, map[string]interface{}{
@@ -675,6 +675,7 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 				"branch_name":    branchName,
 				"bill_no":        nullableString(billNo),
 				"supplier_name":  nullableString(supplierName),
+				"description":    nullableString(description),
 			})
 		}
 		return out, total, nil
@@ -695,7 +696,7 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 		       p.id, p.name, COALESCE(c.name,''), v.is_active,
 		       COALESCE(w.id::text,''), COALESCE(w.name,''),
 		       COALESCE(b.name,''), COALESCE(st.quantity, 0),
-		       pi.invoice_number, sup.name
+		       pi.invoice_number, sup.name, p.description
 		FROM variants v
 		JOIN products p ON p.id = v.product_id
 		LEFT JOIN categories c ON c.id = p.category_id
@@ -726,12 +727,12 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 		var variantCode int
 		var price, costPrice, qty float64
 		var isActive bool
-		var billNo, supplierName sql.NullString
+		var billNo, supplierName, description sql.NullString
 		if err := rows.Scan(&id, &variantCode, &name, &sku, &barcode,
 			&price, &costPrice, &hsnCode,
 			&productID, &productName, &categoryName, &isActive,
 			&warehouseID2, &warehouseName, &branchName, &qty,
-			&billNo, &supplierName); err != nil {
+			&billNo, &supplierName, &description); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, map[string]interface{}{
@@ -753,6 +754,7 @@ func (s *Store) ItemMaster(warehouseID, variantCode string, limit, offset int) (
 			"quantity":       qty,
 			"bill_no":        nullableString(billNo),
 			"supplier_name":  nullableString(supplierName),
+			"description":    nullableString(description),
 		})
 	}
 	return out, total, nil

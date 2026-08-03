@@ -682,10 +682,10 @@ func (s *Store) QuickAdd(in QuickAddInput) (QuickAddResult, error) {
 			uom = "Unit"
 		}
 		err = tx.QueryRow(`
-			INSERT INTO products (name, category_id, uom)
-			VALUES ($1, $2, $3)
+			INSERT INTO products (name, category_id, uom, description)
+			VALUES ($1, $2, $3, $4)
 			RETURNING id
-		`, in.ProductName, in.CategoryID, uom).Scan(&productID)
+		`, in.ProductName, in.CategoryID, uom, in.Description).Scan(&productID)
 		if err != nil {
 			return QuickAddResult{}, fmt.Errorf("create product: %w", err)
 		}
@@ -791,9 +791,10 @@ func (s *Store) QuickEdit(variantID string, in QuickEditInput) (QuickEditResult,
 			name = COALESCE($1, name),
 			category_id = COALESCE($2, category_id),
 			uom = COALESCE($3, uom),
+			description = COALESCE($4, description),
 			updated_at = NOW()
-		WHERE id = $4
-	`, in.ProductName, in.CategoryID, in.UOM, productID)
+		WHERE id = $5
+	`, in.ProductName, in.CategoryID, in.UOM, in.Description, productID)
 	if err != nil {
 		return QuickEditResult{}, fmt.Errorf("update product: %w", err)
 	}

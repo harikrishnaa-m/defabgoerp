@@ -35,7 +35,8 @@ type QuickAddInput struct {
 	Price       float64 `json:"price"`
 	CostPrice   float64 `json:"cost_price"`
 	HSNCode     string  `json:"hsn_code"`
-	UOM         string  `json:"uom"` // unit of measure for the product; defaults to "Unit" if omitted
+	UOM         string  `json:"uom"`         // unit of measure for the product; defaults to "Unit" if omitted
+	Description string  `json:"description"` // item/product description; only applied when a new product is created
 
 	// Stock (optional) — either a single warehouse (warehouse_id + quantity), or
 	// multiple via warehouses[] to seed stock across several warehouses in one
@@ -79,6 +80,7 @@ type QuickEditInput struct {
 	ProductName *string `json:"product_name"`
 	CategoryID  *string `json:"category_id"`
 	UOM         *string `json:"uom"`
+	Description *string `json:"description"`
 }
 
 type QuickEditResult struct {
