@@ -7,3 +7,8 @@ func RegisterRoutes(r fiber.Router, h *Handler) {
 
 	r.Post("/transfers/:id/receive", h.Receive)
 }
+
+func RegisterInterWarehouseRoute(r fiber.Router, h *Handler) {
+	r.Get("/variant/:variant_code", h.GetBranchVariantStock)
+	r.Post("/inter-warehouse", h.InterWarehouse)
+}

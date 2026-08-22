@@ -572,6 +572,16 @@ func main() {
 		stockTransferHandler,
 	)
 
+	stocktransfer.RegisterInterWarehouseRoute(
+		protected.Group("/stock-transfers",
+			middleware.RequireRole(
+				model.RoleSuperAdmin,
+				model.RoleStoreManager,
+			),
+		),
+		stockTransferHandler,
+	)
+
 	stock.RegisterRoutes(
 		protected.Group("/stocks",
 			middleware.RequireRole(
