@@ -539,38 +539,48 @@ func (s *Store) ListDetailed(f Filter) (*DetailedReportResult, error) {
 	}
 
 	var conds []string
+	var exchangeNoteConds []string
 	var args []interface{}
 	idx := 1
 
 	if f.BranchID != "" {
 		conds = append(conds, fmt.Sprintf("si.branch_id = $%d", idx))
+		exchangeNoteConds = append(exchangeNoteConds, fmt.Sprintf("ro.branch_id = $%d", idx))
 		args = append(args, f.BranchID)
 		idx++
 	}
 	if f.FromDate != "" {
 		conds = append(conds, fmt.Sprintf("(si.invoice_date AT TIME ZONE 'Asia/Kolkata')::date >= $%d::date", idx))
+		exchangeNoteConds = append(exchangeNoteConds, fmt.Sprintf("(ro.created_at AT TIME ZONE 'Asia/Kolkata')::date >= $%d::date", idx))
 		args = append(args, f.FromDate)
 		idx++
 	}
 	if f.ToDate != "" {
 		conds = append(conds, fmt.Sprintf("(si.invoice_date AT TIME ZONE 'Asia/Kolkata')::date <= $%d::date", idx))
+		exchangeNoteConds = append(exchangeNoteConds, fmt.Sprintf("(ro.created_at AT TIME ZONE 'Asia/Kolkata')::date <= $%d::date", idx))
 		args = append(args, f.ToDate)
 		idx++
 	}
 	if f.SalespersonID != "" {
 		conds = append(conds, fmt.Sprintf("so.salesperson_id = $%d", idx))
+		exchangeNoteConds = append(exchangeNoteConds, "FALSE")
 		args = append(args, f.SalespersonID)
 		idx++
 	}
 	if f.CreatedByID != "" {
 		conds = append(conds, fmt.Sprintf("si.created_by::text = $%d", idx))
+		exchangeNoteConds = append(exchangeNoteConds, fmt.Sprintf("ro.created_by::text = $%d", idx))
 		args = append(args, f.CreatedByID)
 		idx++
 	}
 	if f.Channel != "" {
 		conds = append(conds, fmt.Sprintf("si.channel = $%d", idx))
+		exchangeNoteConds = append(exchangeNoteConds, "FALSE")
 		args = append(args, f.Channel)
 		idx++
+	}
+	if f.VariantCode != "" || f.CategoryID != "" {
+		exchangeNoteConds = append(exchangeNoteConds, "FALSE")
 	}
 	if f.PaymentType != "" {
 		if f.PaymentType == "CARD" {
@@ -595,6 +605,10 @@ func (s *Store) ListDetailed(f Filter) (*DetailedReportResult, error) {
 	if len(conds) > 0 {
 		where += " AND " + strings.Join(conds, " AND ")
 	}
+	exchangeNoteWhere := "WHERE ro.source = 'EXCHANGE' AND ro.status != 'CANCELLED'"
+	if len(exchangeNoteConds) > 0 {
+		exchangeNoteWhere += " AND " + strings.Join(exchangeNoteConds, " AND ")
+	}
 
 	query := fmt.Sprintf(`
 WITH invoice_payments AS (
@@ -611,6 +625,12 @@ WITH invoice_payments AS (
         NULLIF(SUM(CASE WHEN payment_method = 'EXCHANGE_CREDIT'                  THEN amount ELSE 0 END), 0) AS exchange_credit
     FROM sales_payments
     GROUP BY sales_invoice_id
+),
+exchange_credit_notes AS (
+	SELECT COALESCE(SUM(ro.total_amount), 0) AS total_amount,
+	       COALESCE(SUM(ro.gst_amount), 0) AS gst_amount
+	FROM return_orders ro
+	%s
 ),
 line_items AS (
     SELECT
@@ -635,28 +655,28 @@ line_items AS (
         SUM(sii.total_price) OVER (PARTITION BY si.id)                       AS sub_amount,
         COALESCE(si.discount_amount, 0)                                      AS discount_amount,
         COALESCE(si.bill_discount,   0)                                      AS bill_discount,
-        ROUND((
+		ROUND((
             si.gst_amount + COALESCE((
                 SELECT SUM(ro.gst_amount) FROM return_orders ro
                 WHERE ro.sales_invoice_id = si.id
                   AND ro.source != 'EXCHANGE'
-                  AND ro.status != 'CANCELLED'
-            ), 0)
+				AND ro.status != 'CANCELLED'
+			), 0)
         ) / 2, 2)                                                            AS cgst,
-        ROUND((
+		ROUND((
             si.gst_amount + COALESCE((
                 SELECT SUM(ro.gst_amount) FROM return_orders ro
                 WHERE ro.sales_invoice_id = si.id
                   AND ro.source != 'EXCHANGE'
-                  AND ro.status != 'CANCELLED'
-            ), 0)
+				AND ro.status != 'CANCELLED'
+			), 0)
         ) / 2, 2)                                                            AS sgst,
         si.gst_amount + COALESCE((
             SELECT SUM(ro.gst_amount) FROM return_orders ro
             WHERE ro.sales_invoice_id = si.id
               AND ro.source != 'EXCHANGE'
-              AND ro.status != 'CANCELLED'
-        ), 0)                                                                AS total_gst,
+			AND ro.status != 'CANCELLED'
+		), 0)                                                                AS total_gst,
         COALESCE(si.round_off, 0)                                           AS round_off,
         si.net_amount + COALESCE((
             SELECT SUM(ro.total_amount) FROM return_orders ro
@@ -688,10 +708,10 @@ line_items AS (
 ),
 inv_sums AS (
     SELECT
-        SUM(net_amount)      AS s_net,
-        SUM(cgst)            AS s_cgst,
-        SUM(sgst)            AS s_sgst,
-        SUM(total_gst)       AS s_total_gst,
+		SUM(net_amount) - MAX(ecn.total_amount) AS s_net,
+		ROUND((SUM(total_gst) - MAX(ecn.gst_amount)) / 2, 2) AS s_cgst,
+		ROUND((SUM(total_gst) - MAX(ecn.gst_amount)) / 2, 2) AS s_sgst,
+		SUM(total_gst) - MAX(ecn.gst_amount) AS s_total_gst,
         SUM(discount_amount) AS s_discount,
         SUM(bill_discount)   AS s_bill_discount,
         SUM(round_off)       AS s_round_off,
@@ -702,10 +722,11 @@ inv_sums AS (
         NULLIF(SUM(bank_transfer),   0) AS s_bank_transfer,
         NULLIF(SUM(exchange_credit), 0) AS s_exchange_credit
     FROM (
-        SELECT DISTINCT _invoice_id, net_amount, cgst, sgst, total_gst, discount_amount, bill_discount, round_off,
+		SELECT DISTINCT _invoice_id, net_amount, cgst, sgst, total_gst, discount_amount, bill_discount, round_off,
                         cash, debit_card, credit_card, upi, bank_transfer, exchange_credit
         FROM line_items
-    ) u
+	) u
+	CROSS JOIN exchange_credit_notes ecn
 )
 SELECT
     invoice_number, date, customer_name, branch, salesperson, status,
@@ -723,7 +744,7 @@ SELECT
     s_net, s_cgst, s_sgst, s_total_gst, s_discount, s_bill_discount, s_round_off,
     s_cash, s_debit_card, s_credit_card, s_upi, s_bank_transfer, s_exchange_credit
 FROM line_items CROSS JOIN inv_sums
-ORDER BY _invoice_date, invoice_number, _item_id`, where)
+ORDER BY _invoice_date, invoice_number, _item_id`, exchangeNoteWhere, where)
 
 	if limit > 0 {
 		query += fmt.Sprintf(" LIMIT $%d OFFSET $%d", idx, idx+1)
@@ -847,7 +868,7 @@ ORDER BY _invoice_date, invoice_number, _item_id`, where)
 		Limit:      limit,
 		TotalPages: totalPages,
 		Totals: DetailedTotals{
-			NetAmount:      sNet - sExchangeCredit.Float64,
+			NetAmount:      sNet,
 			DiscountAmount: sDiscount,
 			BillDiscount:   sBillDiscount,
 			CGST:           sCGST,
