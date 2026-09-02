@@ -622,14 +622,23 @@ WITH invoice_payments AS (
         NULLIF(SUM(CASE WHEN payment_method = 'CREDIT_CARD'                      THEN amount ELSE 0 END), 0) AS credit_card,
         NULLIF(SUM(CASE WHEN payment_method = 'UPI'                              THEN amount ELSE 0 END), 0) AS upi,
         NULLIF(SUM(CASE WHEN payment_method = 'BANK_TRANSFER'                    THEN amount ELSE 0 END), 0) AS bank_transfer,
-        NULLIF(SUM(CASE WHEN payment_method = 'EXCHANGE_CREDIT'                  THEN amount ELSE 0 END), 0) AS exchange_credit
+		NULLIF(SUM(CASE WHEN payment_method = 'EXCHANGE_CREDIT'                  THEN amount ELSE 0 END), 0) AS exchange_credit,
+		SUM(amount) AS payment_total
     FROM sales_payments
     GROUP BY sales_invoice_id
 ),
 exchange_credit_notes AS (
 	SELECT COALESCE(SUM(ro.total_amount), 0) AS total_amount,
-	       COALESCE(SUM(ro.gst_amount), 0) AS gst_amount
+	       COALESCE(SUM(ro.gst_amount), 0) AS gst_amount,
+	       COALESCE(SUM(es.refund_amount), 0) AS refund_amount
 	FROM return_orders ro
+	LEFT JOIN exchange_orders eo ON eo.credit_note_id = ro.id
+	LEFT JOIN (
+		SELECT exchange_order_id, SUM(amount) AS refund_amount
+		FROM exchange_settlements
+		WHERE direction = 'REFUND'
+		GROUP BY exchange_order_id
+	) es ON es.exchange_order_id = eo.id
 	%s
 ),
 line_items AS (
@@ -652,6 +661,8 @@ line_items AS (
         ip.upi,
         ip.bank_transfer,
         ip.exchange_credit,
+		ip.payment_total,
+		si.net_amount AS invoice_net_amount,
         SUM(sii.total_price) OVER (PARTITION BY si.id)                       AS sub_amount,
         COALESCE(si.discount_amount, 0)                                      AS discount_amount,
         COALESCE(si.bill_discount,   0)                                      AS bill_discount,
@@ -709,6 +720,10 @@ line_items AS (
 inv_sums AS (
     SELECT
 		SUM(net_amount) - MAX(ecn.total_amount) AS s_net,
+		MAX(ecn.total_amount) AS s_exchange_credit_note_value,
+		COALESCE(SUM(exchange_credit), 0) AS s_exchange_credit_applied,
+		MAX(ecn.refund_amount) AS s_refund_settlement,
+		SUM(GREATEST(payment_total - invoice_net_amount, 0)) AS s_extra_payment_records,
 		ROUND((SUM(total_gst) - MAX(ecn.gst_amount)) / 2, 2) AS s_cgst,
 		ROUND((SUM(total_gst) - MAX(ecn.gst_amount)) / 2, 2) AS s_sgst,
 		SUM(total_gst) - MAX(ecn.gst_amount) AS s_total_gst,
@@ -723,7 +738,7 @@ inv_sums AS (
         NULLIF(SUM(exchange_credit), 0) AS s_exchange_credit
     FROM (
 		SELECT DISTINCT _invoice_id, net_amount, cgst, sgst, total_gst, discount_amount, bill_discount, round_off,
-                        cash, debit_card, credit_card, upi, bank_transfer, exchange_credit
+						cash, debit_card, credit_card, upi, bank_transfer, exchange_credit, payment_total, invoice_net_amount
         FROM line_items
 	) u
 	CROSS JOIN exchange_credit_notes ecn
@@ -741,7 +756,8 @@ SELECT
     SUM(quantity)       OVER ()  AS total_quantity,
     SUM(item_total)     OVER ()  AS total_item_total,
     SUM(item_total_gst) OVER ()  AS total_item_gst,
-    s_net, s_cgst, s_sgst, s_total_gst, s_discount, s_bill_discount, s_round_off,
+		s_net, s_exchange_credit_note_value, s_exchange_credit_applied, s_refund_settlement, s_extra_payment_records,
+		s_cgst, s_sgst, s_total_gst, s_discount, s_bill_discount, s_round_off,
     s_cash, s_debit_card, s_credit_card, s_upi, s_bank_transfer, s_exchange_credit
 FROM line_items CROSS JOIN inv_sums
 ORDER BY _invoice_date, invoice_number, _item_id`, exchangeNoteWhere, where)
@@ -760,7 +776,8 @@ ORDER BY _invoice_date, invoice_number, _item_id`, exchangeNoteWhere, where)
 	var data []DetailedReportRow
 	var totalCount int
 	var totalQuantity, totalItemTotal, totalItemGST float64
-	var sNet, sCGST, sSGST, sTotalGST, sDiscount, sBillDiscount, sRoundOff float64
+	var sNet, sExchangeCreditNoteValue, sExchangeCreditApplied, sRefundSettlement, sExtraPaymentRecords float64
+	var sCGST, sSGST, sTotalGST, sDiscount, sBillDiscount, sRoundOff float64
 	var sCash, sDebitCard, sCreditCard, sUPI, sBankTransfer, sExchangeCredit sql.NullFloat64
 
 	for rows.Next() {
@@ -807,6 +824,10 @@ ORDER BY _invoice_date, invoice_number, _item_id`, exchangeNoteWhere, where)
 			&totalItemTotal,
 			&totalItemGST,
 			&sNet,
+			&sExchangeCreditNoteValue,
+			&sExchangeCreditApplied,
+			&sRefundSettlement,
+			&sExtraPaymentRecords,
 			&sCGST,
 			&sSGST,
 			&sTotalGST,
@@ -868,22 +889,26 @@ ORDER BY _invoice_date, invoice_number, _item_id`, exchangeNoteWhere, where)
 		Limit:      limit,
 		TotalPages: totalPages,
 		Totals: DetailedTotals{
-			NetAmount:      sNet,
-			DiscountAmount: sDiscount,
-			BillDiscount:   sBillDiscount,
-			CGST:           sCGST,
-			SGST:           sSGST,
-			TotalGST:       sTotalGST,
-			RoundOff:       sRoundOff,
-			Cash:           ptrOrNil(sCash),
-			DebitCard:      ptrOrNil(sDebitCard),
-			CreditCard:     ptrOrNil(sCreditCard),
-			UPI:            ptrOrNil(sUPI),
-			BankTransfer:   ptrOrNil(sBankTransfer),
-			ExchangeCredit: ptrOrNil(sExchangeCredit),
-			Quantity:       totalQuantity,
-			ItemTotal:      totalItemTotal,
-			ItemTotalGST:   totalItemGST,
+			NetAmount:               sNet,
+			DiscountAmount:          sDiscount,
+			BillDiscount:            sBillDiscount,
+			CGST:                    sCGST,
+			SGST:                    sSGST,
+			TotalGST:                sTotalGST,
+			RoundOff:                sRoundOff,
+			Cash:                    ptrOrNil(sCash),
+			DebitCard:               ptrOrNil(sDebitCard),
+			CreditCard:              ptrOrNil(sCreditCard),
+			UPI:                     ptrOrNil(sUPI),
+			BankTransfer:            ptrOrNil(sBankTransfer),
+			ExchangeCredit:          ptrOrNil(sExchangeCredit),
+			ExchangeCreditNoteValue: sExchangeCreditNoteValue,
+			ExchangeCreditApplied:   sExchangeCreditApplied,
+			RefundSettlement:        sRefundSettlement,
+			ExtraPaymentRecords:     sExtraPaymentRecords,
+			Quantity:                totalQuantity,
+			ItemTotal:               totalItemTotal,
+			ItemTotalGST:            totalItemGST,
 		},
 	}, nil
 }

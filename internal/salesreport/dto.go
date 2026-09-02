@@ -30,7 +30,7 @@ type SalesReportRow struct {
 	VariantCode     string   `json:"variant_code,omitempty"`   // populated when variant_code or category_id filter is active
 }
 
-//new updates
+// new updates
 // ReportTotals holds column-level sums for the entire filtered result set.
 type ReportTotals struct {
 	NetAmount      float64  `json:"net_amount"`
@@ -114,22 +114,26 @@ type DetailedReportRow struct {
 // Invoice-level fields (net_amount, gst, discount, payment totals) are summed once per unique invoice.
 // Item-level fields (quantity, item_total, item_gst) are summed across all line items.
 type DetailedTotals struct {
-	NetAmount      float64  `json:"net_amount"`
-	DiscountAmount float64  `json:"discount_amount"`
-	BillDiscount   float64  `json:"bill_discount"`
-	CGST           float64  `json:"cgst"`
-	SGST           float64  `json:"sgst"`
-	TotalGST       float64  `json:"total_gst"`
-	RoundOff       float64  `json:"round_off"`
-	Cash           *float64 `json:"cash"`
-	DebitCard      *float64 `json:"debit_card"`
-	CreditCard     *float64 `json:"credit_card"`
-	UPI            *float64 `json:"upi"`
-	BankTransfer   *float64 `json:"bank_transfer"`
-	ExchangeCredit *float64 `json:"exchange_credit"`
-	Quantity       float64  `json:"quantity"`
-	ItemTotal      float64  `json:"item_total"`
-	ItemTotalGST   float64  `json:"item_total_gst"`
+	NetAmount               float64  `json:"net_amount"`
+	DiscountAmount          float64  `json:"discount_amount"`
+	BillDiscount            float64  `json:"bill_discount"`
+	CGST                    float64  `json:"cgst"`
+	SGST                    float64  `json:"sgst"`
+	TotalGST                float64  `json:"total_gst"`
+	RoundOff                float64  `json:"round_off"`
+	Cash                    *float64 `json:"cash"`
+	DebitCard               *float64 `json:"debit_card"`
+	CreditCard              *float64 `json:"credit_card"`
+	UPI                     *float64 `json:"upi"`
+	BankTransfer            *float64 `json:"bank_transfer"`
+	ExchangeCredit          *float64 `json:"exchange_credit"`
+	ExchangeCreditNoteValue float64  `json:"exchange_credit_note_value"`
+	ExchangeCreditApplied   float64  `json:"exchange_credit_applied"`
+	RefundSettlement        float64  `json:"refund_settlement"`
+	ExtraPaymentRecords     float64  `json:"extra_payment_records"`
+	Quantity                float64  `json:"quantity"`
+	ItemTotal               float64  `json:"item_total"`
+	ItemTotalGST            float64  `json:"item_total_gst"`
 }
 
 // DetailedReportResult is the full API response for the detailed report.
