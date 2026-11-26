@@ -127,6 +127,18 @@ func (s *Store) listByInvoice(f Filter) (*ReportResult, error) {
         COALESCE(b.name, '')        AS location,
         ''                          AS salesperson_name,
         COALESCE(u.name, '')        AS created_by_name,
+        0::NUMERIC                  AS quantity_5,
+        (-ro.total_amount + ro.gst_amount)::NUMERIC AS taxable_value_5,
+        (-ro.gst_amount)::NUMERIC     AS gst_5,
+        ROUND(-ro.gst_amount / 2, 2)   AS cgst_5,
+        ROUND(-ro.gst_amount / 2, 2)   AS sgst_5,
+        ''::TEXT                    AS hsn_codes_5,
+        0::NUMERIC                  AS quantity_18,
+        0::NUMERIC                  AS taxable_value_18,
+        0::NUMERIC                  AS gst_18,
+        0::NUMERIC                  AS cgst_18,
+        0::NUMERIC                  AS sgst_18,
+        ''::TEXT                    AS hsn_codes_18,
         NULL::TEXT                  AS variant_name,
         0::NUMERIC                  AS quantity,
         NULL::TEXT                  AS supplier_names,
@@ -223,6 +235,18 @@ combined AS (
         COALESCE(b.name,  '')       AS location,
         COALESCE(sp.name, '')       AS salesperson_name,
         COALESCE(u.name,  '')       AS created_by_name,
+        item_tax.quantity_5,
+        item_tax.taxable_value_5,
+        item_tax.gst_5,
+        item_tax.cgst_5,
+        item_tax.sgst_5,
+        item_tax.hsn_codes_5,
+        item_tax.quantity_18,
+        item_tax.taxable_value_18,
+        item_tax.gst_18,
+        item_tax.cgst_18,
+        item_tax.sgst_18,
+        item_tax.hsn_codes_18,
         %s
         si.invoice_date             AS sort_date
     FROM sales_invoices si
@@ -232,11 +256,46 @@ combined AS (
     LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
     LEFT JOIN users        u  ON u.id::text = si.created_by::text
     LEFT JOIN pay ON pay.invoice_id = si.id
+    LEFT JOIN LATERAL (
+        SELECT
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN sii.quantity ELSE 0 END), 0) AS quantity_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN sii.tax_amount * 100 / 5 ELSE 0 END), 0) AS taxable_value_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN sii.tax_amount ELSE 0 END), 0) AS gst_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN ROUND(sii.tax_amount / 2, 2) ELSE 0 END), 0) AS cgst_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN ROUND(sii.tax_amount / 2, 2) ELSE 0 END), 0) AS sgst_5,
+            COALESCE(STRING_AGG(DISTINCT CASE WHEN item.tax_percent = 5 THEN item.hsn_code END, ', ' ORDER BY CASE WHEN item.tax_percent = 5 THEN item.hsn_code END), '') AS hsn_codes_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN sii.quantity ELSE 0 END), 0) AS quantity_18,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN sii.tax_amount * 100 / 18 ELSE 0 END), 0) AS taxable_value_18,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN sii.tax_amount ELSE 0 END), 0) AS gst_18,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN ROUND(sii.tax_amount / 2, 2) ELSE 0 END), 0) AS cgst_18,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN ROUND(sii.tax_amount / 2, 2) ELSE 0 END), 0) AS sgst_18,
+            COALESCE(STRING_AGG(DISTINCT CASE WHEN item.tax_percent = 18 THEN item.hsn_code END, ', ' ORDER BY CASE WHEN item.tax_percent = 18 THEN item.hsn_code END), '') AS hsn_codes_18
+        FROM sales_invoice_items sii
+        JOIN (
+            SELECT
+                sii_inner.id,
+                sii_inner.tax_percent,
+                COALESCE(
+                    NULLIF(BTRIM(v.hsn_code), ''),
+                    NULLIF((
+                        SELECT STRING_AGG(DISTINCT BTRIM(poi.hsn_code), ', ' ORDER BY BTRIM(poi.hsn_code))
+                        FROM purchase_order_items poi
+                        WHERE poi.product_code = v.variant_code::text
+                          AND NULLIF(BTRIM(poi.hsn_code), '') IS NOT NULL
+                    ), '')
+                ) AS hsn_code
+            FROM sales_invoice_items sii_inner
+            LEFT JOIN variants v ON v.id = sii_inner.variant_id
+        ) item ON item.id = sii.id
+        WHERE sii.sales_invoice_id = si.id
+    ) item_tax ON TRUE
     %s
     %s
     GROUP BY si.id, si.invoice_number, si.invoice_date, si.net_amount, si.gst_amount,
              c.name, b.name, sp.name, u.name, si.channel,
-             pay.cash, pay.card, pay.upi, pay.bank_transfer, pay.exchange_credit%s
+             pay.cash, pay.card, pay.upi, pay.bank_transfer, pay.exchange_credit,
+             item_tax.quantity_5, item_tax.taxable_value_5, item_tax.gst_5, item_tax.cgst_5, item_tax.sgst_5, item_tax.hsn_codes_5,
+             item_tax.quantity_18, item_tax.taxable_value_18, item_tax.gst_18, item_tax.cgst_18, item_tax.sgst_18, item_tax.hsn_codes_18%s
     %s
 ),
 -- When a variant_code/category_id filter is active, an invoice can appear as
@@ -245,6 +304,22 @@ combined AS (
 deduped AS (
     SELECT *, ROW_NUMBER() OVER (PARTITION BY id ORDER BY variant_code_col NULLS FIRST) AS rn
     FROM combined
+),
+reconciled AS (
+    SELECT d.*,
+        CASE
+            WHEN d.gst_5 + d.gst_18 <> 0 THEN
+                d.gst_5 + (d.gst_amount - d.gst_5 - d.gst_18)
+                    * d.gst_5 / (d.gst_5 + d.gst_18)
+            ELSE d.gst_amount
+        END AS report_gst_5,
+        CASE
+            WHEN d.gst_5 + d.gst_18 <> 0 THEN
+                d.gst_18 + (d.gst_amount - d.gst_5 - d.gst_18)
+                    * d.gst_18 / (d.gst_5 + d.gst_18)
+            ELSE 0
+        END AS report_gst_18
+    FROM deduped d
 )
 SELECT
     id, invoice_number, date, customer_name, channel,
@@ -257,6 +332,30 @@ SELECT
     COALESCE(category_name, '') AS category_name,
     COALESCE(product_name, '') AS product_name,
     COALESCE(variant_code_col, '') AS variant_code_col,
+    quantity_5,
+    CASE
+        WHEN taxable_value_5 + taxable_value_18 <> 0 THEN
+            taxable_value_5
+            + (net_amount - (taxable_value_5 + report_gst_5 + taxable_value_18 + report_gst_18))
+              * taxable_value_5 / (taxable_value_5 + taxable_value_18)
+        ELSE net_amount - report_gst_5 - report_gst_18
+    END AS taxable_value_5,
+    report_gst_5 AS gst_5,
+    ROUND(report_gst_5 / 2, 2) AS cgst_5,
+    ROUND(report_gst_5 / 2, 2) AS sgst_5,
+    hsn_codes_5,
+    quantity_18,
+    CASE
+        WHEN taxable_value_5 + taxable_value_18 <> 0 THEN
+            taxable_value_18
+            + (net_amount - (taxable_value_5 + report_gst_5 + taxable_value_18 + report_gst_18))
+              * taxable_value_18 / (taxable_value_5 + taxable_value_18)
+        ELSE 0
+    END AS taxable_value_18,
+    report_gst_18 AS gst_18,
+    ROUND(report_gst_18 / 2, 2) AS cgst_18,
+    ROUND(report_gst_18 / 2, 2) AS sgst_18,
+    hsn_codes_18,
     COUNT(*)                                                          OVER ()  AS total_count,
     COALESCE(SUM(CASE WHEN rn = 1 THEN net_amount      ELSE 0 END)    OVER (), 0) AS total_net,
     COALESCE(SUM(CASE WHEN rn = 1 THEN gst_amount       ELSE 0 END)    OVER (), 0) AS total_gst,
@@ -265,7 +364,7 @@ SELECT
     COALESCE(SUM(CASE WHEN rn = 1 THEN upi              ELSE 0 END)    OVER (), 0) AS total_upi,
     COALESCE(SUM(CASE WHEN rn = 1 THEN bank_transfer    ELSE 0 END)    OVER (), 0) AS total_bank_transfer,
     COALESCE(SUM(CASE WHEN rn = 1 THEN exchange_credit  ELSE 0 END)    OVER (), 0) AS total_exchange_credit
-FROM deduped
+FROM reconciled
 ORDER BY sort_date DESC, invoice_number DESC`
 
 	query := fmt.Sprintf(queryTemplate, variantSelect, variantJoin, invWhere, variantGroupBy, creditNoteUnion)
@@ -365,6 +464,18 @@ WITH base AS (
         COALESCE(b.name,  '')    AS location,
         COALESCE(sp.name, '')    AS salesperson_name,
         COALESCE(u.name,  '')    AS created_by_name,
+        item_tax.quantity_5,
+        item_tax.taxable_value_5,
+        item_tax.gst_5,
+        item_tax.cgst_5,
+        item_tax.sgst_5,
+        item_tax.hsn_codes_5,
+        item_tax.quantity_18,
+        item_tax.taxable_value_18,
+        item_tax.gst_18,
+        item_tax.cgst_18,
+        item_tax.sgst_18,
+        item_tax.hsn_codes_18,
         si.invoice_date          AS sort_date
     FROM sales_invoices si
     JOIN  sales_payments   spm ON spm.sales_invoice_id = si.id
@@ -374,10 +485,61 @@ WITH base AS (
     LEFT JOIN sales_orders so ON so.id = si.sales_order_id
     LEFT JOIN sales_persons sp ON sp.id = so.salesperson_id
     LEFT JOIN users        u  ON u.id::text = si.created_by::text
+    LEFT JOIN LATERAL (
+        SELECT
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN sii.quantity ELSE 0 END), 0) AS quantity_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN sii.tax_amount * 100 / 5 ELSE 0 END), 0) AS taxable_value_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN sii.tax_amount ELSE 0 END), 0) AS gst_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN ROUND(sii.tax_amount / 2, 2) ELSE 0 END), 0) AS cgst_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 5 THEN ROUND(sii.tax_amount / 2, 2) ELSE 0 END), 0) AS sgst_5,
+            COALESCE(STRING_AGG(DISTINCT CASE WHEN item.tax_percent = 5 THEN item.hsn_code END, ', ' ORDER BY CASE WHEN item.tax_percent = 5 THEN item.hsn_code END), '') AS hsn_codes_5,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN sii.quantity ELSE 0 END), 0) AS quantity_18,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN sii.tax_amount * 100 / 18 ELSE 0 END), 0) AS taxable_value_18,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN sii.tax_amount ELSE 0 END), 0) AS gst_18,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN ROUND(sii.tax_amount / 2, 2) ELSE 0 END), 0) AS cgst_18,
+            COALESCE(SUM(CASE WHEN sii.tax_percent = 18 THEN ROUND(sii.tax_amount / 2, 2) ELSE 0 END), 0) AS sgst_18,
+            COALESCE(STRING_AGG(DISTINCT CASE WHEN item.tax_percent = 18 THEN item.hsn_code END, ', ' ORDER BY CASE WHEN item.tax_percent = 18 THEN item.hsn_code END), '') AS hsn_codes_18
+        FROM sales_invoice_items sii
+        JOIN (
+            SELECT
+                sii_inner.id,
+                sii_inner.tax_percent,
+                COALESCE(
+                    NULLIF(BTRIM(v.hsn_code), ''),
+                    NULLIF((
+                        SELECT STRING_AGG(DISTINCT BTRIM(poi.hsn_code), ', ' ORDER BY BTRIM(poi.hsn_code))
+                        FROM purchase_order_items poi
+                        WHERE poi.product_code = v.variant_code::text
+                          AND NULLIF(BTRIM(poi.hsn_code), '') IS NOT NULL
+                    ), '')
+                ) AS hsn_code
+            FROM sales_invoice_items sii_inner
+            LEFT JOIN variants v ON v.id = sii_inner.variant_id
+        ) item ON item.id = sii.id
+        WHERE sii.sales_invoice_id = si.id
+    ) item_tax ON TRUE
     %s
     GROUP BY si.id, si.invoice_number, si.invoice_date, si.gst_amount,
-             c.name, b.name, sp.name, u.name, si.channel
+             c.name, b.name, sp.name, u.name, si.channel,
+             item_tax.quantity_5, item_tax.taxable_value_5, item_tax.gst_5, item_tax.cgst_5, item_tax.sgst_5, item_tax.hsn_codes_5,
+             item_tax.quantity_18, item_tax.taxable_value_18, item_tax.gst_18, item_tax.cgst_18, item_tax.sgst_18, item_tax.hsn_codes_18
     HAVING SUM(%s) > 0
+),
+reconciled_base AS (
+    SELECT b.*,
+        CASE
+            WHEN b.gst_5 + b.gst_18 <> 0 THEN
+                b.gst_5 + (b.gst_amount - b.gst_5 - b.gst_18)
+                    * b.gst_5 / (b.gst_5 + b.gst_18)
+            ELSE b.gst_amount
+        END AS report_gst_5,
+        CASE
+            WHEN b.gst_5 + b.gst_18 <> 0 THEN
+                b.gst_18 + (b.gst_amount - b.gst_5 - b.gst_18)
+                    * b.gst_18 / (b.gst_5 + b.gst_18)
+            ELSE 0
+        END AS report_gst_18
+    FROM base b
 )
 SELECT
     id, invoice_number, date, customer_name, channel,
@@ -390,6 +552,30 @@ SELECT
     NULL::TEXT AS category_name,
     NULL::TEXT AS product_name,
     NULL::TEXT AS variant_code_col,
+    quantity_5,
+    CASE
+        WHEN taxable_value_5 + taxable_value_18 <> 0 THEN
+            taxable_value_5
+            + (net_amount - (taxable_value_5 + report_gst_5 + taxable_value_18 + report_gst_18))
+              * taxable_value_5 / (taxable_value_5 + taxable_value_18)
+        ELSE net_amount - report_gst_5 - report_gst_18
+    END AS taxable_value_5,
+    report_gst_5 AS gst_5,
+    ROUND(report_gst_5 / 2, 2) AS cgst_5,
+    ROUND(report_gst_5 / 2, 2) AS sgst_5,
+    hsn_codes_5,
+    quantity_18,
+    CASE
+        WHEN taxable_value_5 + taxable_value_18 <> 0 THEN
+            taxable_value_18
+            + (net_amount - (taxable_value_5 + report_gst_5 + taxable_value_18 + report_gst_18))
+              * taxable_value_18 / (taxable_value_5 + taxable_value_18)
+        ELSE 0
+    END AS taxable_value_18,
+    report_gst_18 AS gst_18,
+    ROUND(report_gst_18 / 2, 2) AS cgst_18,
+    ROUND(report_gst_18 / 2, 2) AS sgst_18,
+    hsn_codes_18,
     COUNT(*)                             OVER ()  AS total_count,
     COALESCE(SUM(net_amount)             OVER (), 0) AS total_net,
     COALESCE(SUM(gst_amount)             OVER (), 0) AS total_gst,
@@ -398,7 +584,7 @@ SELECT
     COALESCE(SUM(upi)                    OVER (), 0) AS total_upi,
     COALESCE(SUM(bank_transfer)          OVER (), 0) AS total_bank_transfer,
     0::NUMERIC                                       AS total_exchange_credit
-FROM base
+FROM reconciled_base
 ORDER BY sort_date DESC, invoice_number DESC`, payExpr, where, payExpr)
 
 	if limit > 0 {
@@ -435,6 +621,18 @@ func (s *Store) scanRows(query string, args []interface{}, page, limit int) (*Re
 			&cash, &card, &upi, &bank, &exchange,
 			&row.Location, &row.SalespersonName, &row.CreatedByName,
 			&variantName, &quantity, &supplierNames, &categoryName, &productName, &variantCodeCol,
+			&row.GSTBreakdown.FivePercent.Quantity,
+			&row.GSTBreakdown.FivePercent.TaxableValue,
+			&row.GSTBreakdown.FivePercent.GST,
+			&row.GSTBreakdown.FivePercent.CGST,
+			&row.GSTBreakdown.FivePercent.SGST,
+			&row.GSTBreakdown.FivePercent.HSNCodes,
+			&row.GSTBreakdown.EighteenPercent.Quantity,
+			&row.GSTBreakdown.EighteenPercent.TaxableValue,
+			&row.GSTBreakdown.EighteenPercent.GST,
+			&row.GSTBreakdown.EighteenPercent.CGST,
+			&row.GSTBreakdown.EighteenPercent.SGST,
+			&row.GSTBreakdown.EighteenPercent.HSNCodes,
 			&totalCount, &totalNet, &totalGST,
 			&totalCash, &totalCard, &totalUPI, &totalBank, &totalExchange,
 		); err != nil {
