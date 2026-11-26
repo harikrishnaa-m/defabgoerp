@@ -5,29 +5,46 @@ package salesreport
 // Credit notes (exchanges) appear as negative rows (channel = "CREDIT_NOTE").
 // VariantName and Quantity are populated only when variant_code filter is active.
 type SalesReportRow struct {
-	ID              string   `json:"id"`
-	InvoiceNumber   string   `json:"invoice_number"`
-	Date            string   `json:"date"`
-	CustomerName    string   `json:"customer_name"`
-	Channel         string   `json:"channel"`
-	NetAmount       float64  `json:"net_amount"`
-	GSTAmount       float64  `json:"gst_amount"`
-	CGSTAmount      float64  `json:"cgst_amount"`
-	SGSTAmount      float64  `json:"sgst_amount"`
-	Cash            *float64 `json:"cash"`
-	Card            *float64 `json:"card"`
-	UPI             *float64 `json:"upi"`
-	BankTransfer    *float64 `json:"bank_transfer"`
-	ExchangeCredit  *float64 `json:"exchange_credit"`
-	Location        string   `json:"location"`
-	SalespersonName string   `json:"salesperson_name"`
-	CreatedByName   string   `json:"created_by_name"`
-	VariantName     string   `json:"variant_name,omitempty"`   // populated when variant_code or category_id filter is active
-	Quantity        float64  `json:"quantity,omitempty"`       // per-variant quantity when variant_code or category_id filter is active
-	SupplierNames   *string  `json:"supplier_names,omitempty"` // null when no filter; "" when filter active but no supplier found
-	CategoryName    string   `json:"category_name,omitempty"`  // populated when category_id filter is active
-	ProductName     string   `json:"product_name,omitempty"`   // populated when variant_code or category_id filter is active
-	VariantCode     string   `json:"variant_code,omitempty"`   // populated when variant_code or category_id filter is active
+	ID              string       `json:"id"`
+	InvoiceNumber   string       `json:"invoice_number"`
+	Date            string       `json:"date"`
+	CustomerName    string       `json:"customer_name"`
+	Channel         string       `json:"channel"`
+	NetAmount       float64      `json:"net_amount"`
+	GSTAmount       float64      `json:"gst_amount"`
+	CGSTAmount      float64      `json:"cgst_amount"`
+	SGSTAmount      float64      `json:"sgst_amount"`
+	Cash            *float64     `json:"cash"`
+	Card            *float64     `json:"card"`
+	UPI             *float64     `json:"upi"`
+	BankTransfer    *float64     `json:"bank_transfer"`
+	ExchangeCredit  *float64     `json:"exchange_credit"`
+	GSTBreakdown    GSTBreakdown `json:"gst_breakdown"`
+	Location        string       `json:"location"`
+	SalespersonName string       `json:"salesperson_name"`
+	CreatedByName   string       `json:"created_by_name"`
+	VariantName     string       `json:"variant_name,omitempty"`   // populated when variant_code or category_id filter is active
+	Quantity        float64      `json:"quantity,omitempty"`       // per-variant quantity when variant_code or category_id filter is active
+	SupplierNames   *string      `json:"supplier_names,omitempty"` // null when no filter; "" when filter active but no supplier found
+	CategoryName    string       `json:"category_name,omitempty"`  // populated when category_id filter is active
+	ProductName     string       `json:"product_name,omitempty"`   // populated when variant_code or category_id filter is active
+	VariantCode     string       `json:"variant_code,omitempty"`   // populated when variant_code or category_id filter is active
+}
+
+// GSTRateBreakdown contains invoice-item totals for one GST rate.
+type GSTRateBreakdown struct {
+	Quantity     float64 `json:"quantity"`
+	TaxableValue float64 `json:"taxable_value"`
+	GST          float64 `json:"gst"`
+	CGST         float64 `json:"cgst"`
+	SGST         float64 `json:"sgst"`
+	HSNCodes     string  `json:"hsn_codes"`
+}
+
+// GSTBreakdown groups invoice-item totals by the GST rates used in sales reports.
+type GSTBreakdown struct {
+	FivePercent     GSTRateBreakdown `json:"5_percent"`
+	EighteenPercent GSTRateBreakdown `json:"18_percent"`
 }
 
 // new updates
