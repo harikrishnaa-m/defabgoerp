@@ -134,15 +134,17 @@ func (s *Store) Update(grnID string, in DirectGRNInput, userID string) (*DirectG
 				 quantity, unit_price, selling_price, wholesale_price, gst_percent,
 				 gst_amount, total_price, product_code, category, free_qty,
 				 additional_work, additional_work_amount, paid_by_user_id,
-				 paid_to_supplier_id, cash_amount, credit_amount, tax_inclusive, received_qty)
+				 paid_to_supplier_id, cash_amount, credit_amount, tax_inclusive,
+				 category_id, product_id, create_variant, received_qty)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-			        NULLIF($19,'')::uuid,NULLIF($20,'')::uuid,$21,$22,$23,$7)
+			        NULLIF($19,'')::uuid,NULLIF($20,'')::uuid,$21,$22,$23,
+			        NULLIF($24,'')::uuid,NULLIF($25,'')::uuid,$26,$7)
 		`, itemID, poID, item.ItemName, item.Description, item.HSNCode, item.Unit,
 			item.Quantity, item.UnitPrice, item.SellingPrice, item.WholesalePrice,
 			item.GSTPercent, gstAmount, lineTotal, item.ProductCode, item.Category,
 			item.FreeQty, item.AdditionalWork, item.AdditionalWorkAmount,
 			item.PaidByUserID, item.PaidToSupplierID, item.CashAmount, item.CreditAmount,
-			in.TaxInclusive); err != nil {
+			in.TaxInclusive, item.CategoryID, item.ProductID, item.CreateVariant); err != nil {
 			return nil, fmt.Errorf("insert updated purchase order item: %w", err)
 		}
 		itemIDs = append(itemIDs, itemID)
@@ -172,7 +174,7 @@ func (s *Store) Update(grnID string, in DirectGRNInput, userID string) (*DirectG
 			grnID, itemIDs[i], item.Quantity); err != nil {
 			return nil, fmt.Errorf("insert updated receipt item: %w", err)
 		}
-		if err := s.applyPatchStock(tx, poID, grnID, in.WarehouseID, in.Reference, item); err != nil {
+		if err := s.applyPatchStock(tx, itemIDs[i], poID, grnID, in.WarehouseID, in.Reference, item); err != nil {
 			return nil, err
 		}
 		gstAmount := item.Quantity * item.UnitPrice * item.GSTPercent / 100
@@ -230,7 +232,7 @@ func directGRNAmounts(item DirectGRNItem, taxInclusive bool) (gst, base, total f
 	return gst, base, base + gst
 }
 
-func (s *Store) applyPatchStock(tx *sql.Tx, poID, grnID, warehouseID, reference string, item DirectGRNItem) error {
+func (s *Store) applyPatchStock(tx *sql.Tx, itemID, poID, grnID, warehouseID, reference string, item DirectGRNItem) error {
 	if item.ProductCode != "" {
 		var variantID string
 		if item.CreateVariant {
@@ -250,6 +252,9 @@ func (s *Store) applyPatchStock(tx *sql.Tx, poID, grnID, warehouseID, reference 
 			variantID, warehouseID, item.Quantity, poID, reference); err != nil {
 			return fmt.Errorf("insert product stock movement: %w", err)
 		}
+		if err := persistPatchVariantMetadata(tx, itemID, variantID); err != nil {
+			return err
+		}
 		return nil
 	}
 	if item.CreateVariant {
@@ -265,6 +270,9 @@ func (s *Store) applyPatchStock(tx *sql.Tx, poID, grnID, warehouseID, reference 
 			variantID, warehouseID, item.Quantity, poID, reference); err != nil {
 			return fmt.Errorf("insert created product stock movement: %w", err)
 		}
+		if err := persistPatchVariantMetadata(tx, itemID, variantID); err != nil {
+			return err
+		}
 		return nil
 	}
 	if _, err := tx.Exec(`INSERT INTO raw_material_stocks (item_name,hsn_code,unit,warehouse_id,quantity,updated_at) VALUES ($1,$2,$3,$4,$5,NOW()) ON CONFLICT (item_name,warehouse_id) DO UPDATE SET quantity=raw_material_stocks.quantity+$5,hsn_code=COALESCE(NULLIF($2,''),raw_material_stocks.hsn_code),unit=$3,updated_at=NOW()`,
@@ -274,6 +282,20 @@ func (s *Store) applyPatchStock(tx *sql.Tx, poID, grnID, warehouseID, reference 
 	if _, err := tx.Exec(`INSERT INTO raw_material_movements (item_name,warehouse_id,quantity,movement_type,goods_receipt_id,purchase_order_id,reference) VALUES ($1,$2,$3,'IN',$4,$5,$6)`,
 		item.ItemName, warehouseID, item.Quantity, grnID, poID, reference); err != nil {
 		return fmt.Errorf("insert raw-material movement: %w", err)
+	}
+	return nil
+}
+
+func persistPatchVariantMetadata(tx *sql.Tx, itemID, variantID string) error {
+	if _, err := tx.Exec(`
+		UPDATE purchase_order_items poi
+		SET product_id = v.product_id,
+		    category_id = p.category_id
+		FROM variants v
+		JOIN products p ON p.id = v.product_id
+		WHERE poi.id = $1 AND v.id = $2
+	`, itemID, variantID); err != nil {
+		return fmt.Errorf("persist variant metadata: %w", err)
 	}
 	return nil
 }

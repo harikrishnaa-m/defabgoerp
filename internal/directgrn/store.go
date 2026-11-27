@@ -116,7 +116,7 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 				 product_code, category, free_qty,
 				 additional_work, additional_work_amount,
 				 paid_by_user_id, paid_to_supplier_id, cash_amount, credit_amount,
-				 tax_inclusive)
+				 tax_inclusive, category_id, product_id, create_variant)
 			VALUES
 				($1, $2, $3, $4, $5, $6,
 				 $7, $8, $9, $10,
@@ -124,7 +124,7 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 				 $14, $15, $16,
 				 $17, $18,
 				 NULLIF($19,'')::uuid, NULLIF($20,'')::uuid, $21, $22,
-				 $23)
+				 $23, NULLIF($24,'')::uuid, NULLIF($25,'')::uuid, $26)
 		`,
 			itemID, poID, item.ItemName, item.Description, item.HSNCode, item.Unit,
 			item.Quantity, item.UnitPrice, item.SellingPrice, item.WholesalePrice,
@@ -132,7 +132,7 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 			item.ProductCode, item.Category, item.FreeQty,
 			item.AdditionalWork, item.AdditionalWorkAmount,
 			item.PaidByUserID, item.PaidToSupplierID, item.CashAmount, item.CreditAmount,
-			in.TaxInclusive,
+			in.TaxInclusive, item.CategoryID, item.ProductID, item.CreateVariant,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert purchase_order_items: %w", err)
@@ -300,6 +300,15 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 			if err != nil {
 				return nil, fmt.Errorf("insert variant for %q: %w", it.itemName, err)
 			}
+			_, err = tx.Exec(`
+				UPDATE purchase_order_items
+				SET product_id = $1,
+				    category_id = (SELECT category_id FROM products WHERE id = $1)
+				WHERE id = $2
+			`, productID, it.id)
+			if err != nil {
+				return nil, fmt.Errorf("persist variant metadata: %w", err)
+			}
 
 			_, err = tx.Exec(`
 				INSERT INTO stocks (variant_id, warehouse_id, quantity, stock_type, updated_at)
@@ -325,6 +334,17 @@ func (s *Store) Create(in DirectGRNInput, userID string) (*DirectGRNResult, erro
 			err = tx.QueryRow(`SELECT id::text FROM variants WHERE variant_code::text = $1 AND is_active = true LIMIT 1`, it.productCode).Scan(&variantID)
 			if err != nil {
 				return nil, fmt.Errorf("no active product variant found with code %s — please create the product and variant in the catalog first", it.productCode)
+			}
+			_, err = tx.Exec(`
+				UPDATE purchase_order_items poi
+				SET product_id = v.product_id,
+				    category_id = p.category_id
+				FROM variants v
+				JOIN products p ON p.id = v.product_id
+				WHERE poi.id = $1 AND v.id = $2
+			`, it.id, variantID)
+			if err != nil {
+				return nil, fmt.Errorf("persist existing variant metadata: %w", err)
 			}
 			_, err = tx.Exec(`
 				INSERT INTO stocks (variant_id, warehouse_id, quantity, stock_type, updated_at)
@@ -629,7 +649,14 @@ func (s *Store) GetByID(grnID string) (*DirectGRNDetail, error) {
 			pi.id, pi.invoice_number, pi.invoice_date::text,
 			pi.sub_amount, pi.discount_amount, pi.gst_amount, pi.round_off,
 			pi.net_amount, pi.paid_amount, pi.status,
-			pi.notes, gr.reference
+			pi.notes, gr.reference,
+			COALESCE((
+				SELECT spay.payment_method
+				FROM supplier_payments spay
+				WHERE spay.purchase_invoice_id = pi.id
+				ORDER BY spay.paid_at DESC
+				LIMIT 1
+			), '')
 		FROM goods_receipts gr
 		JOIN purchase_orders po      ON po.id = gr.purchase_order_id
 		JOIN purchase_invoices pi    ON pi.purchase_order_id = po.id
@@ -647,7 +674,7 @@ func (s *Store) GetByID(grnID string) (*DirectGRNDetail, error) {
 		&d.InvoiceID, &d.InvoiceNumber, &d.InvoiceDate,
 		&d.SubAmount, &d.DiscountAmount, &d.GSTAmount, &d.RoundOff,
 		&d.NetAmount, &d.PaidAmount, &d.Status,
-		&notes, &reference,
+		&notes, &reference, &d.PaymentMethod,
 	)
 	if err != nil {
 		return nil, err
@@ -664,6 +691,8 @@ func (s *Store) GetByID(grnID string) (*DirectGRNDetail, error) {
 		SELECT
 			poi.id, poi.item_name, COALESCE(poi.description, ''),
 			COALESCE(poi.product_code, ''), COALESCE(poi.category, ''),
+			COALESCE(poi.category_id::text, ''), COALESCE(poi.product_id::text, ''),
+			COALESCE(poi.create_variant, FALSE),
 			COALESCE(poi.hsn_code, ''), COALESCE(poi.unit, ''),
 			poi.quantity, poi.free_qty, poi.unit_price,
 			COALESCE(poi.selling_price, 0), COALESCE(poi.wholesale_price, 0),
@@ -689,6 +718,7 @@ func (s *Store) GetByID(grnID string) (*DirectGRNDetail, error) {
 		if err := itemRows.Scan(
 			&it.ID, &it.ItemName, &it.Description,
 			&it.ProductCode, &it.Category,
+			&it.CategoryID, &it.ProductID, &it.CreateVariant,
 			&it.HSNCode, &it.Unit,
 			&it.Quantity, &it.FreeQty, &it.UnitPrice,
 			&it.SellingPrice, &it.WholesalePrice,
