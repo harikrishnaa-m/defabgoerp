@@ -83,6 +83,59 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	return c.Status(201).JSON(result)
 }
 
+// Update handles PATCH /direct-grn/:id.
+func (h *Handler) Update(c *fiber.Ctx) error {
+	var in DirectGRNInput
+	if err := c.BodyParser(&in); err != nil {
+		return httperr.BadRequest(c, "Invalid JSON body")
+	}
+	if in.SupplierID == "" {
+		return httperr.BadRequest(c, "supplier_id is required")
+	}
+	if in.WarehouseID == "" {
+		return httperr.BadRequest(c, "warehouse_id is required")
+	}
+	if in.InvoiceDate == "" {
+		return httperr.BadRequest(c, "invoice_date is required")
+	}
+	if len(in.Items) == 0 {
+		return httperr.BadRequest(c, "at least one item is required")
+	}
+	if in.PaymentAmount > 0 {
+		if in.PaymentMethod == "" {
+			return httperr.BadRequest(c, "payment_method is required when payment_amount is provided")
+		}
+		allowed := map[string]bool{"CASH": true, "UPI": true, "CARD": true, "BANK_TRANSFER": true}
+		in.PaymentMethod = strings.ToUpper(in.PaymentMethod)
+		if !allowed[in.PaymentMethod] {
+			return httperr.BadRequest(c, "payment_method must be CASH, UPI, CARD, or BANK_TRANSFER")
+		}
+	}
+
+	user := c.Locals("user").(*model.User)
+	result, err := h.store.Update(c.Params("id"), in, user.ID.String())
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return httperr.NotFound(c, "Direct GRN not found")
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && strings.Contains(pgErr.ConstraintName, "invoice_number") {
+			return httperr.Conflict(c, "Invoice number already exists")
+		}
+		log.Printf("direct grn update error: %+v", err)
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if h.recorder != nil {
+		go func() {
+			if err := h.recorder.RecordPurchaseInvoice(result.InvoiceID, user.ID.String()); err != nil {
+				log.Println("direct grn accounting record error:", err)
+			}
+		}()
+	}
+	return c.JSON(result)
+}
+
 // List handles GET /direct-grn?grn_number=&supplier_name=&date_from=&date_to=
 func (h *Handler) List(c *fiber.Ctx) error {
 	pageStr := c.Query("page")
