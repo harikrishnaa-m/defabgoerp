@@ -326,6 +326,35 @@ func createPatchVariant(tx *sql.Tx, item DirectGRNItem) (string, error) {
 			return "", fmt.Errorf("find product %q: %w", item.ItemName, err)
 		}
 	}
+	var existingVariantID string
+	if item.ProductCode != "" {
+		err := tx.QueryRow(`
+			SELECT id::text
+			FROM variants
+			WHERE variant_code::text = $1 AND is_active = true
+			LIMIT 1
+		`, item.ProductCode).Scan(&existingVariantID)
+		if err == nil {
+			return existingVariantID, nil
+		}
+		if err != sql.ErrNoRows {
+			return "", fmt.Errorf("find variant %q: %w", item.ProductCode, err)
+		}
+	} else if productID != "" {
+		err := tx.QueryRow(`
+			SELECT id::text
+			FROM variants
+			WHERE product_id = $1 AND name LIKE '% ' || $2 AND is_active = true
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, productID, item.ItemName).Scan(&existingVariantID)
+		if err == nil {
+			return existingVariantID, nil
+		}
+		if err != sql.ErrNoRows {
+			return "", fmt.Errorf("find variant for product %q: %w", item.ItemName, err)
+		}
+	}
 	var code int64
 	if item.ProductCode != "" {
 		parsed, err := strconv.ParseInt(item.ProductCode, 10, 64)

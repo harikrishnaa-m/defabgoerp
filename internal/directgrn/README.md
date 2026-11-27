@@ -113,6 +113,19 @@ catalog context used to create the variant. The PATCH operation uses those
 values to recreate the edited variant/stock state after reversing the
 previous inventory movements.
 
+PATCH does not create a duplicate variant when the submitted item identifies
+an existing active variant:
+
+- A non-empty `product_code` is resolved to the existing active variant.
+- When `product_code` is empty but `product_id` is present, the existing
+  variant for that product and item name is reused when available.
+- A new variant is created only when no matching active variant can be
+  resolved.
+
+This allows a GET response to be sent back through PATCH without creating a
+second catalog variant on every edit. The previous stock movement is still
+reversed and the current movement is recreated for the edited quantity.
+
 ### `payment_method`
 
 The top-level detail response includes the payment method:
