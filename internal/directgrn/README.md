@@ -51,6 +51,133 @@ record IDs remain associated with the document.
 The DirectGRN POST implementation is separate and is not changed by this
 endpoint.
 
+## GET-to-PATCH round-trip metadata
+
+The frontend must not infer variant or payment behavior from display names or
+amounts. The following metadata is returned by
+`GET /api/direct-grn/:id` specifically so the response can be used to
+construct a faithful PATCH request.
+
+### Item catalog IDs
+
+Each item in the detail response includes:
+
+```json
+{
+  "category": "Fabric",
+  "category_id": "category-uuid",
+  "item_name": "Cotton Fabric",
+  "product_id": "product-uuid",
+  "product_code": "991236"
+}
+```
+
+- `category_id` identifies the category associated with the item.
+- `product_id` identifies the catalog product associated with the item.
+- `category` and `item_name` remain available as display fields.
+- `product_code` identifies the catalog variant code when the item is a
+  product variant.
+
+The backend persists the IDs when the DirectGRN is created or patched. When a
+new product or variant is created during the transaction, the backend stores
+the actual generated product/category IDs, not only the IDs supplied in the
+request.
+
+The frontend should send the returned IDs back unchanged in a subsequent
+PATCH request. It should not resolve a display name to a different category or
+product unless the user intentionally changes the catalog selection.
+
+### `create_variant`
+
+Each item also includes:
+
+```json
+{
+  "create_variant": true
+}
+```
+
+This value records the original inventory mode:
+
+- `true`: the item created a catalog variant and uses product stock.
+- `false` with a non-empty `product_code`: the item used an existing active
+  catalog variant and uses product stock.
+- `false` with an empty `product_code`: the item is treated as raw material
+  and uses raw-material stock.
+
+The frontend must preserve this value when editing an item. It must not infer
+it from `product_code`, category names, or product names.
+
+When `create_variant` is `true`, `category_id` and `product_id` describe the
+catalog context used to create the variant. The PATCH operation uses those
+values to recreate the edited variant/stock state after reversing the
+previous inventory movements.
+
+### `payment_method`
+
+The top-level detail response includes the payment method:
+
+```json
+{
+  "paid_amount": 40,
+  "payment_method": "UPI",
+  "status": "PARTIALLY_PAID"
+}
+```
+
+The frontend must preserve `payment_method` when preserving a non-zero
+`paid_amount`. It must not infer the method from the paid amount or from
+`status`.
+
+If `paid_amount` is changed to zero, the PATCH request removes the existing
+supplier payment. When `paid_amount` is greater than zero,
+`payment_method` must be one of `CASH`, `UPI`, `CARD`, or `BANK_TRANSFER`.
+
+### Recommended frontend edit flow
+
+1. Call `GET /api/direct-grn/:id`.
+2. Populate the edit form from the response.
+3. Keep each item’s `category_id`, `product_id`, and `create_variant` values in
+   form state even if the UI displays category/product names.
+4. Keep the top-level `payment_method` in form state separately from
+   `paid_amount`.
+5. When the user saves, send the complete PATCH payload with those values.
+6. Call GET again after a successful PATCH and refresh the form from the
+   persisted response.
+
+The frontend should not construct a PATCH request by guessing any of these
+three values.
+
+### Metadata migration and older DirectGRNs
+
+The metadata columns are added by migration
+`000045_direct_grn_edit_metadata.up.sql`. This migration must be applied
+before deploying the updated API:
+
+```sql
+ALTER TABLE purchase_order_items
+    ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES categories(id),
+    ADD COLUMN IF NOT EXISTS product_id UUID REFERENCES products(id),
+    ADD COLUMN IF NOT EXISTS create_variant BOOLEAN NOT NULL DEFAULT FALSE;
+```
+
+New POST and PATCH operations persist the metadata automatically after the
+migration is applied.
+
+DirectGRNs created before this migration may not have complete historical
+metadata:
+
+- `category_id` or `product_id` may be empty when the relationship cannot be
+  reconstructed.
+- `create_variant` defaults to `false` for legacy rows.
+- `payment_method` is returned when a historical supplier payment record
+  exists; it is empty when no payment record exists.
+
+For a legacy GRN with missing metadata, the frontend should ask the user to
+confirm the category/product, inventory mode, and payment method before
+saving a PATCH. New GRNs created after the migration do not have this
+ambiguity.
+
 ## Request headers
 
 ```http
@@ -416,11 +543,12 @@ Example:
 }
 ```
 
-`category_id`, `product_id`, `create_variant`, and `payment_method` are
-request-processing fields. They are not all returned by the current detail
-response. The frontend should use the PATCH response and the detail response
-for confirmation of the persisted GRN, item, charge, invoice, and stock
-values.
+The detail response includes `category_id`, `product_id`, and
+`create_variant` for items created after the edit-metadata migration is
+applied. It also includes `payment_method` at the invoice level. Older
+DirectGRNs created before this metadata was persisted may return empty IDs,
+`false` for `create_variant`, or an empty payment method when the historical
+value cannot be reconstructed.
 
 ## Validation errors
 

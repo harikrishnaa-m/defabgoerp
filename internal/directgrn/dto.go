@@ -109,6 +109,9 @@ type DirectGRNDetailItem struct {
 	Description          string  `json:"description"`
 	ProductCode          string  `json:"product_code"`
 	Category             string  `json:"category"`
+	CategoryID           string  `json:"category_id"`
+	ProductID            string  `json:"product_id"`
+	CreateVariant        bool    `json:"create_variant"`
 	HSNCode              string  `json:"hsn_code"`
 	Unit                 string  `json:"unit"`
 	Quantity             float64 `json:"quantity"`
@@ -165,6 +168,7 @@ type DirectGRNDetail struct {
 	Status                string                  `json:"status"`
 	Notes                 string                  `json:"notes"`
 	Reference             string                  `json:"reference"`
+	PaymentMethod         string                  `json:"payment_method"`
 	Items                 []DirectGRNDetailItem   `json:"items"`
 	Charges               []DirectGRNDetailCharge `json:"charges"`
 }
